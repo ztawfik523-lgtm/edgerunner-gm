@@ -1297,6 +1297,163 @@ async def test_intro_turn_uses_dedicated_prompt_token_limit_and_reports_generati
     assert done["assistant_message"]["metadata"]["is_intro"] is True
 
 
+@pytest.mark.anyio
+async def test_coop_gatekeeper_manual_chat_roll_identity_privacy_and_ownership(tmp_path: Path):
+    import httpx
+    from turnloop import _summarize_character
+
+    rules_db, camp_db, svc, camp_id, char_id = _seed_campaign(tmp_path)
+
+    # 1. Update character profile with Handle vs hidden Real Name, Portrait URL, Color, and Owner
+    ch = svc.store.get_character(char_id)
+    updated_ch = svc.execute(
+        "update_character_profile",
+        {
+            "character_id": char_id,
+            "expected_revision": ch["revision"],
+            "profile": {
+                "handle": "Ghostwire",
+                "real_name": "Elena Vance",
+                "real_name_hidden": True,
+                "portrait_url": "https://example.com/ghostwire.jpg",
+                "color": "violet",
+                "owner_username": "alice",
+            },
+            "reason": "Set identity privacy and ownership",
+            "operation_id": "prof-ident-1",
+        },
+    )["result"]
+    assert updated_ch["name"] == "Ghostwire"
+    assert updated_ch["detail"]["handle"] == "Ghostwire"
+    assert updated_ch["detail"]["real_name"] == "Elena Vance"
+    assert updated_ch["detail"]["real_name_hidden"] is True
+    assert updated_ch["detail"]["color"] == "violet"
+    assert updated_ch["detail"]["owner_username"] == "alice"
+
+    summary = _summarize_character(updated_ch)
+    assert summary["handle"] == "Ghostwire"
+    assert summary["real_name"] == "Elena Vance"
+    assert summary["real_name_hidden"] is True
+    assert "SECRET" in summary["identity_note"]
+
+    # 2. Test Smart GM Gatekeeper (hold_gm + auto co-op party banter + auto intervention after 2 turns)
+    llm = ScriptedLLM(
+        mode="two_pass",
+        complete_reply=json.dumps(
+            {
+                "checks": [
+                    {
+                        "actor": "Ghostwire",
+                        "skill": "Handgun",
+                        "dv": 13,
+                        "reason": "Suppressing fire",
+                    }
+                ],
+                "state_ops": [],
+                "narration_notes": "Resolved party turn",
+            }
+        ),
+        stream_chunks=["Ghostwire's shot sparks off the bulkhead."],
+    )
+    app = redkb.make_api(rules_db, allowed_origins=("http://localhost:5173",), campaign_path=camp_db, llm=llm)
+    headers = {"Origin": "http://localhost:5173", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # Hold GM mode appends user message without assistant message
+        r_hold = await client.post(
+            "/v1/chat/turn",
+            headers=headers,
+            json={
+                "campaign_id": camp_id,
+                "user_text": "\"Cover the left flank, choom.\"",
+                "speaker_character_id": char_id,
+                "speaker_name": "Ghostwire",
+                "gm_mode": "hold_gm",
+            },
+        )
+        assert r_hold.status_code == 200
+        ev_hold = _parse_sse(r_hold.text)
+        done_hold = [e["data"] for e in ev_hold if e["event"] == "turn_done"][0]
+        assert done_hold["gm_deferred"] is True
+        assert done_hold["assistant_message"] is None
+
+        # Force GM resolves the turn and attaches inline dice rolls to the user message metadata
+        r_force = await client.post(
+            "/v1/chat/turn",
+            headers=headers,
+            json={
+                "campaign_id": camp_id,
+                "user_text": "I fire at the drone.",
+                "speaker_character_id": char_id,
+                "speaker_name": "Ghostwire",
+                "gm_mode": "force_gm",
+            },
+        )
+        assert r_force.status_code == 200
+        ev_force = _parse_sse(r_force.text)
+        done_force = [e["data"] for e in ev_force if e["event"] == "turn_done"][0]
+        assert done_force.get("gm_deferred") is not True
+        assert done_force["assistant_message"] is not None
+        assert len(done_force["user_message"]["metadata"]["rolls"]) == 1
+
+        # 3. Manual Skill Roll endpoint (/v1/chat/roll) posts roll directly to chat and keeps revision_mismatch False
+        r_roll = await client.post(
+            "/v1/chat/roll",
+            headers=headers,
+            json={
+                "campaign_id": camp_id,
+                "character_id": char_id,
+                "stat": "REF",
+                "skill": "Handgun",
+                "dv": 13,
+                "modifier": 1,
+                "luck": 0,
+                "reason": "Manual table check",
+            },
+        )
+        assert r_roll.status_code == 200
+        roll_body = r_roll.json()
+        assert roll_body["roll"]["skill"] == "Handgun"
+        assert roll_body["message"]["metadata"]["manual_roll"] is True
+        assert roll_body["tree"]["revision_mismatch"] is False
+
+        # 4. Out-of-band state mutation via /v1/game with auto_revision=True syncs leaf revisions automatically
+        r_game = await client.post(
+            "/v1/game",
+            headers=headers,
+            json={
+                "action": "update_character",
+                "campaign_id": camp_id,
+                "auto_revision": True,
+                "arguments": {
+                    "character_id": char_id,
+                    "expected_revision": 0,  # stale revision auto-resolved!
+                    "changes": {"money": 999},
+                    "reason": "Loot credchip",
+                    "operation_id": "auto-rev-test-1",
+                },
+            },
+        )
+        assert r_game.status_code == 200
+        tree_after = (await client.get("/v1/chat/tree", params={"campaign_id": camp_id})).json()
+        assert tree_after["revision_mismatch"] is False
+
+        # 5. Admin switching to User View via X-RedGM-View-Role: user enforces ownership & characterless lock
+        user_view_headers = {**headers, "X-RedGM-View-Role": "user"}
+        # Speaking without a character when require_character_to_speak is True returns 403
+        r_no_char = await client.post(
+            "/v1/chat/turn",
+            headers=user_view_headers,
+            json={
+                "campaign_id": camp_id,
+                "user_text": "Hello from characterless observer",
+            },
+        )
+        assert r_no_char.status_code == 403
+        assert "create or claim a character" in r_no_char.json()["detail"].lower()
+
+
+
 
 
 

@@ -621,7 +621,12 @@ def make_api(
     @app.get("/v1/auth/status")
     def auth_status(request: Request):
         request_id = uuid.uuid4().hex
-        return {**_session(request), "request_id": request_id}
+        llm_cfg = load_llm_settings(resolved_settings_path())
+        return {
+            **_session(request),
+            "require_character_to_speak": bool(llm_cfg.get("require_character_to_speak", True)),
+            "request_id": request_id,
+        }
 
     @app.post("/v1/auth/setup")
     async def auth_setup(request: Request):
@@ -761,6 +766,12 @@ def make_api(
         except (AuthError, TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
+    def _effective_role(request: Request, sess: dict[str, Any]) -> str:
+        view_override = (request.headers.get("x-redgm-view-role") or "").strip().lower()
+        if sess.get("role") in {"admin", "open"} and view_override == "user":
+            return "user"
+        return str(sess.get("role") or "anon")
+
     @app.post("/v1/game")
     async def game(request: Request):
         request_id = uuid.uuid4().hex
@@ -771,6 +782,51 @@ def make_api(
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("action"), str) or not isinstance(body.get("arguments"), dict):
                 raise ValueError("Body must contain string action and object arguments")
+            action_name = body["action"]
+            args_payload = dict(body["arguments"])
+            auto_revision = bool(body.get("auto_revision", False))
+            sess = _session(request)
+            eff_role = _effective_role(request, sess)
+            uname = str(sess.get("username") or "").strip()
+
+            # Automatically stamp owner_username when a signed-in user creates a character
+            if uname and action_name == "create_character":
+                det = dict(args_payload.get("detail") or {}) if isinstance(args_payload.get("detail"), dict) else {}
+                if not det.get("owner_username"):
+                    det["owner_username"] = uname
+                args_payload["detail"] = det
+            elif uname and action_name == "create_player_character":
+                inner_args = dict(args_payload.get("arguments") or {}) if isinstance(args_payload.get("arguments"), dict) else {}
+                if not inner_args.get("owner_username"):
+                    inner_args["owner_username"] = uname
+                args_payload["arguments"] = inner_args
+
+            # Enforce character ownership for normal users on character-mutating actions
+            char_mutating_actions = {
+                "update_character",
+                "update_character_profile",
+                "undo",
+                "skill_check",
+                "role_action",
+                "gear_action",
+                "health_action",
+                "economy_action",
+            }
+            if eff_role == "user" and uname and action_name in char_mutating_actions:
+                target_char_id = args_payload.get("character_id")
+                if isinstance(target_char_id, str) and target_char_id:
+                    existing_char = await asyncio.to_thread(lambda: gameplay_service().store.get_character(target_char_id))
+                    if existing_char:
+                        owner = str((existing_char.get("detail") or {}).get("owner_username") or "").strip()
+                        if owner and owner.lower() != uname.lower():
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": f"Character '{existing_char.get('name')}' belongs to {owner}. Only its owner or Admin can modify it.",
+                                    "request_id": request_id,
+                                },
+                            )
+
             read_only_actions = {
                 "list_campaigns",
                 "get_campaign",
@@ -782,18 +838,49 @@ def make_api(
                 "solo_context",
                 "solo_history",
             }
+
+            def _exec_with_optional_auto_rev(camp_id: str | None):
+                svc = gameplay_service()
+                if auto_revision:
+                    if action_name in {"update_character", "update_character_profile", "undo", "skill_check"}:
+                        cid = args_payload.get("character_id")
+                        if isinstance(cid, str) and cid:
+                            cur_c = svc.store.get_character(cid)
+                            if cur_c is not None:
+                                args_payload["expected_revision"] = cur_c["revision"]
+                    elif action_name in {"update_campaign", "attach_character", "start_session", "undo_campaign"}:
+                        target_camp = camp_id or args_payload.get("campaign_id")
+                        if isinstance(target_camp, str) and target_camp:
+                            cur_camp = svc.memory.get_campaign(target_camp)
+                            if cur_camp is not None:
+                                args_payload["expected_revision"] = cur_camp["revision"]
+                    elif camp_id and "expected_revision" in args_payload:
+                        try:
+                            cur_solo = svc.solo.context(camp_id)
+                            args_payload["expected_revision"] = cur_solo["revision"]
+                        except Exception:
+                            pass
+                res_out = (
+                    svc.execute(action_name, args_payload, campaign_id=camp_id)
+                    if camp_id is not None
+                    else svc.execute(action_name, args_payload)
+                )
+                if auto_revision and camp_id and action_name not in read_only_actions:
+                    try:
+                        from turnloop import ChatTreeStore
+                        ChatTreeStore(svc).sync_active_leaf_revisions(camp_id)
+                    except Exception:
+                        pass
+                return res_out
+
             if "campaign_id" in body:
                 if not isinstance(body["campaign_id"], str) or not body["campaign_id"]:
                     raise ValueError("campaign_id must be a nonempty string")
-                result = await asyncio.to_thread(
-                    lambda: gameplay_service().execute(body["action"], body["arguments"], campaign_id=body["campaign_id"])
-                )
-                if body["action"] not in read_only_actions:
-                    coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "game", "action": body["action"]})
+                result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(body["campaign_id"]))
+                if action_name not in read_only_actions:
+                    coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "game", "action": action_name})
             else:
-                result = await asyncio.to_thread(
-                    lambda: gameplay_service().execute(body["action"], body["arguments"])
-                )
+                result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(None))
             return {**result, "request_id": request_id}
         except HTTPException:
             raise
@@ -1495,6 +1582,7 @@ def make_api(
             "gm_style": llm_cfg.get("gm_style", "grounded"),
             "narrator_length": llm_cfg.get("narrator_length", "standard"),
             "gm_thinking_mode": llm_cfg.get("gm_thinking_mode", "quality"),
+            "require_character_to_speak": bool(llm_cfg.get("require_character_to_speak", True)),
             "enable_chronicler": bool(llm_cfg.get("enable_chronicler", True)),
             "enable_highlights": bool(llm_cfg.get("enable_highlights", True)),
             "allow_ai_homebrew": bool(llm_cfg.get("allow_ai_homebrew", True)),
@@ -1706,19 +1794,53 @@ def make_api(
             luck_spend = _parse_luck_spend(body.get("luck_spend"))
             client_id = str(body.get("client_id") or request.headers.get("x-redgm-client-id") or request_id)
             player_name = str(body.get("player_name") or body.get("speaker_name") or "Player")
+            gm_mode = str(body.get("gm_mode") or "auto").strip().lower()
+            if gm_mode not in {"auto", "force_gm", "hold_gm"}:
+                raise ValueError("gm_mode must be 'auto', 'force_gm', or 'hold_gm'")
+            is_intro = bool(body.get("is_intro", False))
+            sess = _session(request)
+            eff_role = _effective_role(request, sess)
+            uname = str(sess.get("username") or "").strip()
+            llm_cfg = load_llm_settings(resolved_settings_path())
+
             active_llm = _resolve_active_llm(body.get("llm_config"))
             engine = TurnEngine(gameplay_service(), active_llm, settings_path=resolved_settings_path())
-            engine.gameplay.campaign_context(campaign_id)
+            ctx = engine.gameplay.campaign_context(campaign_id)
+            chars = ctx.get("characters") or []
+            speaker_char_id = body.get("speaker_character_id")
+
+            # Enforce character ownership & characterless speaking restriction for non-admin users
+            if eff_role == "user" and not is_intro and not sess.get("pin_only_mode"):
+                if isinstance(speaker_char_id, str) and speaker_char_id.strip():
+                    matched_char = next((c for c in chars if c["id"] == speaker_char_id.strip()), None)
+                    if matched_char is None:
+                        return JSONResponse(status_code=400, content={"detail": "Selected speaking character is not attached to this campaign.", "request_id": request_id})
+                    owner = str((matched_char.get("detail") or {}).get("owner_username") or "").strip()
+                    if uname and owner and owner.lower() != uname.lower():
+                        return JSONResponse(status_code=403, content={"detail": f"You cannot speak as {matched_char.get('name')} (owned by {owner}).", "request_id": request_id})
+                elif bool(llm_cfg.get("require_character_to_speak", True)):
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "You must create or claim a character before speaking in chat (Admin has 'Require Character to Speak' enabled).",
+                            "request_id": request_id,
+                        },
+                    )
+
             if body.get("parent_id") is not None:
                 engine.tree.get_branch_to(campaign_id, body["parent_id"])
-            busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name)
-            if busy_turn is not None:
-                return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
+            if gm_mode != "hold_gm":
+                busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name)
+                if busy_turn is not None:
+                    return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
+        coop_count = max(1, len(coop.roster(campaign_id)))
+
         def finish_turn():
-            coop.release_turn(campaign_id, client_id)
+            if gm_mode != "hold_gm":
+                coop.release_turn(campaign_id, client_id)
             coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
 
         return _sse_response(
@@ -1732,11 +1854,135 @@ def make_api(
                 mode=body.get("mode"),
                 speaker_character_id=body.get("speaker_character_id"),
                 speaker_name=body.get("speaker_name"),
-                is_intro=bool(body.get("is_intro", False)),
+                is_intro=is_intro,
+                gm_mode=gm_mode,
+                coop_player_count=coop_count,
             ),
             request_id,
             on_finish=finish_turn,
         )
+
+    @app.post("/v1/chat/roll")
+    async def chat_manual_roll(request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=True)
+        if blocked is not None:
+            return blocked
+        from turnloop import ChatTreeStore
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("character_id"), str):
+                raise ValueError("campaign_id and character_id are required")
+            campaign_id = body["campaign_id"].strip()
+            character_id = body["character_id"].strip()
+            stat = str(body.get("stat") or "REF").strip().upper()
+            skill = str(body.get("skill") or "").strip() or None
+            dv = int(body.get("dv", 13))
+            modifier = int(body.get("modifier", 0))
+            luck = _parse_luck_spend(body.get("luck", 0))
+            reason = str(body.get("reason") or "Manual skill roll").strip() or "Manual skill roll"
+
+            sess = _session(request)
+            eff_role = _effective_role(request, sess)
+            uname = str(sess.get("username") or "").strip()
+
+            def _do_roll():
+                svc = gameplay_service()
+                char = svc.store.get_character(character_id)
+                if char is None:
+                    raise ValueError("Character not found")
+                d = char.get("detail") or {}
+                owner = str(d.get("owner_username") or "").strip()
+                if eff_role == "user" and uname and owner and owner.lower() != uname.lower():
+                    raise PermissionError(f"You cannot roll for {char.get('name')} (owned by {owner}).")
+                check_res = svc.execute(
+                    "skill_check",
+                    {
+                        "character_id": character_id,
+                        "expected_revision": char["revision"],
+                        "stat": stat,
+                        "skill": skill,
+                        "dv": dv,
+                        "modifier": modifier,
+                        "luck": luck,
+                        "reason": reason,
+                        "operation_id": f"mroll-{uuid.uuid4().hex[:12]}",
+                    },
+                    campaign_id=campaign_id,
+                )["result"]
+                speaker_label = str(d.get("handle") or char["name"])
+                roll_card = {
+                    "actor": speaker_label,
+                    "character_id": character_id,
+                    "stat": stat,
+                    "skill": skill,
+                    "dv": dv,
+                    "modifier": modifier,
+                    "luck_spent": luck,
+                    "reason": reason,
+                    "total": check_res["total"],
+                    "die": check_res.get("die"),
+                    "dice": check_res.get("dice"),
+                    "base": check_res.get("base"),
+                    "explosion": check_res.get("explosion", 0),
+                    "wound_modifier": check_res.get("wound_modifier", 0),
+                    "success": check_res["success"],
+                }
+                tree_store = ChatTreeStore(svc)
+                cur_tree = tree_store.get_tree(campaign_id)
+                revs = tree_store._current_revisions(campaign_id)
+                verdict = "SUCCESS" if check_res["success"] else "FAIL"
+                skill_label = f"{skill} ({stat})" if skill else stat
+                msg_text = f"Rolled **{skill_label}** vs DV {dv} — **{check_res['total']}** ({verdict}) · *{reason}*"
+                meta: dict[str, Any] = {
+                    "speaker_character_id": character_id,
+                    "speaker_name": speaker_label,
+                    "manual_roll": True,
+                    "gm_deferred": True,
+                    "defer_reason": "Manual skill roll posted to table",
+                    "rolls": [roll_card],
+                }
+                if isinstance(d.get("color"), str) and d["color"].strip():
+                    meta["speaker_color"] = d["color"].strip()
+                if isinstance(d.get("portrait_url"), str) and d["portrait_url"].strip():
+                    meta["speaker_portrait_url"] = d["portrait_url"].strip()
+                msg = tree_store.append_message(
+                    campaign_id,
+                    parent_id=cur_tree.get("active_leaf_id"),
+                    role="user",
+                    content=msg_text,
+                    campaign_revision=revs["campaign_revision"],
+                    solo_revision=revs["solo_revision"],
+                    metadata=meta,
+                )
+                updated_tree = tree_store.sync_active_leaf_revisions(campaign_id)
+                return {"roll": roll_card, "result": check_res, "message": msg, "tree": updated_tree}
+
+            out = await asyncio.to_thread(_do_roll)
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+            return {**out, "request_id": request_id}
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+    @app.post("/v1/chat/sync-revisions")
+    async def chat_sync_revisions(request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=True)
+        if blocked is not None:
+            return blocked
+        from turnloop import ChatTreeStore
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not body["campaign_id"].strip():
+                raise ValueError("campaign_id is required")
+            campaign_id = body["campaign_id"].strip()
+            tree = await asyncio.to_thread(lambda: ChatTreeStore(gameplay_service()).sync_active_leaf_revisions(campaign_id))
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+            return {**tree, "request_id": request_id}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
     @app.post("/v1/chat/regenerate")
     async def chat_regenerate(request: Request):
@@ -1897,11 +2143,13 @@ def make_api(
                         if str(k).strip() and str(v).strip()
                     }
                 opening_clock = body.get("opening_clock") if isinstance(body.get("opening_clock"), dict) else None
-                gm_seed = TurnEngine(svc, None).seed_initial_gm_state(
+                eng = TurnEngine(svc, None)
+                gm_seed = eng.seed_initial_gm_state(
                     campaign_id,
                     secrets=secrets_map,
                     opening_clock=opening_clock,
                 )
+                eng.tree.sync_active_leaf_revisions(campaign_id)
                 return {"campaign": camp, **gm_seed}
 
             res = await asyncio.to_thread(_apply)

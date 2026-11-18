@@ -258,9 +258,20 @@ class CampaignStore:
 
     def update_character_profile(self, character_id, expected_revision, profile, reason, operation_id):
         profile = _mapping(profile, "profile")
-        allowed_keys = {"backstory", "lifepath", "appearance", "roles"}
+        allowed_keys = {
+            "backstory",
+            "lifepath",
+            "appearance",
+            "roles",
+            "handle",
+            "real_name",
+            "real_name_hidden",
+            "portrait_url",
+            "color",
+            "owner_username",
+        }
         if not profile or set(profile) - allowed_keys:
-            raise ValueError("profile may contain only backstory, lifepath, appearance, and roles")
+            raise ValueError("profile may contain only backstory, lifepath, appearance, roles, handle, real_name, real_name_hidden, portrait_url, color, and owner_username")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("reason must be a nonempty string")
         if not isinstance(operation_id, str) or not operation_id:
@@ -288,6 +299,7 @@ class CampaignStore:
             before = self._record(row)
             updated = dict(before)
             new_detail = dict(before.get("detail") or {})
+            string_detail_keys = {"handle", "real_name", "portrait_url", "color", "owner_username"}
             for key, val in profile.items():
                 if key == "roles":
                     if not isinstance(val, list):
@@ -297,14 +309,29 @@ class CampaignStore:
                     if not isinstance(val, (str, dict)):
                         raise ValueError("profile appearance must be a string or object")
                     new_detail["appearance"] = val
+                elif key == "real_name_hidden":
+                    if not isinstance(val, bool):
+                        raise ValueError("profile real_name_hidden must be a boolean")
+                    new_detail["real_name_hidden"] = val
+                elif key in string_detail_keys:
+                    if val is None or val == "":
+                        new_detail.pop(key, None)
+                    elif isinstance(val, str):
+                        new_detail[key] = val.strip()
+                    else:
+                        raise ValueError(f"profile {key} must be a string or null")
                 else:
                     if not isinstance(val, dict):
                         raise ValueError(f"profile {key} must be an object")
                     new_detail[key] = val
+            if isinstance(new_detail.get("handle"), str) and new_detail["handle"].strip():
+                updated["name"] = new_detail["handle"].strip()
+            elif isinstance(new_detail.get("real_name"), str) and new_detail["real_name"].strip() and not new_detail.get("handle"):
+                updated["name"] = new_detail["real_name"].strip()
             updated["detail"] = new_detail
             updated["revision"] += 1
-            conn.execute("UPDATE characters SET detail=?,revision=? WHERE id=?",
-                         (_json(new_detail), updated["revision"], str(character_id)))
+            conn.execute("UPDATE characters SET name=?,detail=?,revision=? WHERE id=?",
+                         (updated["name"], _json(new_detail), updated["revision"], str(character_id)))
             conn.execute("INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated

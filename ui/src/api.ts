@@ -6,6 +6,7 @@ import type {
   CampaignContext,
   CampaignRecord,
   CharacterRecord,
+  ChatMessageNode,
   ChatTreeResponse,
   CoopPlayer,
   CorebookJobStatus,
@@ -13,6 +14,7 @@ import type {
   CreationAiAssistRequest,
   CreationAiAssistResponse,
   CreationReference,
+  DiceRollResult,
   HealthStatus,
   LLMSettings,
   LibraryCategory,
@@ -30,6 +32,28 @@ const STORAGE_CLIENT_ID = "redgm:clientId";
 const STORAGE_PLAYER_NAME = "redgm:playerName";
 const STORAGE_ROOM_PIN = "redgm:roomPin";
 const STORAGE_AUTH_TOKEN = "redgm:authToken";
+const STORAGE_VIEW_ROLE = "redgm:viewRoleOverride";
+
+export function getStoredViewRoleOverride(): "admin" | "user" | null {
+  const val = safeStorageGet(STORAGE_VIEW_ROLE);
+  return val === "user" ? "user" : null;
+}
+
+export function setStoredViewRoleOverride(role: "admin" | "user" | null): void {
+  if (!role || role === "admin") {
+    try {
+      if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
+        window.localStorage.removeItem(STORAGE_VIEW_ROLE);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    safeStorageSet(STORAGE_VIEW_ROLE, "");
+    return;
+  }
+  safeStorageSet(STORAGE_VIEW_ROLE, role);
+}
 
 function safeStorageGet(key: string): string | null {
   try {
@@ -112,6 +136,8 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
   if (token) headers["X-RedGM-Token"] = token;
   const pin = getStoredRoomPin();
   if (pin) headers["X-RedGM-Pin"] = pin;
+  const viewRole = getStoredViewRoleOverride();
+  if (viewRole) headers["X-RedGM-View-Role"] = viewRole;
   return headers;
 }
 
@@ -347,7 +373,7 @@ export async function gameAction<T = unknown>(
   args: Record<string, unknown> = {},
   campaignId?: string,
 ): Promise<T> {
-  const payload: Record<string, unknown> = { action, arguments: args };
+  const payload: Record<string, unknown> = { action, arguments: args, auto_revision: true };
   if (campaignId) payload.campaign_id = campaignId;
   const resp = await postJson<{ action: string; result: T }>("/v1/game", payload);
   return resp.result;
@@ -499,6 +525,12 @@ export async function createRulesPlayerCharacter(
   soloRevision: number,
   payload: {
     name: string;
+    handle?: string;
+    real_name?: string;
+    real_name_hidden?: boolean;
+    portrait_url?: string;
+    color?: string;
+    owner_username?: string;
     role: string;
     method: "streetrat" | "edgerunner" | "complete_package";
     template_rolls?: number[];
@@ -538,6 +570,12 @@ export async function updateCharacterProfile(
     lifepath?: Record<string, unknown>;
     appearance?: string | Record<string, unknown>;
     roles?: Array<Record<string, unknown>>;
+    handle?: string | null;
+    real_name?: string | null;
+    real_name_hidden?: boolean;
+    portrait_url?: string | null;
+    color?: string | null;
+    owner_username?: string | null;
   },
   reason = "Update character bio and lifepath",
 ): Promise<CharacterRecord> {
@@ -956,11 +994,43 @@ export async function streamChatTurn(
     speaker_character_id?: string;
     speaker_name?: string;
     is_intro?: boolean;
+    gm_mode?: "auto" | "force_gm" | "hold_gm";
   },
   callbacks: TurnStreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
   return consumeSseStream("/v1/chat/turn", params, callbacks, signal);
+}
+
+export async function postManualChatRoll(params: {
+  campaign_id: string;
+  character_id: string;
+  stat: string;
+  skill?: string | null;
+  dv: number;
+  modifier?: number;
+  luck?: number;
+  reason?: string;
+}): Promise<{
+  roll: DiceRollResult;
+  result: {
+    total: number;
+    success: boolean;
+    die: number;
+    explosion: number;
+    wound_modifier: number;
+    character: CharacterRecord;
+  };
+  message: ChatMessageNode;
+  tree: ChatTreeResponse;
+}> {
+  return postJson("/v1/chat/roll", params);
+}
+
+export async function syncChatRevisions(campaignId: string): Promise<ChatTreeResponse> {
+  return postJson<ChatTreeResponse>("/v1/chat/sync-revisions", {
+    campaign_id: campaignId,
+  });
 }
 
 export async function regenerateChatTurn(

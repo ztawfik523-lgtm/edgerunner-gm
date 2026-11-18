@@ -9,9 +9,11 @@ import {
   Coins,
   Cpu,
   Dices,
+  EyeOff,
   Heart,
   HelpCircle,
   History,
+  Image as ImageIcon,
   Lock,
   Pencil,
   Plus,
@@ -21,11 +23,14 @@ import {
   ShieldAlert,
   Sparkles,
   Trash2,
+  Upload,
+  UserCheck,
   UserPlus,
 } from "lucide-react";
 import {
   fetchCharacterHistory,
   gameAction,
+  postManualChatRoll,
   runSkillCheck,
   undoCharacterChange,
   updateCharacterProfile,
@@ -33,6 +38,7 @@ import {
 } from "../api";
 import { STAT_NAMES, type CharacterRecord, type CoopPlayer, type StatName } from "../types";
 import { CharacterCreatorModal } from "./CharacterCreatorModal";
+import { CHARACTER_COLOR_THEMES } from "./ChatPane";
 
 interface CharacterPanelProps {
   campaignId: string;
@@ -44,6 +50,8 @@ interface CharacterPanelProps {
   selfClientId?: string;
   protectOthers?: boolean;
   preferredSelectedId?: string;
+  isAdmin?: boolean;
+  currentUsername?: string | null;
   onOpenCreateCharacter?: () => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
@@ -104,10 +112,32 @@ export function CharacterPanel({
   selfClientId = "",
   protectOthers = false,
   preferredSelectedId = "",
+  isAdmin = true,
+  currentUsername = null,
   onOpenCreateCharacter,
   onRefresh,
   onNotify,
 }: CharacterPanelProps) {
+  // Filter visible characters: Admin sees all; normal players only see their own character(s)
+  // (plus unowned characters if they haven't claimed/created one yet).
+  const visibleCharacters = (() => {
+    if (isAdmin) return characters;
+    const uname = (currentUsername || "").trim().toLowerCase();
+    const ownedByMe = characters.filter((c) => {
+      const owner = String((c.detail as Record<string, unknown> | undefined)?.owner_username ?? "")
+        .trim()
+        .toLowerCase();
+      return Boolean(uname && owner === uname);
+    });
+    if (ownedByMe.length > 0) return ownedByMe;
+    return characters.filter((c) => {
+      const owner = String((c.detail as Record<string, unknown> | undefined)?.owner_username ?? "")
+        .trim()
+        .toLowerCase();
+      return !owner || (uname && owner === uname);
+    });
+  })();
+
   const [selectedId, setSelectedId] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [sheetTab, setSheetTab] = useState<SheetTab>("skills");
@@ -139,8 +169,14 @@ export function CharacterPanel({
     Array<{ sequence: number; revision: number; reason: string }>
   >([]);
 
-  // Bio / History editor
+  // Bio / Identity / History editor
   const [editingBio, setEditingBio] = useState(false);
+  const [bioHandle, setBioHandle] = useState("");
+  const [bioRealName, setBioRealName] = useState("");
+  const [bioRealNameHidden, setBioRealNameHidden] = useState(true);
+  const [bioPortraitUrl, setBioPortraitUrl] = useState("");
+  const [bioColor, setBioColor] = useState("cyan");
+  const [bioOwner, setBioOwner] = useState("");
   const [bioConcept, setBioConcept] = useState("");
   const [bioSummary, setBioSummary] = useState("");
   const [bioHistory, setBioHistory] = useState("");
@@ -149,21 +185,21 @@ export function CharacterPanel({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (preferredSelectedId && characters.some((c) => c.id === preferredSelectedId)) {
+    if (preferredSelectedId && visibleCharacters.some((c) => c.id === preferredSelectedId)) {
       setSelectedId(preferredSelectedId);
       setSheetTab("skills");
     }
-  }, [preferredSelectedId, characters]);
+  }, [preferredSelectedId, visibleCharacters]);
 
   useEffect(() => {
-    if (characters.length === 0) {
+    if (visibleCharacters.length === 0) {
       setSelectedId("");
       return;
     }
-    if (!characters.some((c) => c.id === selectedId)) {
-      setSelectedId(characters[0].id);
+    if (!visibleCharacters.some((c) => c.id === selectedId)) {
+      setSelectedId(visibleCharacters[0].id);
     }
-  }, [characters, selectedId]);
+  }, [visibleCharacters, selectedId]);
 
   useEffect(() => {
     setConfirmRemoveItem(null);
@@ -172,9 +208,9 @@ export function CharacterPanel({
   }, [selectedId, campaignId]);
 
   const active =
-    characters.find((c) => c.id === selectedId) ??
-    (preferredSelectedId ? characters.find((c) => c.id === preferredSelectedId) : undefined) ??
-    characters[0] ??
+    visibleCharacters.find((c) => c.id === selectedId) ??
+    (preferredSelectedId ? visibleCharacters.find((c) => c.id === preferredSelectedId) : undefined) ??
+    visibleCharacters[0] ??
     null;
 
   useEffect(() => {
@@ -284,17 +320,38 @@ export function CharacterPanel({
     if (!active || busy) return;
     setBusy(true);
     try {
-      const res = await runSkillCheck(campaignId, {
-        character_id: active.id,
-        expected_revision: active.revision,
-        stat: checkStat,
-        skill: checkSkill.trim() ? checkSkill.trim() : null,
-        dv: checkDv,
-        modifier: checkMod,
-        luck: checkLuck,
-        reason: checkReason.trim() || "Manual check",
-      });
-      setLastRoll(res);
+      let rollRes: {
+        total: number;
+        success: boolean;
+        die: number;
+        explosion: number;
+        wound_modifier: number;
+      };
+      try {
+        const chatRoll = await postManualChatRoll({
+          campaign_id: campaignId,
+          character_id: active.id,
+          stat: checkStat,
+          skill: checkSkill.trim() ? checkSkill.trim() : null,
+          dv: checkDv,
+          modifier: checkMod,
+          luck: checkLuck,
+          reason: checkReason.trim() || "Manual check",
+        });
+        rollRes = chatRoll.result;
+      } catch {
+        rollRes = await runSkillCheck(campaignId, {
+          character_id: active.id,
+          expected_revision: active.revision,
+          stat: checkStat,
+          skill: checkSkill.trim() ? checkSkill.trim() : null,
+          dv: checkDv,
+          modifier: checkMod,
+          luck: checkLuck,
+          reason: checkReason.trim() || "Manual check",
+        });
+      }
+      setLastRoll(rollRes);
       setCheckLuck(0);
       await onRefresh();
     } catch (err) {
@@ -411,17 +468,58 @@ export function CharacterPanel({
         {
           backstory: nextBackstory,
           appearance: bioAppearance.trim(),
+          handle: bioHandle.trim() || active.name,
+          real_name: bioRealName.trim() || null,
+          real_name_hidden: bioRealNameHidden,
+          portrait_url: bioPortraitUrl.trim() || null,
+          color: bioColor,
+          ...(isAdmin ? { owner_username: bioOwner.trim() || null } : {}),
         },
-        "Updated character bio & established history",
+        "Updated character identity, portrait & bio",
       );
       setEditingBio(false);
       await onRefresh();
-      onNotify(`Saved bio & history for ${active.name}.`);
+      onNotify(`Saved identity & bio for ${bioHandle.trim() || active.name}.`);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Bio update failed");
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleClaimCharacter = async () => {
+    if (!active || !currentUsername || busy) return;
+    setBusy(true);
+    try {
+      await updateCharacterProfile(
+        campaignId,
+        active.id,
+        active.revision,
+        { owner_username: currentUsername },
+        `Claimed by ${currentUsername}`,
+      );
+      await onRefresh();
+      onNotify(`Claimed ${active.name} for your account (${currentUsername}).`);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "Failed to claim character");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePortraitFileSelect = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2.5 * 1024 * 1024) {
+      onNotify("Portrait image must be under 2.5 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setBioPortraitUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const openCreator = () => {
@@ -450,7 +548,7 @@ export function CharacterPanel({
     />
   ) : null;
 
-  if (characters.length === 0) {
+  if (visibleCharacters.length === 0) {
     return (
       <div className="space-y-4 p-4">
         {creatorModal}
@@ -473,9 +571,9 @@ export function CharacterPanel({
 
           <div className="p-4 space-y-3">
             <p className="text-xs leading-relaxed text-slate-300">
-              Build a full Cyberpunk RED character sheet with Corebook Roles, hover/click rulebook
+              Build your own independent Cyberpunk RED character sheet with Corebook Roles, hover/click rulebook
               explanations, official STAT &amp; Skill templates or custom builds, Lifepath history,
-              written backstory, and starting gear.
+              written backstory, custom portrait, and starting gear.
             </p>
 
             <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
@@ -530,7 +628,25 @@ export function CharacterPanel({
   const hpPct = Math.max(0, Math.min(100, Math.round((active.hp / Math.max(1, active.max_hp)) * 100)));
   const humPct = Math.max(0, Math.min(100, Math.round((active.humanity / Math.max(1, maxHumanity)) * 100)));
   const claimant = roster.find((p) => p.character_id === active.id);
-  const sheetLocked = Boolean(protectOthers && claimant && claimant.client_id !== selfClientId);
+  const ownerUsername = typeof detail.owner_username === "string" && detail.owner_username.trim() ? detail.owner_username.trim() : null;
+  const ownedByOtherAccount = Boolean(
+    !isAdmin &&
+      ownerUsername &&
+      currentUsername &&
+      ownerUsername.toLowerCase() !== currentUsername.toLowerCase(),
+  );
+  const sheetLocked = Boolean(
+    ownedByOtherAccount || (protectOthers && claimant && claimant.client_id !== selfClientId),
+  );
+  const activeHandle = typeof detail.handle === "string" && detail.handle.trim() ? detail.handle.trim() : active.name;
+  const activeRealName = typeof detail.real_name === "string" && detail.real_name.trim() ? detail.real_name.trim() : null;
+  const activeRealNameHidden = Boolean(
+    detail.real_name_hidden ?? (activeRealName && activeHandle !== activeRealName),
+  );
+  const activePortraitUrl = typeof detail.portrait_url === "string" ? detail.portrait_url.trim() : "";
+  const activeColorKey =
+    typeof detail.color === "string" && CHARACTER_COLOR_THEMES[detail.color] ? detail.color : "cyan";
+  const activeColorTheme = CHARACTER_COLOR_THEMES[activeColorKey];
 
   const rolesList = Array.isArray(detail.roles)
     ? (detail.roles as Array<{
@@ -573,10 +689,13 @@ export function CharacterPanel({
     <div className="space-y-3 p-3.5">
       {creatorModal}
       {/* Unified Header + Crew Switcher */}
-      {characters.length > 1 && (
+      {visibleCharacters.length > 1 && (
         <div className="flex flex-wrap gap-1.5">
-          {characters.map((c) => {
+          {visibleCharacters.map((c) => {
             const owner = roster.find((p) => p.character_id === c.id);
+            const cDet = (c.detail ?? {}) as Record<string, unknown>;
+            const cHandle = typeof cDet.handle === "string" && cDet.handle.trim() ? cDet.handle.trim() : c.name;
+            const cOwnerUser = typeof cDet.owner_username === "string" ? cDet.owner_username.trim() : "";
             const selected = c.id === active.id;
             return (
               <button
@@ -589,13 +708,13 @@ export function CharacterPanel({
                     : "border-slate-800 bg-[#111726] text-slate-400 hover:text-slate-200"
                 }`}
               >
-                <span className="font-medium">{c.name}</span>
+                <span className="font-medium">{cHandle}</span>
                 <span className="font-mono text-[10px] text-slate-400">
                   {c.hp}/{c.max_hp}
                 </span>
-                {owner && (
+                {(owner || cOwnerUser) && (
                   <span className="rounded bg-cyan-500/15 px-1 text-[10px] text-cyan-300">
-                    {owner.player_name}
+                    {owner?.player_name || cOwnerUser}
                   </span>
                 )}
               </button>
@@ -607,25 +726,83 @@ export function CharacterPanel({
       {sheetLocked && (
         <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
           <Lock className="h-3.5 w-3.5 shrink-0" />
-          <span>Controlled by {claimant?.player_name}. Disable sheet protection in Co-op to edit.</span>
+          <span>
+            {ownedByOtherAccount
+              ? `Owned by ${ownerUsername}. Only ${ownerUsername} or Admin can modify this sheet.`
+              : `Controlled by ${claimant?.player_name}. Disable sheet protection in Co-op to edit.`}
+          </span>
+        </div>
+      )}
+
+      {!ownerUsername && currentUsername && !isAdmin && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/40 bg-cyan-950/25 px-3 py-1.5 text-xs text-cyan-200">
+          <span>This character is currently unclaimed. Claim it as your independent Edgerunner?</span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void handleClaimCharacter()}
+            className="inline-flex items-center gap-1 rounded bg-cyan-600 px-2.5 py-1 font-semibold text-white hover:bg-cyan-500"
+          >
+            <UserCheck className="h-3.5 w-3.5" />
+            <span>Claim Sheet</span>
+          </button>
         </div>
       )}
 
       <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-bold tracking-tight text-slate-100">
-              {active.name}
-            </h3>
-            {rolesList.map((r, i) => (
-              <span
-                key={i}
-                className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300"
-              >
-                {r.role ?? "Edgerunner"} {r.rank !== undefined ? `R${r.rank}` : ""}
-              </span>
-            ))}
-            <span className="font-mono text-[11px] text-slate-500">rev {active.revision}</span>
+        <div className="flex min-w-0 items-center gap-3">
+          {activePortraitUrl ? (
+            <img
+              src={activePortraitUrl}
+              alt={activeHandle}
+              className={`h-11 w-11 shrink-0 rounded-lg object-cover ring-2 ${activeColorTheme.avatarRingClass}`}
+            />
+          ) : (
+            <div
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border font-cyber-display text-sm font-bold uppercase ${activeColorTheme.nameBadgeClass}`}
+            >
+              {activeHandle.slice(0, 2)}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-base font-bold tracking-tight text-slate-100">
+                {activeHandle}
+              </h3>
+              {rolesList.map((r, i) => (
+                <span
+                  key={i}
+                  className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300"
+                >
+                  {r.role ?? "Edgerunner"} {r.rank !== undefined ? `R${r.rank}` : ""}
+                </span>
+              ))}
+              <span className="font-mono text-[11px] text-slate-500">rev {active.revision}</span>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+              {activeRealName && (
+                <span className="inline-flex items-center gap-1">
+                  <span>Real Name: <strong className="text-slate-300">{activeRealName}</strong></span>
+                  {activeRealNameHidden ? (
+                    <span
+                      title="NPCs and other players only know your Street Handle unless revealed in play"
+                      className="inline-flex items-center gap-0.5 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.2 font-mono text-[9px] text-amber-300"
+                    >
+                      <EyeOff className="h-2.5 w-2.5" /> Hidden
+                    </span>
+                  ) : (
+                    <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.2 font-mono text-[9px] text-slate-400">
+                      Known
+                    </span>
+                  )}
+                </span>
+              )}
+              {ownerUsername && (
+                <span className="font-mono text-[10px] text-cyan-300/80">
+                  Player: {ownerUsername}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -918,10 +1095,15 @@ export function CharacterPanel({
             className="space-y-2 rounded-lg border border-slate-800 bg-[#101624] p-3"
           >
             <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                <Dices className="h-3.5 w-3.5 text-cyan-400" />
-                Authoritative Skill Check
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                  <Dices className="h-3.5 w-3.5 text-cyan-400" />
+                  Manual Skill Roll
+                </span>
+                <span className="font-mono text-[10px] text-slate-500">
+                  (Authoritative Skill Check · Posts to Chat)
+                </span>
+              </div>
               <div className="flex items-center gap-2">
                 {lastRoll && (
                   <span
@@ -1289,13 +1471,19 @@ export function CharacterPanel({
           <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Backstory &amp; Established History
+                Identity, Portrait &amp; Backstory
               </div>
               {!editingBio && (
                 <button
                   type="button"
                   disabled={sheetLocked}
                   onClick={() => {
+                    setBioHandle(activeHandle);
+                    setBioRealName(activeRealName ?? "");
+                    setBioRealNameHidden(activeRealNameHidden);
+                    setBioPortraitUrl(activePortraitUrl);
+                    setBioColor(activeColorKey);
+                    setBioOwner(ownerUsername ?? "");
                     setBioConcept(
                       typeof backstoryObj.concept === "string" ? backstoryObj.concept : "",
                     );
@@ -1319,13 +1507,130 @@ export function CharacterPanel({
                   className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
                 >
                   <Pencil className="h-3 w-3" />
-                  Edit Bio
+                  Edit Bio &amp; Portrait
                 </button>
               )}
             </div>
 
             {editingBio ? (
-              <form onSubmit={handleSaveBio} className="space-y-2">
+              <form onSubmit={handleSaveBio} className="space-y-2.5">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">
+                      Street Handle / Alias (Primary)
+                    </label>
+                    <input
+                      type="text"
+                      value={bioHandle}
+                      onChange={(e) => setBioHandle(e.target.value)}
+                      placeholder="e.g. V, Kiwi, Blackhand..."
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-0.5 flex items-center justify-between gap-1">
+                      <label className="text-[11px] text-slate-400">
+                        Real / Legal Name (Optional)
+                      </label>
+                      <label className="inline-flex cursor-pointer items-center gap-1 text-[10px] text-amber-300">
+                        <input
+                          type="checkbox"
+                          checked={bioRealNameHidden}
+                          onChange={(e) => setBioRealNameHidden(e.target.checked)}
+                          className="rounded border-slate-700 bg-slate-950 accent-amber-500"
+                        />
+                        <span>Hidden (Known by Handle only)</span>
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={bioRealName}
+                      onChange={(e) => setBioRealName(e.target.value)}
+                      placeholder="Leave blank if known strictly by Handle..."
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 rounded border border-slate-800 bg-slate-950/60 p-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+                      <ImageIcon className="h-3.5 w-3.5 text-cyan-400" />
+                      Character Portrait (URL or Upload)
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20">
+                      <Upload className="h-3 w-3" />
+                      <span>Upload Image</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handlePortraitFileSelect(e.target.files?.[0])}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {bioPortraitUrl && (
+                      <img
+                        src={bioPortraitUrl}
+                        alt="Preview"
+                        className="h-9 w-9 shrink-0 rounded object-cover ring-1 ring-cyan-500/50"
+                      />
+                    )}
+                    <input
+                      type="text"
+                      value={bioPortraitUrl}
+                      onChange={(e) => setBioPortraitUrl(e.target.value)}
+                      placeholder="Paste image URL (https://...) or upload a portrait file..."
+                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                    {bioPortraitUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setBioPortraitUrl("")}
+                        className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400 hover:text-rose-300"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-2.5">
+                  <span className="text-[11px] text-slate-300">Chat Name Tag Color:</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {Object.entries(CHARACTER_COLOR_THEMES).map(([cid, theme]) => (
+                      <button
+                        key={cid}
+                        type="button"
+                        onClick={() => setBioColor(cid)}
+                        className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] transition ${
+                          bioColor === cid
+                            ? `${theme.nameBadgeClass} font-bold`
+                            : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <span className={`h-2 w-2 rounded-full ${theme.dotClass}`} />
+                        {theme.label.split(" ")[1] || theme.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {isAdmin && (
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">
+                      Assigned Player Account (Admin Only — leave blank for shared/unclaimed)
+                    </label>
+                    <input
+                      type="text"
+                      value={bioOwner}
+                      onChange={(e) => setBioOwner(e.target.value)}
+                      placeholder="Account username..."
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="mb-0.5 block text-[11px] text-slate-400">
                     Concept / Reputation

@@ -13,9 +13,13 @@ import {
   ChevronUp,
   Cpu,
   Dices,
+  Eye,
+  EyeOff,
   HelpCircle,
   Heart,
+  ImagePlus,
   Minus,
+  Palette,
   Plus,
   RotateCcw,
   Search,
@@ -43,6 +47,7 @@ import {
   type CreationSkillInfo,
   type StatName,
 } from "../types";
+import { CHARACTER_COLOR_THEMES } from "./ChatPane";
 import { FieldAiActions } from "./FieldAiActions";
 
 interface CharacterCreatorModalProps {
@@ -318,6 +323,10 @@ export function CharacterCreatorModal({
 
   // Core Identity & Mode
   const [name, setName] = useState("");
+  const [realName, setRealName] = useState("");
+  const [realNameHidden, setRealNameHidden] = useState(true);
+  const [portraitUrl, setPortraitUrl] = useState("");
+  const [characterColor, setCharacterColor] = useState("cyan");
   const [pronouns, setPronouns] = useState("");
   const [age, setAge] = useState("");
   const [conceptTagline, setConceptTagline] = useState("");
@@ -412,7 +421,8 @@ export function CharacterCreatorModal({
   const [programSubFilter, setProgramSubFilter] = useState<"all" | "booster" | "defender" | "attacker" | "black_ice">("all");
   const [shopSort, setShopSort] = useState<"cost_asc" | "cost_desc" | "name_asc" | "sp_desc" | "hl_asc">("cost_asc");
   const [affordableOnly, setAffordableOnly] = useState(false);
-  const [loadoutOpen, setLoadoutOpen] = useState(false);
+  const [selectedOnly, setSelectedOnly] = useState(false);
+  const [loadoutOpen, setLoadoutOpen] = useState(true);
   const [inspectedItemId, setInspectedItemId] = useState<string | null>(null);
   const [shopSearch, setShopSearch] = useState("");
   const [cartItems, setCartItems] = useState<Array<{ name: string; category: string; cost_eb: number; hl?: number; sp?: number; location?: string; install?: string; notes?: string; qty: number }>>([]);
@@ -425,9 +435,28 @@ export function CharacterCreatorModal({
   const prevRoleRef = useRef<string | null>(null);
   const skipNextRoleResetRef = useRef(false);
 
+  const handlePortraitUpload = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2.5 * 1024 * 1024) {
+      onNotify("Portrait image must be under 2.5 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setPortraitUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const resetCharacterDefaults = () => {
     setStep("identity");
     setName("");
+    setRealName("");
+    setRealNameHidden(true);
+    setPortraitUrl("");
+    setCharacterColor("cyan");
     setPronouns("");
     setAge("");
     setConceptTagline("");
@@ -500,6 +529,10 @@ export function CharacterCreatorModal({
       skipNextRoleResetRef.current = true;
       if (typeof saved.step === "string") setStep(saved.step as CreatorStep);
       if (typeof saved.name === "string") setName(saved.name);
+      if (typeof saved.realName === "string") setRealName(saved.realName);
+      if (typeof saved.realNameHidden === "boolean") setRealNameHidden(saved.realNameHidden);
+      if (typeof saved.portraitUrl === "string") setPortraitUrl(saved.portraitUrl);
+      if (typeof saved.characterColor === "string") setCharacterColor(saved.characterColor);
       if (typeof saved.pronouns === "string") setPronouns(saved.pronouns);
       if (typeof saved.age === "string") setAge(saved.age);
       if (typeof saved.conceptTagline === "string") setConceptTagline(saved.conceptTagline);
@@ -563,6 +596,8 @@ export function CharacterCreatorModal({
     if (!open || !hydratedRef.current) return;
     const hasContent = Boolean(
       name.trim() ||
+        realName.trim() ||
+        portraitUrl.trim() ||
         pronouns.trim() ||
         age.trim() ||
         conceptTagline.trim() ||
@@ -582,6 +617,10 @@ export function CharacterCreatorModal({
     saveDraft(draftKey, {
       step,
       name,
+      realName,
+      realNameHidden,
+      portraitUrl,
+      characterColor,
       pronouns,
       age,
       conceptTagline,
@@ -637,6 +676,10 @@ export function CharacterCreatorModal({
     draftKey,
     step,
     name,
+    realName,
+    realNameHidden,
+    portraitUrl,
+    characterColor,
     pronouns,
     age,
     conceptTagline,
@@ -1112,7 +1155,7 @@ export function CharacterCreatorModal({
   // Validation checks
   const validationIssues = useMemo(() => {
     const issues: string[] = [];
-    if (!name.trim()) issues.push("Enter a Handle / Name on Step 1 (Identity & Role).");
+    if (!name.trim() && !realName.trim()) issues.push("Enter a Handle / Name on Step 1 (Identity & Role).");
     if (method === "complete_package") {
       if (!refData?.rules_indexed) {
         issues.push("Complete Package needs your Corebook PDF uploaded in Settings → Corebook PDF (or switch to Freeform).");
@@ -1152,6 +1195,7 @@ export function CharacterCreatorModal({
     return issues;
   }, [
     name,
+    realName,
     method,
     refData,
     statSum,
@@ -1300,7 +1344,10 @@ export function CharacterCreatorModal({
         ...(field ? { field } : {}),
         guidance: (target === "bio" ? aiBioGuidance : aiContactsGuidance).trim() || undefined,
         character: {
-          name: name.trim() || "Unnamed Edgerunner",
+          name: name.trim() || realName.trim() || "Unnamed Edgerunner",
+          handle: name.trim() || undefined,
+          real_name: realName.trim() || undefined,
+          real_name_hidden: realNameHidden,
           pronouns: pronouns.trim() || undefined,
           age: age.trim() || undefined,
           role: selectedRole,
@@ -1447,10 +1494,18 @@ export function CharacterCreatorModal({
         appearance: appearanceNotes.trim() || undefined,
       };
 
+      const primaryName = name.trim() || realName.trim();
+      const handleVal = name.trim() || primaryName;
+      const realNameVal = realName.trim() || undefined;
       let createdId = "";
       if (method !== "freeform" && refData?.rules_indexed) {
         const res = await createRulesPlayerCharacter(campaignId, soloRevision, {
-          name: name.trim(),
+          name: primaryName,
+          handle: handleVal,
+          real_name: realNameVal,
+          real_name_hidden: realNameHidden,
+          portrait_url: portraitUrl.trim() || undefined,
+          color: characterColor,
           role: selectedRole,
           method,
           ...(method === "streetrat" ? { template_rolls: [streetratRoll] } : {}),
@@ -1474,13 +1529,18 @@ export function CharacterCreatorModal({
         createdId = res.character_id;
       } else {
         const created = await createAndAttachCharacter(campaignId, campaignRevision, {
-          name: name.trim(),
+          name: primaryName,
           stats: activeStats,
           skills: effectiveSkills,
           money: gearSummary.money,
           inventory: gearSummary.inventory,
           humanity: startingHumanity,
           detail: {
+            handle: handleVal,
+            ...(realNameVal ? { real_name: realNameVal } : {}),
+            real_name_hidden: realNameHidden,
+            ...(portraitUrl.trim() ? { portrait_url: portraitUrl.trim() } : {}),
+            color: characterColor,
             roles: [{ role: selectedRole, rank: 4, choices: buildRoleChoicesPayload() }],
             creation: { method: "freeform", initial_emp: activeStats.EMP },
             lifepath: lifepathPayload,
@@ -1495,7 +1555,7 @@ export function CharacterCreatorModal({
       }
 
       clearDraft(draftKey);
-      await onCreated(createdId, name.trim());
+      await onCreated(createdId, primaryName);
       resetCharacterDefaults();
       onClose();
     } catch (err) {
@@ -1700,6 +1760,9 @@ export function CharacterCreatorModal({
       if (shopCategory === "program" && programSubFilter !== "all") {
         if (classifyProgramSubcategory(item) !== programSubFilter) return false;
       }
+      if (selectedOnly && !cartItems.some((c) => c.name === item.name && c.category === item.category)) {
+        return false;
+      }
       if (affordableOnly && method === "complete_package" && item.cost_eb > remainingGearEb) {
         return false;
       }
@@ -1725,6 +1788,7 @@ export function CharacterCreatorModal({
   const fashionItemsForDisplay = (() => {
     const q = shopSearch.trim().toLowerCase();
     const list = (refData?.fashion ?? []).filter((f) => {
+      if (selectedOnly && !selectedFashion.some((x) => x.name === f.name)) return false;
       if (affordableOnly && method === "complete_package" && f.cost_eb > remainingFashionEb) return false;
       if (!q) return true;
       return f.name.toLowerCase().includes(q) || f.summary.toLowerCase().includes(q) || f.style.toLowerCase().includes(q);
@@ -1844,7 +1908,7 @@ export function CharacterCreatorModal({
             {step === "identity" && (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-                  <div className="sm:col-span-6">
+                  <div className="sm:col-span-5">
                     <label className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-300">
                       <span>Street Handle / Name *</span>
                       <button
@@ -1863,25 +1927,122 @@ export function CharacterCreatorModal({
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
-                  <div className="sm:col-span-3">
+                  <div className="sm:col-span-4">
+                    <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold text-slate-300">
+                      <span>Real / Legal Name (optional)</span>
+                      <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-normal text-amber-300" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
+                        <input
+                          type="checkbox"
+                          checked={realNameHidden}
+                          onChange={(e) => setRealNameHidden(e.target.checked)}
+                          className="accent-amber-400"
+                        />
+                        {realNameHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        <span>{realNameHidden ? "Hidden / Secret" : "Publicly Known"}</span>
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={realName}
+                      onChange={(e) => setRealName(e.target.value)}
+                      placeholder="Leave blank if known only by Handle"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Pronouns</label>
                     <input
                       type="text"
                       value={pronouns}
                       onChange={(e) => setPronouns(e.target.value)}
-                      placeholder="they/them, she/her…"
+                      placeholder="they/them…"
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
-                  <div className="sm:col-span-3">
+                  <div className="sm:col-span-1">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Age</label>
                     <input
                       type="text"
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
-                      placeholder="e.g. 24"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      placeholder="24"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
+                  </div>
+                </div>
+
+                {/* Portrait & Chat Color Tag Row */}
+                <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3 sm:grid-cols-12">
+                  <div className="flex items-center gap-3 sm:col-span-7">
+                    {portraitUrl.trim() ? (
+                      <img
+                        src={portraitUrl}
+                        alt={name || "Portrait"}
+                        className="h-12 w-12 shrink-0 rounded-lg border border-cyan-500/50 object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-400">
+                        <ImagePlus className="h-5 w-5" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="text-xs font-semibold text-slate-200">Character Portrait (optional)</span>
+                        <div className="flex items-center gap-1.5">
+                          <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/20">
+                            <ImagePlus className="h-3 w-3" /> Upload Image
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handlePortraitUpload(e.target.files?.[0])}
+                              className="hidden"
+                            />
+                          </label>
+                          {portraitUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setPortraitUrl("")}
+                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-rose-300"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <input
+                        type="url"
+                        value={portraitUrl.startsWith("data:") ? "" : portraitUrl}
+                        onChange={(e) => setPortraitUrl(e.target.value)}
+                        placeholder={portraitUrl.startsWith("data:") ? "Custom image uploaded from device" : "Or paste an image URL (https://…)"}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-center sm:col-span-5">
+                    <span className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-200">
+                      <Palette className="h-3.5 w-3.5 text-cyan-400" /> Chat Name Tag Color
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {Object.entries(CHARACTER_COLOR_THEMES).map(([cid, theme]) => {
+                        const active = characterColor === cid;
+                        return (
+                          <button
+                            key={cid}
+                            type="button"
+                            onClick={() => setCharacterColor(cid)}
+                            className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-medium transition ${
+                              active
+                                ? `${theme.nameBadgeClass} ring-1 ring-white/40`
+                                : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                            }`}
+                          >
+                            <span className={`h-2.5 w-2.5 rounded-full ${theme.dotClass}`} />
+                            <span>{theme.label.split(" ")[1] || theme.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
@@ -3409,45 +3570,73 @@ export function CharacterCreatorModal({
 
                       {/* Collapsible Loadout Bag & Cyberware Warnings */}
                       {loadoutOpen && (
-                        <div className="max-h-44 overflow-y-auto space-y-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 text-xs">
+                        <div className="max-h-52 overflow-y-auto space-y-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 text-xs">
                           {cartItems.length === 0 && selectedFashion.length === 0 ? (
                             <p className="text-[11px] text-slate-400">Your bag is empty. Add weapons, armor, cyberware, or fashion below.</p>
                           ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              {cartItems.map((it) => (
-                                <span key={`${it.category}-${it.name}`} className="inline-flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs">
-                                  <span>{it.name} {it.qty > 1 ? `×${it.qty}` : ""}</span>
-                                  <span className="font-mono text-[10px] text-emerald-300">{it.cost_eb * it.qty}eb</span>
-                                  <button
-                                    type="button"
-                                    aria-label={`Remove ${it.name}`}
-                                    onClick={() =>
-                                      setCartItems((p) =>
-                                        p.flatMap((x) =>
-                                          x.name === it.name && x.category === it.category
-                                            ? x.qty > 1
-                                              ? [{ ...x, qty: x.qty - 1 }]
-                                              : []
-                                            : [x],
-                                        ),
-                                      )
-                                    }
-                                    className="text-slate-400 hover:text-rose-400"
-                                  >×</button>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between border-b border-slate-800/80 pb-1.5">
+                                <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                                  Active Loadout ({cartItems.reduce((a, b) => a + b.qty, 0) + selectedFashion.length} selected)
                                 </span>
-                              ))}
-                              {selectedFashion.map((f, idx) => (
-                                <span key={idx} className="inline-flex items-center gap-1.5 rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-0.5 text-xs">
-                                  <span>{f.name}</span>
-                                  <span className="font-mono text-[10px] text-cyan-300">{f.cost_eb}eb</span>
-                                  <button
-                                    type="button"
-                                    aria-label={`Remove ${f.name}`}
-                                    onClick={() => setSelectedFashion((p) => p.filter((_, i) => i !== idx))}
-                                    className="text-slate-400 hover:text-rose-400"
-                                  >×</button>
-                                </span>
-                              ))}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCartItems([]);
+                                    setSelectedFashion([]);
+                                  }}
+                                  className="rounded border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-400 hover:border-rose-500/40 hover:text-rose-300"
+                                >
+                                  Clear Loadout
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {cartItems.map((it) => (
+                                  <span
+                                    key={`${it.category}-${it.name}`}
+                                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs ${
+                                      it.category === "cyberware"
+                                        ? "border-violet-500/40 bg-violet-950/25 text-violet-100"
+                                        : it.category === "weapon" || it.category === "armor"
+                                          ? "border-rose-500/35 bg-rose-950/20 text-slate-100"
+                                          : "border-emerald-500/35 bg-emerald-950/20 text-slate-100"
+                                    }`}
+                                  >
+                                    <span className="font-mono text-[9px] uppercase text-slate-400">{it.category}</span>
+                                    <span className="font-medium">{it.name} {it.qty > 1 ? `×${it.qty}` : ""}</span>
+                                    <span className="font-mono text-[10px] text-emerald-300">{it.cost_eb * it.qty}eb</span>
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove ${it.name}`}
+                                      onClick={() =>
+                                        setCartItems((p) =>
+                                          p.flatMap((x) =>
+                                            x.name === it.name && x.category === it.category
+                                              ? x.qty > 1
+                                                ? [{ ...x, qty: x.qty - 1 }]
+                                                : []
+                                              : [x],
+                                          ),
+                                        )
+                                      }
+                                      className="text-slate-400 hover:text-rose-400"
+                                    >×</button>
+                                  </span>
+                                ))}
+                                {selectedFashion.map((f, idx) => (
+                                  <span key={idx} className="inline-flex items-center gap-1.5 rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-0.5 text-xs">
+                                    <span className="font-mono text-[9px] uppercase text-cyan-300/80">fashion</span>
+                                    <span>{f.name}</span>
+                                    <span className="font-mono text-[10px] text-cyan-300">{f.cost_eb}eb</span>
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove ${f.name}`}
+                                      onClick={() => setSelectedFashion((p) => p.filter((_, i) => i !== idx))}
+                                      className="text-slate-400 hover:text-rose-400"
+                                    >×</button>
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           )}
 
@@ -3546,6 +3735,18 @@ export function CharacterCreatorModal({
                             {shopCategory === "cyberware" && <option value="hl_asc" className="bg-slate-950">Humanity Loss: Low → High</option>}
                           </select>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOnly((v) => !v)}
+                          className={`rounded border px-2 py-1 text-[11px] font-medium transition ${
+                            selectedOnly
+                              ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
+                              : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          Selected Only
+                        </button>
 
                         {method === "complete_package" && (
                           <button
@@ -3761,16 +3962,21 @@ export function CharacterCreatorModal({
                                 setInspector(inspectPayload);
                               }}
                               className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs transition ${
-                                inspectedItemId === item.id
-                                  ? "border-cyan-500/60 bg-cyan-950/20"
-                                  : inCart
-                                    ? "border-emerald-500/40 bg-emerald-950/10"
+                                inCart
+                                  ? "border-l-4 border-l-emerald-400 border-emerald-500/50 bg-emerald-950/20 shadow-sm"
+                                  : inspectedItemId === item.id
+                                    ? "border-cyan-500/60 bg-cyan-950/20"
                                     : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
                               }`}
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-semibold text-slate-100">{item.name}</span>
+                                  {inCart && (
+                                    <span className="rounded border border-emerald-400/60 bg-emerald-500/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-200">
+                                      SELECTED ×{inCart.qty}
+                                    </span>
+                                  )}
                                   {dmgVal && (
                                     <span className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
                                       {dmgVal}
@@ -3910,14 +4116,31 @@ export function CharacterCreatorModal({
                 )}
 
                 <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                    <div>
-                      <h3 className="text-base font-bold text-slate-100">
-                        {name.trim() || "Unnamed Edgerunner"}
-                      </h3>
-                      <p className="text-xs text-cyan-300">
-                        {selectedRole} (Rank 4 · {roleInfo?.ability}) · {culturalRegion} ({culturalLanguage})
-                      </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-3">
+                      {portraitUrl.trim() && (
+                        <img
+                          src={portraitUrl}
+                          alt={name.trim() || realName.trim() || "Portrait"}
+                          className="h-12 w-12 rounded-lg border border-cyan-500/50 object-cover"
+                        />
+                      )}
+                      <div>
+                        <h3 className="text-base font-bold text-slate-100">
+                          {name.trim() || realName.trim() || "Unnamed Edgerunner"}
+                        </h3>
+                        {realName.trim() && (
+                          <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                            <span>Real Name: <strong className="text-slate-200">{realName.trim()}</strong></span>
+                            <span className="font-mono text-[10px] text-amber-300">
+                              ({realNameHidden ? "Hidden / Known by Handle" : "Publicly Known"})
+                            </span>
+                          </div>
+                        )}
+                        <p className="text-xs text-cyan-300">
+                          {selectedRole} (Rank 4 · {roleInfo?.ability}) · {culturalRegion} ({culturalLanguage})
+                        </p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-3 font-mono text-xs">
                       <span className="text-rose-300">HP {maxHp}</span>
@@ -4009,11 +4232,27 @@ export function CharacterCreatorModal({
           <aside className="hidden min-h-0 lg:flex lg:col-span-4 flex-col overflow-hidden border-l border-slate-800 bg-[#0d1322] p-4 space-y-4">
             {/* Live Vitals Card */}
             <div className="shrink-0 space-y-3 rounded-lg border border-slate-800 bg-[#11192c] p-3.5">
-              <div className="flex items-center justify-between">
-                <span className="truncate text-sm font-bold text-slate-100">
-                  {name.trim() || "New Edgerunner"}
-                </span>
-                <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  {portraitUrl.trim() && (
+                    <img
+                      src={portraitUrl}
+                      alt={name.trim() || "Portrait"}
+                      className="h-8 w-8 shrink-0 rounded-md border border-cyan-500/40 object-cover"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-slate-100">
+                      {name.trim() || realName.trim() || "New Edgerunner"}
+                    </div>
+                    {realName.trim() && (
+                      <div className="truncate font-mono text-[10px] text-slate-400">
+                        {realName.trim()} {realNameHidden ? "(Hidden)" : "(Public)"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <span className="shrink-0 rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
                   {selectedRole} R4
                 </span>
               </div>

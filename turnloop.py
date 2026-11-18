@@ -155,15 +155,18 @@ _DEFAULT_PLAYER_NARRATION_RULES = (
 )
 
 _DEFAULT_MULTIPLAYER_RULES = (
-    "- Each turn arrives tagged with its active speaker (`[Character]: ...` and `Active Player / Speaker`). Resolve checks, LUCK, Overclock, and direct NPC replies primarily for that speaker unless they explicitly act together with a teammate.\n"
-    "- Protect teammate agency: NEVER invent dialogue, movement, or decisions for other player characters in the party while resolving one player's turn—leave idle or off-spotlight PCs free to jump in on their own turn.\n"
-    "- Keep party members distinct: honor each PC's separate HP, ammo, cyberware, location, and NPC disposition from `Characters`, and do not merge their inventory or private knowledge unless they are together and share it."
+    "- Each turn arrives tagged with its active speaker (`[Character]: ...` and `Active Player / Speaker`). Resolve checks, LUCK, Overclock, and direct NPC replies primarily for that speaker unless multiple players acted in sequence.\n"
+    "- When multiple consecutive `[Speaker]: ...` player turns appear since your last reply, resolve all of those players' declared actions and dialogue together in one cohesive scene response.\n"
+    "- Protect teammate agency: NEVER invent dialogue, movement, or decisions for other player characters in the party while resolving a turn—leave idle or off-spotlight PCs free to jump in on their own turn.\n"
+    "- Keep party members distinct: honor each PC's separate HP, ammo, cyberware, location, and NPC disposition from `Characters`, and do not merge their inventory or private knowledge unless they are together and share it.\n"
+    "- Handle vs Real Name Privacy: Always refer to and have NPCs address player characters by their Street Handle (`handle` / `name`). If a character has `real_name_hidden: true`, NPCs and the world DO NOT know their real/legal name unless they explicitly reveal it in play."
 )
 
 _DEFAULT_NARRATOR_CORE_RULES = (
     "Information Fog-of-War & Earned Intel:\n"
     "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
     "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
+    "- Handle vs Real Name Privacy: If a character has `real_name_hidden: true` in `Characters`, NPCs and public terminals only know their `handle` (never their hidden `real_name`).\n"
     "Character voice, naming & grounded realism:\n"
     "- Keep the tone gritty, everyday, and street-level—transactional, awkward, tense, and worn down—NOT witty action-movie banter, snappy one-liners, or fantastical heroics. People care about rent, cheap food, NCPD heat, and getting home alive.\n"
     "- Write NPCs as ordinary, flawed people first (tired, defensive, irritated, blunt, hesitant, or quietly worried), each with a distinct rhythm and speech pattern rather than stoic thriller stereotypes.\n"
@@ -198,13 +201,15 @@ _DEFAULT_ARCHIVIST_CORE_RULES = (
 )
 
 _DEFAULT_INTRO_PROMPT = (
-    "You are the Cyberpunk RED Game Master welcoming a player to Night City (2045, Time of the Red). "
-    "Write a clear, complete, atmospheric introductory briefing covering:\n"
-    "1. **What Cyberpunk RED Is**: Night City in 2045 after the 4th Corporate War — scavenging, Night Markets, Fixers, megacorps, street survival, and 'Style Over Substance'.\n"
-    "2. **How the Game Works**: The core check formula (**1d10 + STAT + Skill** vs **Difficulty Value (DV)**), **Critical Success** (natural 10 explodes — roll again & add), **Critical Failure / Fumble** (natural 1 subtracts a second d10), **LUCK** (commit points before rolling for +1 each), **Overclock** (spend 2 Humanity for +2 on a check), **HP & Wound States** (Seriously Wounded below half HP gives -2; Mortally Wounded triggers Death Saves), and **Humanity / Cyberware** (every -10 Humanity lowers EMP by 1).\n"
-    "3. **What the 10 STATs Do**: Briefly explain INT, REF, DEX, TECH, COOL, WILL, LUCK, MOVE, BODY, and EMP so a new player knows what each number means.\n"
-    "4. **What You Can Play (Roles & Starting Out)**: Briefly introduce the 10 Iconic Roles (Solo, Netrunner, Tech, Medtech, Media, Exec, Lawman, Fixer, Nomad, Rockerboy), tell them how to create/attach an Edgerunner in the Character tab on the right, and invite them into the current campaign's opening situation.\n"
-    "Use crisp Markdown headings and bullet lists. Tailor your closing hook to the active campaign context if one is set up."
+    "You are running a Cyberpunk RED (2045, Time of the Red) campaign table. Write a tight, authentic in-universe Screamsheet & Tactical Briefing.\n"
+    "STRICT ANTI-SLOP RULES:\n"
+    "- NEVER use emojis (no 🖥️, 🎯, ⚡, 🎲, etc.).\n"
+    "- NEVER use generic AI sign-offs or corny catchphrases ('Roll up. Jack in. Style over substance. — Your GM').\n"
+    "- Keep it sharp, readable, and under 380 words total.\n"
+    "Structure your briefing into three clean sections:\n"
+    "1. **N54 SCREAMSHEET // LOCAL DISPATCH**: A 1-paragraph cynical Night City 2045 news feed or Fixer wire broadcast grounding the district, the scarcity/corporate friction of the Time of the Red, and the immediate stakes of the active campaign.\n"
+    "2. **ACTIVE CREW & SITUATION**: State the exact current scene, active objectives, known NPCs, and who is currently at the table (using their Street Handles, Roles, and actual gear—never exposing hidden real names). If no character is attached yet, tell the player to open the Character tab to build or claim their Edgerunner.\n"
+    "3. **OPENING BEAT**: Drop directly into the immediate, grounded scene at hand and end with a concrete situational choice."
 )
 
 DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
@@ -298,6 +303,7 @@ def _default_llm_dict() -> dict[str, Any]:
         "narrator_length": "standard",
         "default_time_step_minutes": 0,
         "gm_thinking_mode": "quality",
+        "require_character_to_speak": True,
     }
 
 
@@ -415,6 +421,8 @@ def _validate_llm_settings(raw: dict[str, Any], existing: dict[str, Any] | None 
         if tm not in _GM_THINKING_MODES:
             raise ValueError("gm_thinking_mode must be 'quality' or 'balanced'")
         base["gm_thinking_mode"] = tm
+    if "require_character_to_speak" in raw and raw["require_character_to_speak"] is not None:
+        base["require_character_to_speak"] = bool(raw["require_character_to_speak"])
     return base
 
 
@@ -478,6 +486,7 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "narrator_length": settings.get("narrator_length", "standard"),
         "default_time_step_minutes": int(settings.get("default_time_step_minutes", 0)),
         "gm_thinking_mode": settings.get("gm_thinking_mode", "quality"),
+        "require_character_to_speak": bool(settings.get("require_character_to_speak", True)),
     }
 
 
@@ -1201,6 +1210,51 @@ class ChatTreeStore:
             )
         return self.get_tree(campaign_id)
 
+    def update_message_metadata(
+        self,
+        campaign_id: str,
+        message_id: str,
+        metadata_updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Merge additional keys into a message's metadata_json and return the updated row dict."""
+        with closing(self.store._connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE campaign_id=? AND id=?",
+                (campaign_id, message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            meta = json.loads(row["metadata_json"])
+            for k, v in metadata_updates.items():
+                if v is None:
+                    meta.pop(k, None)
+                else:
+                    meta[k] = v
+            conn.execute(
+                "UPDATE chat_messages SET metadata_json=? WHERE campaign_id=? AND id=?",
+                (_json(meta), campaign_id, message_id),
+            )
+            updated = conn.execute(
+                "SELECT * FROM chat_messages WHERE campaign_id=? AND id=?",
+                (campaign_id, message_id),
+            ).fetchone()
+            return self._row_dict(updated) if updated else None
+
+    def sync_active_leaf_revisions(self, campaign_id: str) -> dict[str, Any]:
+        """Sync the active branch leaf's stored revisions to current live campaign/solo revisions."""
+        tree = self.get_tree(campaign_id)
+        leaf_id = tree.get("active_leaf_id")
+        revs = tree.get("current_revisions") or self._current_revisions(campaign_id)
+        if leaf_id:
+            with closing(self.store._connect()) as conn, conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "UPDATE chat_messages SET campaign_revision=?, solo_revision=? WHERE campaign_id=? AND id=?",
+                    (int(revs["campaign_revision"]), int(revs["solo_revision"]), campaign_id, leaf_id),
+                )
+        return self.get_tree(campaign_id)
+
     def export_branch(self, campaign_id: str, leaf_id: str | None = None) -> dict[str, Any]:
         """Return both structured JSON and Markdown transcript for the active or requested branch."""
         ctx = self.gameplay.campaign_context(campaign_id)
@@ -1292,9 +1346,24 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
     d = char.get("detail") or {}
     role_ext = d.get("role_ext") or {}
     char_ip = int(role_ext.get("ip") or d.get("ip") or 0)
+    handle = str(d.get("handle") or char.get("name") or "").strip()
+    real_name = str(d.get("real_name") or "").strip()
+    real_name_hidden = bool(d.get("real_name_hidden", True if (handle and real_name) else False))
+    if handle and real_name and real_name_hidden:
+        identity_note = f"Street Handle: '{handle}' | Real Name: '{real_name}' (HIDDEN/SECRET — NPCs and the world DO NOT know their real name unless revealed in play)"
+    elif handle and real_name:
+        identity_note = f"Street Handle: '{handle}' | Real Name: '{real_name}' (Publicly known)"
+    else:
+        identity_note = f"Street Handle: '{handle}' (Goes by handle only)"
     return {
         "id": char["id"],
         "name": char["name"],
+        "handle": handle,
+        **({"real_name": real_name} if real_name else {}),
+        "real_name_hidden": real_name_hidden,
+        "identity_note": identity_note,
+        **({"owner_username": d["owner_username"]} if d.get("owner_username") else {}),
+        **({"color": d["color"]} if d.get("color") else {}),
         "hp": char["hp"],
         "max_hp": char["max_hp"],
         "seriously_wounded": (max_h + 1) // 2,
@@ -2685,41 +2754,6 @@ class TurnEngine:
         msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
         return msgs
 
-    def _build_intro_messages(
-        self,
-        prep: dict[str, Any],
-        user_text: str,
-        *,
-        speaker: dict[str, str] | None = None,
-        guidance: str | None = None,
-    ) -> list[dict[str, str]]:
-        ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
-        camp = ctx["campaign"]
-        state = camp["state"]
-        chars = [_summarize_character(c) for c in ctx["characters"]]
-        intro_prompt = (self.prompt_settings.get("intro_prompt") or "").strip() or _DEFAULT_INTRO_PROMPT
-        world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
-        extra_world = f"\nTable World Rules:\n{world_prefix}\n" if world_prefix else ""
-        guidance_line = (
-            f"\nDirector Regeneration Note: {guidance.strip()}\n"
-            if isinstance(guidance, str) and guidance.strip()
-            else ""
-        )
-        system_prompt = (
-            f"{intro_prompt}\n"
-            f"{extra_world}"
-            f"{guidance_line}"
-            f"Active Campaign: {camp.get('name', 'Night City Run')} (Session {camp.get('session_number', 1)})\n"
-            f"Campaign Scene: {state.get('scene') or '(not yet set)'}\n"
-            f"Campaign Summary: {state.get('summary') or '(not yet set)'}\n"
-            f"Party Characters Attached: {json.dumps(chars)}"
-        )
-        speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": self._format_player_message(user_text, speaker_name)},
-        ]
-
     def _build_chronicler_messages(
         self,
         prep: dict[str, Any],
@@ -3304,6 +3338,19 @@ class TurnEngine:
             "estimated": tokens_estimated,
         }
 
+        if executed["rolls"] or user_msg.get("metadata", {}).get("gm_deferred"):
+            updated_user = self.tree.update_message_metadata(
+                campaign_id,
+                user_msg["id"],
+                {
+                    **({"rolls": executed["rolls"]} if executed["rolls"] else {}),
+                    "gm_deferred": None,
+                    "defer_reason": None,
+                },
+            )
+            if updated_user is not None:
+                user_msg = updated_user
+
         assistant_msg = self.tree.append_message(
             campaign_id,
             parent_id=user_msg["id"],
@@ -3475,6 +3522,7 @@ class TurnEngine:
         if not target_leaf:
             self._save_branch_private_state(campaign_id, None, None, next_secrets, next_clocks)
         self._set_compressed_count(campaign_id, target_leaf, len(branch))
+        self.tree.sync_active_leaf_revisions(campaign_id)
 
         return {
             "campaign": updated_campaign,
@@ -3483,6 +3531,81 @@ class TurnEngine:
             "clocks": [c for c in next_clocks if c.get("visibility") != "secret"],
             "warnings": warnings,
         }
+
+    @staticmethod
+    def should_gm_intervene(
+        user_text: str,
+        *,
+        branch: list[dict[str, Any]],
+        characters: list[dict[str, Any]],
+        npcs: dict[str, Any],
+        speaker: dict[str, str],
+        coop_player_count: int = 1,
+        overclock: bool = False,
+        luck_spend: int = 0,
+    ) -> tuple[bool, str]:
+        """Decide if the AI GM should respond immediately or let party members reply first."""
+        clean = (user_text or "").strip()
+        if not clean:
+            return True, ""
+        if overclock or luck_spend > 0:
+            return True, ""
+
+        # Pure OOC table chatter: ((...)) or // ... or [OOC: ...]
+        if (clean.startswith("((") and clean.endswith("))")) or clean.lower().startswith(("[ooc", "//")):
+            return False, "OOC table note — GM standing by"
+
+        # Count consecutive user turns at the end of the branch without an assistant reply
+        consecutive_user_turns = 0
+        for msg in reversed(branch):
+            if msg.get("role") == "user":
+                consecutive_user_turns += 1
+            else:
+                break
+
+        # Never skip the GM twice in a row automatically
+        if consecutive_user_turns >= 1:
+            return True, ""
+
+        # In solo play (only 1 player online), always let the GM respond to non-OOC turns
+        if coop_player_count <= 1 and len(characters) <= 1:
+            return True, ""
+
+        # Check if the player is directly addressing a teammate PC by handle/name without world/NPC action
+        speaker_id = speaker.get("id") or ""
+        speaker_name = (speaker.get("name") or "").strip().lower()
+        other_pc_names = set()
+        for c in characters:
+            if c.get("id") == speaker_id:
+                continue
+            cname = str(c.get("name") or "").strip().lower()
+            handle = str((c.get("detail") or {}).get("handle") or "").strip().lower()
+            if cname and cname != speaker_name:
+                other_pc_names.add(cname)
+            if handle and handle != speaker_name:
+                other_pc_names.add(handle)
+
+        lower_text = clean.lower()
+        addresses_teammate = any(
+            re.search(rf"(?:^|\b|@){re.escape(pc_name)}\b", lower_text)
+            for pc_name in other_pc_names
+            if len(pc_name) >= 2
+        )
+        mentions_npc = any(
+            re.search(rf"\b{re.escape(npc_name.split('(')[0].strip().lower())}\b", lower_text)
+            for npc_name in (npcs or {})
+            if len(npc_name.split("(")[0].strip()) >= 3
+        )
+        world_action_re = re.compile(
+            r"\b(shoot|fire|attack|aim|draw|hack|jack in|breach|scan|search|inspect|open|kick|unlock|pick|sneak|hide|run|drive|walk|enter|climb|grab|take|throw|reload|heal|stabilize|roll|check|look around|ask the|tell the)\b",
+            re.I,
+        )
+        has_world_action = bool(world_action_re.search(clean))
+
+        if addresses_teammate and not mentions_npc and not has_world_action:
+            return False, "Party conversation — waiting for teammate reply (or click 'Resolve GM Turn')"
+
+        return True, ""
 
     async def run_turn(
         self,
@@ -3497,6 +3620,8 @@ class TurnEngine:
         speaker_character_id: str | None = None,
         speaker_name: str | None = None,
         is_intro: bool = False,
+        gm_mode: str = "auto",
+        coop_player_count: int = 1,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one complete AI GM turn and stream typed events for the frontend UI."""
         if not isinstance(user_text, str) or not user_text.strip():
@@ -3522,6 +3647,61 @@ class TurnEngine:
             meta["speaker_character_id"] = speaker["id"]
         if speaker.get("name"):
             meta["speaker_name"] = speaker["name"]
+        if speaker.get("color"):
+            meta["speaker_color"] = speaker["color"]
+        if speaker.get("portrait_url"):
+            meta["speaker_portrait_url"] = speaker["portrait_url"]
+
+        clean_gm_mode = (gm_mode or "auto").strip().lower()
+        should_run_gm = True
+        defer_reason = ""
+        if not is_intro:
+            if clean_gm_mode == "hold_gm":
+                should_run_gm = False
+                defer_reason = "Action/dialogue posted to table — waiting for party or 'Resolve GM Turn'"
+            elif clean_gm_mode == "auto":
+                should_run_gm, defer_reason = self.should_gm_intervene(
+                    user_text.strip(),
+                    branch=prep["branch"],
+                    characters=pre_ctx["characters"],
+                    npcs=(pre_ctx["campaign"].get("state") or {}).get("npcs") or {},
+                    speaker=speaker,
+                    coop_player_count=coop_player_count,
+                    overclock=overclock,
+                    luck_spend=luck_spend,
+                )
+
+        if not should_run_gm:
+            meta["gm_deferred"] = True
+            meta["defer_reason"] = defer_reason
+            revs = self.tree._current_revisions(campaign_id)
+            user_msg = self.tree.append_message(
+                campaign_id,
+                parent_id=prep["parent_id"],
+                role="user",
+                content=user_text.strip(),
+                campaign_revision=revs["campaign_revision"],
+                solo_revision=revs["solo_revision"],
+                metadata=meta,
+            )
+            yield {
+                "event": "turn_done",
+                "data": {
+                    "turn_id": prep["turn_id"],
+                    "user_message": user_msg,
+                    "assistant_message": None,
+                    "gm_deferred": True,
+                    "defer_reason": defer_reason,
+                    "citations": [],
+                    "rolls": [],
+                    "state_patches": [],
+                    "library_added": [],
+                    "warnings": [],
+                    "compression_recommended": False,
+                },
+            }
+            return
+
         user_msg = self.tree.append_message(
             campaign_id,
             parent_id=prep["parent_id"],
@@ -3562,7 +3742,13 @@ class TurnEngine:
         if speaker_character_id:
             found = next((c for c in characters if c["id"] == speaker_character_id), None)
             if found:
-                return {"id": found["id"], "name": found["name"]}
+                d = found.get("detail") or {}
+                out = {"id": found["id"], "name": str(d.get("handle") or found["name"])}
+                if isinstance(d.get("color"), str) and d["color"].strip():
+                    out["color"] = d["color"].strip()
+                if isinstance(d.get("portrait_url"), str) and d["portrait_url"].strip():
+                    out["portrait_url"] = d["portrait_url"].strip()
+                return out
         if isinstance(speaker_name, str) and speaker_name.strip():
             return {"id": "", "name": speaker_name.strip()}
         return {}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clock, Compass, Cpu, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2 } from "lucide-react";
+import { Clock, Compass, Cpu, ImagePlus, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2 } from "lucide-react";
 import {
   assistCharacterCreation,
   fetchCampaignClocks,
@@ -53,6 +53,9 @@ export function CampaignPanel({
   const { campaign, solo } = context;
   const [scene, setScene] = useState(campaign.state.scene);
   const [summary, setSummary] = useState(campaign.state.summary);
+  const [bannerUrl, setBannerUrl] = useState(
+    campaign.state.discoveries?.["__banner_url"] ?? campaign.state.discoveries?.["Banner URL"] ?? "",
+  );
   const [clocks, setClocks] = useState<WorldClock[]>([]);
   const [newClockName, setNewClockName] = useState("");
   const [newClockMax, setNewClockMax] = useState("4");
@@ -78,8 +81,11 @@ export function CampaignPanel({
   useEffect(() => {
     setScene(campaign.state.scene);
     setSummary(campaign.state.summary);
+    setBannerUrl(
+      campaign.state.discoveries?.["__banner_url"] ?? campaign.state.discoveries?.["Banner URL"] ?? "",
+    );
     setConfirmRemove(null);
-  }, [campaign.id, campaign.revision, campaign.state.scene, campaign.state.summary]);
+  }, [campaign.id, campaign.revision, campaign.state.scene, campaign.state.summary, campaign.state.discoveries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,10 +106,16 @@ export function CampaignPanel({
     if (busy) return;
     setBusy(true);
     try {
+      const nextDiscoveries = { ...(campaign.state.discoveries ?? {}) };
+      if (bannerUrl.trim()) {
+        nextDiscoveries["__banner_url"] = bannerUrl.trim();
+      } else {
+        delete nextDiscoveries["__banner_url"];
+      }
       await updateCampaignState(
         campaign.id,
         campaign.revision,
-        { scene, summary },
+        { scene, summary, discoveries: nextDiscoveries },
         "Update scene and summary",
       );
       await onRefresh();
@@ -113,6 +125,22 @@ export function CampaignPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleBannerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2_000_000) {
+      onNotify("Backdrop image must be under 2 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setBannerUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleAddEntry = async (section: SectionKey) => {
@@ -451,6 +479,42 @@ export function CampaignPanel({
           />
         </div>
 
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+              <ImagePlus className="h-3.5 w-3.5 text-cyan-400" />
+              Scene / Campaign Backdrop Image (optional)
+            </label>
+            <div className="flex items-center gap-1.5">
+              <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200 hover:bg-cyan-500/20">
+                <ImagePlus className="h-3 w-3" /> Upload Image
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleBannerUpload}
+                  className="hidden"
+                />
+              </label>
+              {bannerUrl && (
+                <button
+                  type="button"
+                  onClick={() => setBannerUrl("")}
+                  className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-rose-300"
+                >
+                  Reset Default
+                </button>
+              )}
+            </div>
+          </div>
+          <input
+            type="url"
+            value={bannerUrl.startsWith("data:") ? "" : bannerUrl}
+            onChange={(e) => setBannerUrl(e.target.value)}
+            placeholder={bannerUrl.startsWith("data:") ? "Custom image uploaded from device" : "Paste an online image URL (https://…) or upload above"}
+            className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+          />
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="submit"
@@ -609,7 +673,9 @@ export function CampaignPanel({
 
       <div className="space-y-3">
         {SECTION_LABELS.map(({ key, title, placeholderKey }) => {
-          const entries = Object.entries((campaign.state as CampaignNarrativeState)[key] ?? {});
+          const entries = Object.entries((campaign.state as CampaignNarrativeState)[key] ?? {}).filter(
+            ([k]) => k !== "__banner_url",
+          );
           return (
             <div key={key} className="rounded-lg border border-slate-800 bg-[#111726] p-3 space-y-2">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">

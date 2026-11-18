@@ -23,6 +23,8 @@ interface CoopModalProps {
   campaignId: string | null;
   campaignName: string | null;
   characters: CharacterRecord[];
+  isAdmin?: boolean;
+  currentUsername?: string | null;
   playerName: string;
   claimedCharId: string;
   protectOthers: boolean;
@@ -40,6 +42,8 @@ export function CoopModal({
   campaignId,
   campaignName,
   characters,
+  isAdmin = true,
+  currentUsername = null,
   playerName,
   claimedCharId,
   protectOthers,
@@ -99,6 +103,13 @@ export function CoopModal({
 
   const lanCmd = `.venv/bin/python redkb.py serve --lan`;
   const charById = new Map(characters.map((c) => [c.id, c.name]));
+  const selectableCharacters = isAdmin
+    ? characters
+    : characters.filter((c) => {
+        const owner = String(c.detail?.owner_username ?? "").trim().toLowerCase();
+        const me = String(currentUsername ?? "").trim().toLowerCase();
+        return !owner || (me && owner === me);
+      });
 
   return (
     <div
@@ -161,12 +172,16 @@ export function CoopModal({
                   onChange={(e) => onChangeClaimedChar(e.target.value)}
                   className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                 >
-                  <option value="">Any / Narrator</option>
-                  {characters.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                  {isAdmin && <option value="">Any / Narrator (GM)</option>}
+                  {!isAdmin && <option value="">Unassigned / Select Your Character</option>}
+                  {selectableCharacters.map((c) => {
+                    const owner = String(c.detail?.owner_username ?? "").trim();
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{owner ? ` (@${owner})` : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             </div>

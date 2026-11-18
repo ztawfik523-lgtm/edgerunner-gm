@@ -25,6 +25,9 @@ interface TopBarProps {
   revisionMismatch: boolean;
   coopCount: number;
   authStatus?: AuthStatus | null;
+  viewAsUser?: boolean;
+  onToggleViewAsUser?: () => void;
+  onSyncRevisions?: () => Promise<void>;
   onSelectCampaign: (id: string) => void;
   onCreateCampaign: (name: string) => Promise<void>;
   onOpenNewCampaign?: () => void;
@@ -47,6 +50,9 @@ export function TopBar({
   revisionMismatch,
   coopCount,
   authStatus,
+  viewAsUser = false,
+  onToggleViewAsUser,
+  onSyncRevisions,
   onSelectCampaign,
   onCreateCampaign,
   onOpenNewCampaign,
@@ -60,11 +66,12 @@ export function TopBar({
   onOpenAuth,
   onSignOut,
 }: TopBarProps) {
-  const canAdminSettings =
+  const isTrueAdmin =
     !authStatus ||
     !authStatus.auth_enabled ||
     authStatus.role === "admin" ||
     authStatus.role === "open";
+  const canAdminSettings = isTrueAdmin && !viewAsUser;
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -299,15 +306,44 @@ export function TopBar({
             </button>
           )}
 
+          {isTrueAdmin && onToggleViewAsUser && (
+            <button
+              type="button"
+              onClick={onToggleViewAsUser}
+              title={
+                viewAsUser
+                  ? "Currently previewing/playing as a Normal Player (secrets & admin submenus hidden). Click to switch back to Admin mode."
+                  : "Switch to Normal Player mode without signing out (hides GM secrets & admin submenus)."
+              }
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
+                viewAsUser
+                  ? "border-amber-400/70 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+                  : "border-rose-500/45 bg-rose-500/10 text-rose-200 hover:border-rose-400 hover:bg-rose-500/20"
+              }`}
+            >
+              {viewAsUser ? (
+                <>
+                  <UserCheck className="h-3.5 w-3.5 text-amber-300" />
+                  <span>Player Mode (Switch to Admin)</span>
+                </>
+              ) : (
+                <>
+                  <Shield className="h-3.5 w-3.5 text-rose-400" />
+                  <span>Admin ⇄ Player</span>
+                </>
+              )}
+            </button>
+          )}
+
           {authStatus?.auth_enabled && (authStatus.role === "admin" || authStatus.role === "user") && (
             <div className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px]">
-              {authStatus.role === "admin" ? (
+              {authStatus.role === "admin" && !viewAsUser ? (
                 <Shield className="h-3 w-3 text-rose-400" />
               ) : (
                 <UserCheck className="h-3 w-3 text-cyan-400" />
               )}
               <span className="font-semibold text-slate-200">
-                {authStatus.role === "admin" ? "ADMIN" : "USER"}
+                {authStatus.role === "admin" ? (viewAsUser ? "USER VIEW" : "ADMIN") : "USER"}
               </span>
               {authStatus.username && (
                 <span className="hidden lg:inline text-slate-400">({authStatus.username})</span>
@@ -388,11 +424,22 @@ export function TopBar({
       </div>
 
       {revisionMismatch && (
-        <div className="flex items-center gap-2 border-t border-amber-500/30 bg-amber-500/10 px-4 py-1 text-[11px] text-amber-300">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span>
-            Branch State Differs — this chat branch points to an earlier game-state revision than your live character/campaign sheet.
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-amber-500/30 bg-amber-500/10 px-4 py-1 text-[11px] text-amber-300">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              Branch State Differs — this chat branch points to an earlier game-state revision than your live character/campaign sheet.
+            </span>
+          </div>
+          {onSyncRevisions && (
+            <button
+              type="button"
+              onClick={() => void onSyncRevisions()}
+              className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-100 hover:bg-amber-500/30"
+            >
+              Sync Branch State
+            </button>
+          )}
         </div>
       )}
     </header>

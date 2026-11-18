@@ -7,11 +7,26 @@
     --font-cyber-display: "Orbitron", "Rajdhani", ui-sans-serif, system-ui, sans-serif;
     --font-cyber-hud: "Rajdhani", ui-sans-serif, system-ui, sans-serif;
     --font-cyber-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --cyber-crimson: #ff003c;
+    --cyber-yellow: #fcee0a;
+    --cyber-cyan: #00f0ff;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #2a3346 transparent;
+    scrollbar-color: #f43f5e44 #090c14;
+  }
+
+  body {
+    font-family: var(--font-cyber-hud);
+    letter-spacing: 0.015em;
+    background-color: #06080e;
+    color: #f1f5f9;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-cyber-display);
+    letter-spacing: 0.06em;
   }
 
   code, pre, .font-mono {

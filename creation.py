@@ -195,7 +195,13 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
     lifepath = args.get("lifepath")
     if not isinstance(lifepath, dict):
         raise ValueError("lifepath is required as a structured, editable GM-authored object")
+    raw_handle = args.get("handle")
+    handle = raw_handle.strip() if isinstance(raw_handle, str) and raw_handle.strip() else ""
+    raw_real_name = args.get("real_name")
+    real_name = raw_real_name.strip() if isinstance(raw_real_name, str) and raw_real_name.strip() else ""
     name = args.get("name")
+    if (not isinstance(name, str) or not name.strip()) and (handle or real_name):
+        name = handle or real_name
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name is required and must be nonempty")
     choices = args.get("role_choices", {})
@@ -300,6 +306,18 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
     backstory = args.get("backstory")
     if isinstance(backstory, dict):
         detail["backstory"] = dict(backstory)
+    if handle:
+        detail["handle"] = handle
+    if real_name:
+        detail["real_name"] = real_name
+    if isinstance(args.get("real_name_hidden"), bool):
+        detail["real_name_hidden"] = args["real_name_hidden"]
+    elif handle and real_name:
+        detail["real_name_hidden"] = True
+    for str_key in ("portrait_url", "color", "owner_username"):
+        val = args.get(str_key)
+        if isinstance(val, str) and val.strip():
+            detail[str_key] = val.strip()
     return {
         "name": name.strip(), "role": role, "stats": stats, "skills": skills,
         "hp": hp, "max_hp": hp, "humanity": starting_humanity,

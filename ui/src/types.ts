@@ -124,6 +124,7 @@ export interface AuthStatus {
   allow_guest_users: boolean;
   allow_self_signup?: boolean;
   can_bootstrap: boolean;
+  require_character_to_speak?: boolean;
 }
 
 export interface AuthAccountSummary {
@@ -219,6 +220,7 @@ export interface LLMSettings {
   gm_style?: "grounded" | "cinematic" | "lethal" | "sandbox";
   narrator_length?: "concise" | "standard" | "detailed";
   gm_thinking_mode?: "quality" | "balanced";
+  require_character_to_speak?: boolean;
   default_time_step_minutes?: number;
 }
 
@@ -246,6 +248,7 @@ export interface PublicSettingsResponse {
   gm_style: string;
   narrator_length: string;
   gm_thinking_mode?: "quality" | "balanced";
+  require_character_to_speak?: boolean;
   enable_chronicler: boolean;
   enable_highlights?: boolean;
   allow_ai_homebrew?: boolean;
@@ -389,6 +392,11 @@ export interface ChatMessageMetadata {
   luck_spend?: number;
   speaker_character_id?: string;
   speaker_name?: string;
+  speaker_color?: string;
+  speaker_portrait_url?: string;
+  gm_deferred?: boolean;
+  defer_reason?: string;
+  manual_roll?: boolean;
   edited?: boolean;
   edited_at?: string;
   guidance?: string;
@@ -440,7 +448,9 @@ export interface TurnStreamCallbacks {
   onDone?: (data: {
     turn_id: string;
     user_message: ChatMessageNode;
-    assistant_message: ChatMessageNode;
+    assistant_message: ChatMessageNode | null;
+    gm_deferred?: boolean;
+    defer_reason?: string;
     generation_stats?: GenerationStats;
     citations: LibraryEntry[];
     rolls: DiceRollResult[];
@@ -641,6 +651,9 @@ export interface CreationAiAssistRequest {
   guidance?: string;
   character?: {
     name?: string;
+    handle?: string;
+    real_name?: string;
+    real_name_hidden?: boolean;
     pronouns?: string;
     age?: string;
     role: string;

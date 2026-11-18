@@ -2231,6 +2231,188 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.getByText(/Draft Restored/i)).toBeInTheDocument();
     expect(screen.getByText(/CLASSIFIED \/\/ SPOILER SHIELDED/i)).toBeInTheDocument();
   });
+
+  it("supports Orientation Briefing, Admin-only GM Ops submenu, Admin-to-Player switch, Handle vs Hidden Real Name, and Selected Only gear filter", async () => {
+    const campaign = {
+      id: "camp-orient-1",
+      name: "Kabuki Blackout",
+      revision: 1,
+      session_number: 1,
+      character_ids: ["char-alice"],
+      state: {
+        scene: "Rain lashes the neon awnings of Kabuki Roundabout.",
+        summary: "An Arasaka courier vanished inside Sector 4.",
+        npcs: { "Tala Nguyen": "Netrunner broker" },
+        objectives: { "Intercept the Ghostwing Rig": "19 minutes remaining" },
+        discoveries: {},
+        unresolved: {},
+      },
+    };
+    const aliceChar = {
+      id: "char-alice",
+      name: "Ghostwire",
+      revision: 1,
+      hp: 35,
+      max_hp: 40,
+      money: 500,
+      humanity: 50,
+      max_humanity: 60,
+      luck_remaining: 6,
+      stats: { INT: 6, REF: 8, DEX: 7, TECH: 5, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Handgun: 6, Stealth: 4 },
+      inventory: { "Heavy Pistol": 1 },
+      cyberware: [],
+      detail: {
+        handle: "Ghostwire",
+        real_name: "Elena Vance",
+        real_name_hidden: true,
+        color: "violet",
+        owner_username: "alice",
+        roles: [{ name: "Solo", rank: 4, ability: "Combat Awareness" }],
+      },
+    };
+    const branchMessages = [
+      {
+        id: "m-u1",
+        campaign_id: campaign.id,
+        parent_id: null,
+        role: "user",
+        content: "I scan the rooftop perimeter.",
+        raw_content: "I scan the rooftop perimeter.",
+        model: "",
+        campaign_revision: 1,
+        solo_revision: 0,
+        metadata: {
+          speaker_character_id: "char-alice",
+          speaker_name: "Ghostwire",
+          rolls: [
+            {
+              actor: "Ghostwire",
+              stat: "INT",
+              skill: "Perception",
+              dv: 13,
+              die: 8,
+              total: 18,
+              success: true,
+              critical_success: false,
+              critical_failure: false,
+              reason: "Rooftop scan",
+            },
+          ],
+        },
+        is_active: true,
+        created_at: "2026-11-18T00:00:00Z",
+      },
+      {
+        id: "m-a1",
+        campaign_id: campaign.id,
+        parent_id: "m-u1",
+        role: "assistant",
+        content: "Two Tyger Claws spotters crouch behind the AC vents.",
+        raw_content: "Two Tyger Claws spotters crouch behind the AC vents.",
+        model: "nemotron",
+        campaign_revision: 1,
+        solo_revision: 0,
+        metadata: {
+          citation_cards: [{ id: "cb-1", title: "Perception", category: "skill", source: "corebook", printed_page: 139, summary: "Spotting hidden threats." }],
+          patches: [{ target: "campaign", before: { scene: "Alley" }, after: { scene: "Kabuki Rooftop" }, reason: "Move" }],
+          warnings: ["Simulated planner warning"],
+        },
+        is_active: true,
+        created_at: "2026-11-18T00:00:02Z",
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({
+          auth_enabled: true,
+          pin_only_mode: false,
+          authenticated: true,
+          role: "admin",
+          username: "admin",
+          admin_configured: true,
+          user_configured: true,
+          user_passcode_configured: false,
+          allow_guest_users: false,
+          can_bootstrap: false,
+          require_character_to_speak: true,
+        });
+      }
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "nemotron",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.75,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+          require_character_to_speak: true,
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: branchMessages,
+          active_branch: branchMessages,
+          active_leaf_id: "m-a1",
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [aliceChar],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+
+    // 1. Inline dice roll is shown under the player message, and GM Ops submenu is collapsed by default for Admin
+    await waitFor(() => {
+      expect(screen.getByText(/Two Tyger Claws spotters crouch/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Perception \(INT\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/18 vs DV 13/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Kabuki Rooftop/i)).not.toBeInTheDocument();
+
+    // Expanding GM Ops reveals citations, state patches, and warnings for Admin
+    const gmOpsBtn = screen.getByRole("button", { name: /GM Ops/i });
+    fireEvent.click(gmOpsBtn);
+    expect(screen.getByText(/Kabuki Rooftop/i)).toBeInTheDocument();
+
+    // 2. Orientation Screamsheet can be opened at any time from the chat header and skipped
+    fireEvent.click(screen.getByRole("button", { name: /Screamsheet & Briefing/i }));
+    expect(screen.getByText(/N54 SCREAMSHEET \/\/ DISPATCH 2045/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Skip Briefing/i }));
+    expect(screen.queryByText(/N54 SCREAMSHEET \/\/ DISPATCH 2045/i)).not.toBeInTheDocument();
+
+    // 3. Instant Admin -> Player Mode switch hides GM Ops and enforces character ownership
+    fireEvent.click(screen.getByRole("button", { name: /Admin ⇄ Player/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Player Mode \(Switch to Admin\)/i })).toBeInTheDocument();
+    });
+    // GM Ops button is completely hidden from normal players
+    expect(screen.queryByRole("button", { name: /GM Ops/i })).not.toBeInTheDocument();
+    // Since "admin" in User View does not own "Ghostwire" (owned by "alice"), speaking is locked until creating/claiming a character
+    expect(screen.getByText(/Admin requires an active Edgerunner sheet to speak in chat/i)).toBeInTheDocument();
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

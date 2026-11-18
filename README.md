@@ -73,3 +73,11 @@ All architecture details, CLI commands, HTTP API endpoints, environment variable
 
 - **[Technical & Developer Reference](docs/TECHNICAL.md)**
 - [Desktop Launcher Guide](docs/LAUNCHER.md) · [SillyTavern Extension](sillytavern-extension/README.md)
+
+---
+
+## License & Attribution
+
+- **Source Code:** Licensed under the **[MIT License](LICENSE)** — free to use, modify, self-host, and distribute as long as credit and the copyright notice are preserved.
+- **Tabletop IP Notice:** *Edgerunner GM is unofficial content provided under the Homebrew Content Policy of R. Talsorian Games and is not approved or endorsed by RTG. This content references materials that are the property of R. Talsorian Games and its licensees. No copyrighted Corebook text or PDF is included in this repository.*
+

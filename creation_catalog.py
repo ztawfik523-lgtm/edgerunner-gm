@@ -1034,7 +1034,10 @@ async def generate_creation_ai_assist(
     lock_choices = bool(camp.get("lock_choices", payload.get("lock_choices", False)))
 
     role_name = str(char.get("role") or "Edgerunner").strip()
-    char_name = str(char.get("name") or "Unnamed Edgerunner").strip()
+    char_handle = str(char.get("handle") or "").strip()
+    char_real_name = str(char.get("real_name") or "").strip()
+    real_name_hidden = bool(char.get("real_name_hidden", True if (char_handle and char_real_name) else False))
+    char_name = str(char.get("name") or char_handle or char_real_name or "Unnamed Edgerunner").strip()
     stats = char.get("stats") if isinstance(char.get("stats"), dict) else {}
     skills = char.get("skills") if isinstance(char.get("skills"), dict) else {}
     lifepath = char.get("lifepath") if isinstance(char.get("lifepath"), dict) else {}
@@ -1106,6 +1109,18 @@ async def generate_creation_ai_assist(
 
     sheet_brief = {
         "name": char_name,
+        **({"handle": char_handle} if char_handle else {}),
+        **({"real_name": char_real_name} if char_real_name else {}),
+        "real_name_hidden": real_name_hidden,
+        "identity_rule": (
+            f"Known on The Street strictly by Handle '{char_handle}'; real name '{char_real_name}' is hidden/secret from the public."
+            if (char_handle and char_real_name and real_name_hidden)
+            else f"Goes exclusively by Street Handle '{char_handle}' (no public legal name)."
+            if (char_handle and not char_real_name)
+            else f"Known as '{char_handle}' (real name '{char_real_name}' is known)."
+            if (char_handle and char_real_name)
+            else f"Known as '{char_name}'."
+        ),
         "pronouns": char.get("pronouns") or "",
         "age": char.get("age") or "",
         "role": f"{role_name} (Rank 4)",

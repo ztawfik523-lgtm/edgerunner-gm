@@ -379,6 +379,7 @@ export function SettingsModal({
   const [enableHighlights, setEnableHighlights] = useState(true);
   const [allowAiHomebrew, setAllowAiHomebrew] = useState(true);
   const [autoCompressPrompt, setAutoCompressPrompt] = useState(true);
+  const [requireCharacterToSpeak, setRequireCharacterToSpeak] = useState(true);
   const [retryAttempts, setRetryAttempts] = useState(1);
   const [historyWindow, setHistoryWindow] = useState(14);
   const [compressionThreshold, setCompressionThreshold] = useState(14);
@@ -469,6 +470,7 @@ export function SettingsModal({
     setEnableHighlights(s.enable_highlights ?? true);
     setAllowAiHomebrew(s.allow_ai_homebrew ?? true);
     setAutoCompressPrompt(s.auto_compress_prompt ?? true);
+    setRequireCharacterToSpeak(s.require_character_to_speak ?? true);
     setRetryAttempts(s.retry_attempts ?? 1);
     setHistoryWindow(s.history_window ?? 14);
     setCompressionThreshold(s.compression_threshold ?? 14);
@@ -613,6 +615,7 @@ export function SettingsModal({
         enable_highlights: enableHighlights,
         allow_ai_homebrew: allowAiHomebrew,
         auto_compress_prompt: autoCompressPrompt,
+        require_character_to_speak: requireCharacterToSpeak,
         retry_attempts: retryAttempts,
         history_window: historyWindow,
         compression_threshold: compressionThreshold,
@@ -868,6 +871,10 @@ export function SettingsModal({
         payload.user_passcode = sharedPasscode.trim();
       }
       const res = await updateAuthAccounts(payload);
+      const updatedLlm = await saveLLMSettings({ require_character_to_speak: requireCharacterToSpeak }).catch(() => null);
+      if (updatedLlm) {
+        onSaved(updatedLlm);
+      }
       setAccounts(res.accounts);
       setAllowGuests(res.allow_guest_users);
       setAllowSelfSignup(res.allow_self_signup ?? allowSelfSignup);
@@ -1981,6 +1988,17 @@ export function SettingsModal({
                     />
                     <span>Show story compression reminders when chat grows</span>
                   </label>
+                  <label
+                    className="flex items-center gap-2 rounded-md border border-cyan-500/30 bg-cyan-950/15 px-3 py-2 text-xs text-slate-200 cursor-pointer sm:col-span-2"
+                    title="When enabled (default), non-admin players must create or attach a character sheet before they can speak in chat. Turn off to allow characterless players/observers to speak freely."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={requireCharacterToSpeak}
+                      onChange={(e) => setRequireCharacterToSpeak(e.target.checked)}
+                    />
+                    <span>Require players to have a character before speaking in chat (Default: ON)</span>
+                  </label>
                 </div>
               </div>
 
@@ -2561,6 +2579,14 @@ export function SettingsModal({
                         onChange={(e) => setAllowGuests(e.target.checked)}
                       />
                       Allow passwordless guest player sign-in
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={requireCharacterToSpeak}
+                        onChange={(e) => setRequireCharacterToSpeak(e.target.checked)}
+                      />
+                      Require non-admin players to have a character before speaking in chat (Default: ON)
                     </label>
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">

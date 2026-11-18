@@ -15,6 +15,7 @@ import {
   fetchSkillsCatalog,
   getClientId,
   getStoredPlayerName,
+  getStoredViewRoleOverride,
   listCampaigns,
   logoutAuth,
   regenerateChatTurn,
@@ -22,10 +23,13 @@ import {
   sendPresence,
   setPrimaryCampaign,
   setStoredPlayerName,
+  setStoredViewRoleOverride,
   startCampaignSession,
   streamChatTurn,
   subscribeCampaignEvents,
   switchChatBranch,
+  syncChatRevisions,
+  updateCharacterProfile,
   updateChatMessage,
 } from "./api";
 import { AuthGateModal } from "./components/AuthGateModal";
@@ -129,6 +133,7 @@ export function App() {
   );
   const [streaming, setStreaming] = useState<StreamingTurnState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [viewAsUser, setViewAsUser] = useState<boolean>(() => getStoredViewRoleOverride() === "user");
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -255,22 +260,39 @@ export function App() {
       setSpeakerId("");
       return;
     }
+    const isUserView = (authStatus?.authenticated && authStatus.role === "user") || viewAsUser;
+    const me = (authStatus?.username ?? "").trim().toLowerCase();
+    const allowedChars = isUserView
+      ? chars.filter((c) => {
+          const owner = String(c.detail?.owner_username ?? "").trim().toLowerCase();
+          return (me && owner === me) || !owner;
+        })
+      : chars;
+
     const scopedClaim = activeCampaignId
       ? safeStorageGet(userClaimedCharStorageKey(authStatus?.username, activeCampaignId)) || ""
       : "";
-    const effectiveClaim = (scopedClaim && chars.some((c) => c.id === scopedClaim) ? scopedClaim : "") ||
-      (claimedCharId && chars.some((c) => c.id === claimedCharId) ? claimedCharId : "");
+    const effectiveClaim =
+      (scopedClaim && allowedChars.some((c) => c.id === scopedClaim) ? scopedClaim : "") ||
+      (claimedCharId && allowedChars.some((c) => c.id === claimedCharId) ? claimedCharId : "");
 
     if (effectiveClaim) {
       if (effectiveClaim !== claimedCharId) setClaimedCharId(effectiveClaim);
       setSpeakerId(effectiveClaim);
-    } else if (authStatus?.authenticated && authStatus.role === "user") {
-      // Signed-in players shouldn't all default to the same first character; let them claim/create one.
-      setSpeakerId((prev) => (prev && chars.some((c) => c.id === prev) ? prev : ""));
+    } else if (isUserView) {
+      const myOwned = me
+        ? chars.find((c) => String(c.detail?.owner_username ?? "").trim().toLowerCase() === me)
+        : undefined;
+      if (myOwned) {
+        setClaimedCharId(myOwned.id);
+        setSpeakerId(myOwned.id);
+      } else {
+        setSpeakerId((prev) => (prev && allowedChars.some((c) => c.id === prev) ? prev : ""));
+      }
     } else if (!speakerId || !chars.some((c) => c.id === speakerId)) {
       setSpeakerId(chars[0].id);
     }
-  }, [campaignContext?.characters, claimedCharId, speakerId, activeCampaignId, authStatus?.username, authStatus?.authenticated, authStatus?.role]);
+  }, [campaignContext?.characters, claimedCharId, speakerId, activeCampaignId, authStatus?.username, authStatus?.authenticated, authStatus?.role, viewAsUser]);
 
   // Live Co-op presence heartbeat + SSE subscription
   useEffect(() => {
@@ -477,6 +499,11 @@ export function App() {
               prev ? { ...prev, text: prev.text + delta } : prev,
             );
           },
+          onDone: (data) => {
+            if (data.gm_deferred) {
+              notify("Posted to party table (GM held — click Resolve GM Turn when ready).");
+            }
+          },
           onError: (detail) => {
             notify(`GM Error: ${detail}`);
           },
@@ -498,7 +525,13 @@ export function App() {
 
   const handleSendTurn = async (
     text: string,
-    opts: { overclock: boolean; luckSpend?: number; speakerCharacterId?: string; speakerName?: string },
+    opts: {
+      overclock: boolean;
+      luckSpend?: number;
+      speakerCharacterId?: string;
+      speakerName?: string;
+      gmMode?: "auto" | "force_gm" | "hold_gm";
+    },
   ) => {
     if (!activeCampaignId) return;
     await runStreamedAction(text, opts.overclock, opts.speakerName, (callbacks, signal) =>
@@ -510,6 +543,7 @@ export function App() {
           luck_spend: opts.luckSpend || undefined,
           speaker_character_id: opts.speakerCharacterId,
           speaker_name: opts.speakerName,
+          gm_mode: opts.gmMode,
         },
         callbacks,
         signal,
@@ -645,10 +679,54 @@ export function App() {
   const authBlocked = Boolean(
     authStatus && (authStatus.can_bootstrap || (authStatus.auth_enabled && !authStatus.authenticated)),
   );
-  const canManageCampaigns =
+  const isTrueAdmin =
     !authStatus || !authStatus.auth_enabled || authStatus.role === "admin" || authStatus.role === "open";
+  const isEffectiveAdmin = isTrueAdmin && !viewAsUser;
+  const canManageCampaigns = isEffectiveAdmin;
+  const requireCharacterToSpeak = Boolean(
+    llmSettings?.require_character_to_speak ?? authStatus?.require_character_to_speak ?? true,
+  );
+
+  const handleToggleViewAsUser = async () => {
+    const next = !viewAsUser;
+    setViewAsUser(next);
+    setStoredViewRoleOverride(next ? "user" : null);
+    await refreshInitial();
+    notify(next ? "Switched to Player Mode (User View)." : "Switched back to Admin (GM) Mode.");
+  };
+
+  const handleSyncRevisions = async () => {
+    if (!activeCampaignId) return;
+    try {
+      const res = await syncChatRevisions(activeCampaignId);
+      setChatTree(res);
+      notify("Synced branch state with live campaign revisions.");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Failed to sync branch state");
+    }
+  };
+
+  const handleUpdateCharacterColor = async (characterId: string, color: string) => {
+    if (!campaignContext) return;
+    const charRec = campaignContext.characters.find((c) => c.id === characterId);
+    try {
+      await updateCharacterProfile(
+        campaignContext.campaign.id,
+        characterId,
+        charRec?.revision ?? 0,
+        { color },
+        "Update character chat tag color",
+      );
+      await refreshActiveCampaign();
+      notify("Updated character chat tag color.");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Failed to update character color");
+    }
+  };
 
   const handleSignOut = async () => {
+    setViewAsUser(false);
+    setStoredViewRoleOverride(null);
     await logoutAuth();
     setSettingsOpen(false);
     await refreshInitial();
@@ -691,6 +769,8 @@ export function App() {
             corebookSkills={corebookSkills}
             roster={roster}
             selfClientId={selfClientId}
+            isAdmin={isEffectiveAdmin}
+            currentUsername={authStatus?.username}
             protectOthers={protectOthers}
             preferredSelectedId={preferredCharacterId}
             onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
@@ -749,13 +829,19 @@ export function App() {
   const chatPaneNode = (
     <ChatPane
       campaignId={activeCampaignId}
+      campaign={activeCampaign}
       messages={chatTree?.active_branch ?? []}
       streaming={streaming}
       characters={campaignContext?.characters ?? []}
       selectedSpeakerId={speakerId}
       activeTurn={activeTurn}
       selfClientId={selfClientId}
+      isAdmin={isEffectiveAdmin}
+      currentUsername={authStatus?.username}
+      requireCharacterToSpeak={requireCharacterToSpeak}
       onChangeSpeakerId={setSpeakerId}
+      onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
+      onUpdateCharacterColor={handleUpdateCharacterColor}
       onSend={handleSendTurn}
       onSendIntro={handleSendIntro}
       onEditUserMessage={handleEditUserMessage}
@@ -771,12 +857,17 @@ export function App() {
     />
   );
 
+  const customBannerUrl =
+    campaignContext?.campaign?.state?.discoveries?.["__banner_url"] ||
+    campaignContext?.campaign?.state?.discoveries?.["Banner URL"] ||
+    "";
+
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[#07090f] text-slate-100">
       {/* Atmospheric Night City Backdrop */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <img
-          src={nightCityBackdrop}
+          src={customBannerUrl || nightCityBackdrop}
           alt=""
           className="h-full w-full object-cover opacity-25 saturate-110"
         />
@@ -794,6 +885,9 @@ export function App() {
         revisionMismatch={Boolean(chatTree?.revision_mismatch)}
         coopCount={roster.length}
         authStatus={authStatus}
+        viewAsUser={viewAsUser}
+        onToggleViewAsUser={() => void handleToggleViewAsUser()}
+        onSyncRevisions={handleSyncRevisions}
         onSelectCampaign={handleSelectCampaign}
         onCreateCampaign={handleCreateCampaign}
         onOpenNewCampaign={() => {
@@ -906,6 +1000,9 @@ export function App() {
           onClose={() => setCharacterCreatorOpen(false)}
           onCreated={async (id, charName) => {
             setPreferredCharacterId(id);
+            setClaimedCharId(id);
+            setSpeakerId(id);
+            safeStorageSet(userClaimedCharStorageKey(authStatus?.username, campaignContext.campaign.id), id);
             await refreshActiveCampaign();
             setCharacterCreatorOpen(false);
             notify(`Created ${charName} and attached to campaign.`);
@@ -919,6 +1016,8 @@ export function App() {
         campaignId={activeCampaignId}
         campaignName={activeCampaign?.name ?? null}
         characters={campaignContext?.characters ?? []}
+        isAdmin={isEffectiveAdmin}
+        currentUsername={authStatus?.username}
         playerName={playerName}
         claimedCharId={claimedCharId}
         protectOthers={protectOthers}
