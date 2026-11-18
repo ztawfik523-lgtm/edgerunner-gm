@@ -1,0 +1,32 @@
+services:
+  redgm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_SEMANTIC: "${INSTALL_SEMANTIC:-false}"
+    container_name: cyberpunk-red-gm
+    restart: unless-stopped
+    ports:
+      - "${REDGM_PUBLISH_IP:-0.0.0.0}:${REDGM_HOST_PORT:-8765}:8765"
+    environment:
+      REDKB_DB: /data/rules.sqlite
+      REDGM_CAMPAIGN_DB: /data/campaign.sqlite
+      REDGM_SETTINGS_FILE: /data/settings.json
+      REDGM_HOST: "${REDGM_HOST:-0.0.0.0}"
+      REDGM_PORT: "${REDGM_PORT:-8765}"
+      REDGM_PUBLIC_URL: "${REDGM_PUBLIC_URL:-}"
+      REDGM_ALLOWED_ORIGINS: "${REDGM_ALLOWED_ORIGINS:-}"
+      REDGM_ADMIN_USER: "${REDGM_ADMIN_USER:-}"
+      REDGM_ADMIN_PASS: "${REDGM_ADMIN_PASS:-}"
+      REDGM_USER_USER: "${REDGM_USER_USER:-}"
+      REDGM_USER_PASS: "${REDGM_USER_PASS:-}"
+      REDGM_AUTH_SECRET: "${REDGM_AUTH_SECRET:-}"
+      REDGM_PIN: "${REDGM_PIN:-}"
+    volumes:
+      - redgm_data:/data
+      - redgm_cache:/home/redgm/.cache/cyberpunk-red-gm
+
+volumes:
+  redgm_data:
+  redgm_cache:

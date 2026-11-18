@@ -1,0 +1,16 @@
+{
+    "display_name": "Cyberpunk RED GM Tools",
+    "loading_order": 15,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "author": "Cyberpunk RED GM",
+    "version": "0.2.0",
+    "homePage": "",
+    "hooks": {
+        "activate": "init",
+        "enable": "init",
+        "disable": "exit"
+    },
+    "generate_interceptor": "redgmCampaignInterceptor"
+}

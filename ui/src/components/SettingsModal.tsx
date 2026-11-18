@@ -1,0 +1,1834 @@
+import { useEffect, useState } from "react";
+import {
+  CheckCircle2,
+  Cpu,
+  FileText,
+  Globe,
+  HelpCircle,
+  Loader2,
+  PlugZap,
+  RefreshCw,
+  RotateCcw,
+  Shield,
+  Sliders,
+  Trash2,
+  UserPlus,
+  X,
+  XCircle,
+} from "lucide-react";
+import {
+  deleteAuthAccount,
+  fetchAllSettings,
+  restartServer,
+  saveLLMSettings,
+  savePromptSettings,
+  saveServerSettings,
+  setupInitialAuth,
+  testLLMSettings,
+  updateAuthAccounts,
+} from "../api";
+import type {
+  AuthAccountSummary,
+  AuthStatus,
+  LLMSettings,
+  PromptSettings,
+  RuntimeServerInfo,
+  ServerSettings,
+} from "../types";
+
+export interface SettingsModalProps {
+  open: boolean;
+  settings: LLMSettings | null;
+  authStatus?: AuthStatus | null;
+  onClose: () => void;
+  onSaved: (updated: LLMSettings) => void;
+  onAuthChanged?: () => Promise<void> | void;
+  onNotify?: (msg: string) => void;
+}
+
+type SettingsTab = "connection" | "tuning" | "prompts" | "network" | "access";
+
+const PRESETS = [
+  { label: "Ollama (Local)", base_url: "http://127.0.0.1:11434/v1", model: "llama3" },
+  { label: "LM Studio / llama.cpp", base_url: "http://127.0.0.1:8080/v1", model: "local-model" },
+  { label: "KoboldCpp", base_url: "http://127.0.0.1:5001/v1", model: "koboldcpp" },
+  { label: "NVIDIA NIM", base_url: "https://integrate.api.nvidia.com/v1", model: "nvidia/nemotron-3-ultra-550b-a55b" },
+  { label: "OpenRouter", base_url: "https://openrouter.ai/api/v1", model: "nvidia/llama-3.1-nemotron-70b-instruct" },
+  { label: "OpenAI", base_url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+];
+
+interface CustomProviderPreset {
+  label: string;
+  base_url: string;
+  model: string;
+  mode: "two_pass" | "single_pass_tagged";
+  timeout_s: number;
+  retry_attempts: number;
+}
+
+interface TuningPreset {
+  label: string;
+  builtin?: boolean;
+  gm_thinking_mode: "quality" | "balanced";
+  gm_style: "grounded" | "cinematic" | "lethal" | "sandbox";
+  narrator_length: "concise" | "standard" | "detailed";
+  temperature: number;
+  max_tokens: number;
+  top_p: number;
+  presence_penalty: number;
+  frequency_penalty: number;
+  history_window: number;
+  compression_threshold: number;
+  citation_limit: number;
+  default_time_step_minutes: number;
+  enable_chronicler: boolean;
+}
+
+const BUILTIN_TUNING_PRESETS: TuningPreset[] = [
+  {
+    label: "Nemotron 1M Deep Roleplay",
+    builtin: true,
+    gm_thinking_mode: "quality",
+    gm_style: "grounded",
+    narrator_length: "detailed",
+    temperature: 0.75,
+    max_tokens: 8192,
+    top_p: 0.95,
+    presence_penalty: 0.15,
+    frequency_penalty: 0.1,
+    history_window: 120,
+    compression_threshold: 80,
+    citation_limit: 12,
+    default_time_step_minutes: 5,
+    enable_chronicler: true,
+  },
+  {
+    label: "Balanced & Fast",
+    builtin: true,
+    gm_thinking_mode: "balanced",
+    gm_style: "grounded",
+    narrator_length: "standard",
+    temperature: 0.7,
+    max_tokens: 4096,
+    top_p: 0.95,
+    presence_penalty: 0.1,
+    frequency_penalty: 0.05,
+    history_window: 40,
+    compression_threshold: 30,
+    citation_limit: 6,
+    default_time_step_minutes: 5,
+    enable_chronicler: true,
+  },
+  {
+    label: "Gritty & Deterministic",
+    builtin: true,
+    gm_thinking_mode: "quality",
+    gm_style: "lethal",
+    narrator_length: "concise",
+    temperature: 0.45,
+    max_tokens: 4096,
+    top_p: 0.9,
+    presence_penalty: 0,
+    frequency_penalty: 0.1,
+    history_window: 30,
+    compression_threshold: 25,
+    citation_limit: 8,
+    default_time_step_minutes: 5,
+    enable_chronicler: true,
+  },
+];
+
+const STORAGE_PROVIDER_PRESETS = "redgm:customProviderPresets";
+const STORAGE_TUNING_PRESETS = "redgm:customTuningPresets";
+
+function loadStoredList<T>(key: string): T[] {
+  try {
+    if (typeof window === "undefined" || typeof window.localStorage?.getItem !== "function") return [];
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredList<T>(key: string, items: T[]): void {
+  try {
+    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
+      window.localStorage.setItem(key, JSON.stringify(items));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const EMPTY_PROMPTS: PromptSettings = {
+  system_persona: "",
+  world_rules_prefix: "",
+  planner_extra: "",
+  narrator_extra: "",
+  chronicler_extra: "",
+  archivist_extra: "",
+};
+
+const PROMPT_FIELDS: Array<{
+  key: keyof PromptSettings;
+  label: string;
+  hint: string;
+  rows: number;
+}> = [
+  {
+    key: "system_persona",
+    label: "Core GM Persona",
+    hint: "Primary role, grounded Night City tone, and player-agency rules sent to the model.",
+    rows: 5,
+  },
+  {
+    key: "world_rules_prefix",
+    label: "World Rules / Campaign Tone Prefix",
+    hint: "Prepended to both Planner and Narrator context for table rules or house lore.",
+    rows: 3,
+  },
+  {
+    key: "planner_extra",
+    label: "Planner & Mechanics Extra Instructions",
+    hint: "Appended to the pass that adjudicates skill checks, dice, and campaign state mutations.",
+    rows: 3,
+  },
+  {
+    key: "narrator_extra",
+    label: "Narrator Prose Extra Instructions",
+    hint: "Appended to the narrative prose pass (pacing, sensory detail, dialogue style).",
+    rows: 3,
+  },
+  {
+    key: "chronicler_extra",
+    label: "Chronicler & NPC Memory Extra Instructions",
+    hint: "Appended to the background pass extracting time elapsed, NPC updates, and clues.",
+    rows: 3,
+  },
+  {
+    key: "archivist_extra",
+    label: "Archivist / Memory Compression Extra Instructions",
+    hint: "Appended when compressing older turns into campaign summaries and library dossiers.",
+    rows: 3,
+  },
+];
+
+export function SettingsModal({
+  open,
+  settings,
+  authStatus,
+  onClose,
+  onSaved,
+  onAuthChanged,
+  onNotify,
+}: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("connection");
+
+  // Connection + Turn & Tuning state
+  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:11434/v1");
+  const [model, setModel] = useState("llama3");
+  const [apiKey, setApiKey] = useState("");
+  const [clearKey, setClearKey] = useState(false);
+  const [temperature, setTemperature] = useState(0.75);
+  const [maxTokens, setMaxTokens] = useState(1200);
+  const [timeoutS, setTimeoutS] = useState(90);
+  const [mode, setMode] = useState<"two_pass" | "single_pass_tagged">("two_pass");
+  const [topP, setTopP] = useState(0.95);
+  const [presencePenalty, setPresencePenalty] = useState(0);
+  const [frequencyPenalty, setFrequencyPenalty] = useState(0);
+  const [enableChronicler, setEnableChronicler] = useState(true);
+  const [retryAttempts, setRetryAttempts] = useState(1);
+  const [historyWindow, setHistoryWindow] = useState(14);
+  const [compressionThreshold, setCompressionThreshold] = useState(14);
+  const [citationLimit, setCitationLimit] = useState(4);
+  const [gmStyle, setGmStyle] = useState<"grounded" | "cinematic" | "lethal" | "sandbox">("grounded");
+  const [narratorLength, setNarratorLength] = useState<"concise" | "standard" | "detailed">("standard");
+  const [gmThinkingMode, setGmThinkingMode] = useState<"quality" | "balanced">("quality");
+  const [defaultTimeStep, setDefaultTimeStep] = useState(0);
+
+  // Saved Presets
+  const [customProviderPresets, setCustomProviderPresets] = useState<CustomProviderPreset[]>(() =>
+    loadStoredList<CustomProviderPreset>(STORAGE_PROVIDER_PRESETS),
+  );
+  const [savingProviderPreset, setSavingProviderPreset] = useState(false);
+  const [providerPresetName, setProviderPresetName] = useState("");
+  const [customTuningPresets, setCustomTuningPresets] = useState<TuningPreset[]>(() =>
+    loadStoredList<TuningPreset>(STORAGE_TUNING_PRESETS),
+  );
+  const [savingTuningPreset, setSavingTuningPreset] = useState(false);
+  const [tuningPresetName, setTuningPresetName] = useState("");
+
+  // Prompts state
+  const [prompts, setPrompts] = useState<PromptSettings>(EMPTY_PROMPTS);
+  const [promptDefaults, setPromptDefaults] = useState<PromptSettings>(EMPTY_PROMPTS);
+
+  // Network state
+  const [serverCfg, setServerCfg] = useState<ServerSettings>({
+    bind_host: "127.0.0.1",
+    port: 8765,
+    allowed_origins: [],
+    public_url: "",
+  });
+  const [originsText, setOriginsText] = useState("");
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeServerInfo | null>(null);
+
+  // Access & Auth state
+  const [accounts, setAccounts] = useState<AuthAccountSummary[]>([]);
+  const [allowGuests, setAllowGuests] = useState(false);
+  const [passcodeConfigured, setPasscodeConfigured] = useState(false);
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserPass, setNewUserPass] = useState("");
+  const [newUserRole, setNewUserRole] = useState<"user" | "admin">("user");
+  const [sharedPasscode, setSharedPasscode] = useState("");
+  const [bootAdminUser, setBootAdminUser] = useState("admin");
+  const [bootAdminPass, setBootAdminPass] = useState("");
+  const [bootPlayerUser, setBootPlayerUser] = useState("player");
+  const [bootPlayerPass, setBootPlayerPass] = useState("");
+
+  // Shared UI status
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    detail: string;
+    models: string[];
+  } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const applyLlmFields = (s: LLMSettings) => {
+    setBaseUrl(s.base_url);
+    setModel(s.model);
+    setApiKey("");
+    setClearKey(false);
+    setTemperature(s.temperature);
+    setMaxTokens(s.max_tokens);
+    setTimeoutS(s.timeout_s ?? 90);
+    setMode(s.mode);
+    setTopP(s.top_p ?? 0.95);
+    setPresencePenalty(s.presence_penalty ?? 0);
+    setFrequencyPenalty(s.frequency_penalty ?? 0);
+    setEnableChronicler(s.enable_chronicler ?? true);
+    setRetryAttempts(s.retry_attempts ?? 1);
+    setHistoryWindow(s.history_window ?? 14);
+    setCompressionThreshold(s.compression_threshold ?? 14);
+    setCitationLimit(s.citation_limit ?? 4);
+    setGmStyle(s.gm_style ?? "grounded");
+    setNarratorLength(s.narrator_length ?? "standard");
+    setGmThinkingMode(s.gm_thinking_mode === "balanced" ? "balanced" : "quality");
+    setDefaultTimeStep(s.default_time_step_minutes ?? 0);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    setNotice(null);
+    setTestResult(null);
+    if (settings) {
+      applyLlmFields(settings);
+    }
+    let cancelled = false;
+    setLoadingAll(true);
+    fetchAllSettings()
+      .then((all) => {
+        if (cancelled || !all) return;
+        if (all.llm) applyLlmFields(all.llm);
+        if (all.prompts) setPrompts(all.prompts);
+        if (all.prompt_defaults) setPromptDefaults(all.prompt_defaults);
+        if (all.server) {
+          setServerCfg(all.server);
+          setOriginsText((all.server.allowed_origins || []).join("\n"));
+        }
+        if (all.runtime) setRuntimeInfo(all.runtime);
+        if (all.auth_policy) {
+          setAccounts(all.auth_policy.accounts || []);
+          setAllowGuests(Boolean(all.auth_policy.allow_guest_users));
+          setPasscodeConfigured(Boolean(all.auth_policy.user_passcode_configured));
+        }
+      })
+      .catch(() => {
+        // Legacy / mocked environments may only implement /v1/settings/llm
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAll(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, settings]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const handleTest = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      const res = await testLLMSettings({
+        base_url: baseUrl,
+        api_key: apiKey || undefined,
+      });
+      setTestResult({ ok: res.ok, detail: res.detail, models: res.models });
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        detail: err instanceof Error ? err.message : "Test failed",
+        models: [],
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSaveConnectionOrTuning = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload: Record<string, unknown> = {
+        base_url: baseUrl,
+        model,
+        temperature,
+        max_tokens: maxTokens,
+        timeout_s: timeoutS,
+        mode,
+        top_p: topP,
+        presence_penalty: presencePenalty,
+        frequency_penalty: frequencyPenalty,
+        enable_chronicler: enableChronicler,
+        retry_attempts: retryAttempts,
+        history_window: historyWindow,
+        compression_threshold: compressionThreshold,
+        citation_limit: citationLimit,
+        gm_style: gmStyle,
+        narrator_length: narratorLength,
+        gm_thinking_mode: gmThinkingMode,
+        default_time_step_minutes: defaultTimeStep,
+      };
+      if (clearKey) {
+        payload.clear_api_key = true;
+      } else if (apiKey.trim()) {
+        payload.api_key = apiKey.trim();
+      }
+      const updated = await saveLLMSettings(payload);
+      onSaved(updated);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSavePrompts = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await savePromptSettings(prompts);
+      setPrompts(res.prompts);
+      setPromptDefaults(res.prompt_defaults);
+      setNotice("Saved custom GM prompt instructions.");
+      onNotify?.("Saved custom GM prompt instructions.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save prompts");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetPrompts = async () => {
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await savePromptSettings({ reset: true });
+      setPrompts(res.prompts);
+      setPromptDefaults(res.prompt_defaults);
+      setNotice("Reset prompts back to defaults.");
+      onNotify?.("Reset prompts back to defaults.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset prompts");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveNetwork = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const parsedOrigins = originsText
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const res = await saveServerSettings({
+        bind_host: serverCfg.bind_host,
+        port: serverCfg.port,
+        public_url: serverCfg.public_url,
+        allowed_origins: parsedOrigins,
+      });
+      setServerCfg(res.server);
+      setOriginsText((res.server.allowed_origins || []).join("\n"));
+      setRuntimeInfo({
+        active_host: res.active_host,
+        active_port: res.active_port,
+        in_docker: res.in_docker,
+        restart_supported: res.restart_supported,
+        restart_required: res.restart_required,
+      });
+      setNotice(
+        res.restart_required
+          ? "Network settings saved. Click Restart Server to apply the new bind IP or port."
+          : "Network settings saved and active.",
+      );
+      onNotify?.("Saved network settings.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save network settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRestartServer = async () => {
+    setRestarting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await restartServer();
+      setNotice(
+        `Server is restarting on ${res.bind_host}:${res.port}. Reload this browser tab on that address/port in a moment.`,
+      );
+      onNotify?.(`Restarting backend on ${res.bind_host}:${res.port}...`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to restart server");
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const handleBootstrapAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await setupInitialAuth({
+        admin_username: bootAdminUser.trim() || "admin",
+        admin_password: bootAdminPass,
+        user_username: bootPlayerPass.trim() ? (bootPlayerUser.trim() || "player") : "",
+        user_password: bootPlayerPass.trim(),
+        user_passcode: sharedPasscode.trim(),
+        allow_guest_users: allowGuests,
+      });
+      setBootAdminPass("");
+      setBootPlayerPass("");
+      setSharedPasscode("");
+      const all = await fetchAllSettings().catch(() => null);
+      if (all?.auth_policy) {
+        setAccounts(all.auth_policy.accounts || []);
+        setAllowGuests(Boolean(all.auth_policy.allow_guest_users));
+        setPasscodeConfigured(Boolean(all.auth_policy.user_passcode_configured));
+      }
+      await onAuthChanged?.();
+      setNotice("Access control enabled and signed in as Admin.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to enable auth");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpsertAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await updateAuthAccounts({
+        action: "upsert_account",
+        username: newUserName.trim(),
+        password: newUserPass,
+        role: newUserRole,
+      });
+      setAccounts(res.accounts);
+      setNewUserName("");
+      setNewUserPass("");
+      await onAuthChanged?.();
+      setNotice("Saved account credentials.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save account");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdateAccessPolicy = async (revokeTokens = false) => {
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload: {
+        action: "policy";
+        allow_guest_users: boolean;
+        user_passcode?: string;
+        revoke_all_tokens?: boolean;
+      } = {
+        action: "policy",
+        allow_guest_users: allowGuests,
+        revoke_all_tokens: revokeTokens,
+      };
+      if (sharedPasscode.trim()) {
+        payload.user_passcode = sharedPasscode.trim();
+      }
+      const res = await updateAuthAccounts(payload);
+      setAccounts(res.accounts);
+      setAllowGuests(res.allow_guest_users);
+      setPasscodeConfigured(res.user_passcode_configured);
+      setSharedPasscode("");
+      await onAuthChanged?.();
+      setNotice(revokeTokens ? "Updated policy and signed out old tokens." : "Saved access policy.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update policy");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteAccount = async (username: string) => {
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await deleteAuthAccount(username);
+      setAccounts(res.accounts);
+      await onAuthChanged?.();
+      setNotice(`Removed account '${username}'.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove account");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = [
+    { id: "connection", label: "Connection", icon: Cpu },
+    { id: "tuning", label: "Turn & Tuning", icon: Sliders },
+    { id: "prompts", label: "Prompts", icon: FileText },
+    { id: "network", label: "Network", icon: Globe },
+    { id: "access", label: "Access & Auth", icon: Shield },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+      role="dialog"
+      aria-modal="true"
+      aria-label="AI Game Master Connection"
+    >
+      <div className="cyber-cut flex max-h-[92vh] w-full max-w-3xl flex-col border border-slate-700 bg-[#0d111a] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
+          <div>
+            <h2 className="text-base font-bold tracking-wide text-slate-100 uppercase">
+              AI Game Master Connection
+            </h2>
+            <p className="text-xs text-slate-400">
+              Admin Control Center: model provider, turn tuning, prompts, network IP/port, and access control.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close settings"
+            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Navigation tabs */}
+        <div className="flex flex-wrap gap-1 border-b border-slate-800 bg-slate-950/70 px-5 py-2">
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setActiveTab(id);
+                setError(null);
+                setNotice(null);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                activeTab === id
+                  ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+          {loadingAll && (
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-slate-400">
+              <Loader2 className="h-3 w-3 animate-spin" /> Syncing...
+            </span>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {notice && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              {notice}
+            </div>
+          )}
+          {error && (
+            <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+              {error}
+            </div>
+          )}
+
+          {activeTab === "connection" && (
+            <form onSubmit={handleSaveConnectionOrTuning} className="space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    title="One-click provider templates. Save your own custom endpoints & models below."
+                  >
+                    Provider Presets
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  {!savingProviderPreset ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProviderPresetName("");
+                        setSavingProviderPreset(true);
+                      }}
+                      className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/20"
+                    >
+                      + Save Current as Preset
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={providerPresetName}
+                        onChange={(e) => setProviderPresetName(e.target.value)}
+                        placeholder="Preset name..."
+                        className="w-36 rounded border border-cyan-500/60 bg-slate-950 px-2 py-0.5 text-xs text-slate-100 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const label = providerPresetName.trim();
+                          if (!label) return;
+                          const next: CustomProviderPreset[] = [
+                            ...customProviderPresets.filter((p) => p.label.toLowerCase() !== label.toLowerCase()),
+                            {
+                              label,
+                              base_url: baseUrl.trim(),
+                              model: model.trim(),
+                              mode,
+                              timeout_s: timeoutS,
+                              retry_attempts: retryAttempts,
+                            },
+                          ];
+                          setCustomProviderPresets(next);
+                          saveStoredList(STORAGE_PROVIDER_PRESETS, next);
+                          setSavingProviderPreset(false);
+                          onNotify?.(`Saved provider preset "${label}".`);
+                        }}
+                        className="rounded bg-cyan-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-cyan-500"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSavingProviderPreset(false)}
+                        className="px-1 text-[11px] text-slate-400 hover:text-slate-200"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => {
+                        setBaseUrl(p.base_url);
+                        setModel(p.model);
+                      }}
+                      className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-300 hover:border-cyan-500/60 hover:text-cyan-300"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  {customProviderPresets.map((p) => (
+                    <div
+                      key={`custom-${p.label}`}
+                      className="inline-flex items-center rounded border border-cyan-500/40 bg-cyan-950/30 text-xs text-cyan-200"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBaseUrl(p.base_url);
+                          setModel(p.model);
+                          setMode(p.mode);
+                          setTimeoutS(p.timeout_s);
+                          setRetryAttempts(p.retry_attempts);
+                        }}
+                        className="px-2.5 py-1 hover:text-white"
+                      >
+                        {p.label}
+                      </button>
+                      <button
+                        type="button"
+                        title={`Delete preset ${p.label}`}
+                        onClick={() => {
+                          const next = customProviderPresets.filter((x) => x.label !== p.label);
+                          setCustomProviderPresets(next);
+                          saveStoredList(STORAGE_PROVIDER_PRESETS, next);
+                        }}
+                        className="border-l border-cyan-500/30 px-1.5 py-1 text-cyan-400 hover:text-rose-300"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                  title="Base URL of any OpenAI-compatible /chat/completions endpoint (local Ollama/LM Studio or cloud NIM/OpenRouter/OpenAI)."
+                >
+                  OpenAI-Compatible Base URL
+                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:11434/v1"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    title="Exact model identifier expected by your provider (e.g. nvidia/nemotron-3-ultra-550b-a55b, gpt-4o-mini, llama3)."
+                  >
+                    Model ID
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="llama3"
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label
+                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    title="Two-Pass runs a dedicated JSON rules/dice Planner before streaming prose (most accurate). Single-Pass streams prose + <gm_ops> in one call (faster, fewer API calls)."
+                  >
+                    Turn Architecture
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </label>
+                  <select
+                    value={mode}
+                    onChange={(e) =>
+                      setMode(e.target.value === "single_pass_tagged" ? "single_pass_tagged" : "two_pass")
+                    }
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  >
+                    <option value="two_pass">Two-Pass Planner + Streamed GM</option>
+                    <option value="single_pass_tagged">Single-Pass Streamed GM</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {mode === "two_pass"
+                      ? "Best rules/dice accuracy: resolves checks & state before writing prose."
+                      : "Faster single request: streams prose and embeds state ops at the end."}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label
+                    className="inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    title="Bearer token sent to your LLM provider. Stored privately on the server; leave blank to keep your saved key."
+                  >
+                    API Key{" "}
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                    {settings?.has_api_key ? (
+                      <span className="font-mono text-[11px] text-emerald-400">
+                        (saved: {settings.api_key_masked})
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">(optional for local LLMs)</span>
+                    )}
+                  </label>
+                  {settings?.has_api_key && (
+                    <label className="flex items-center gap-1 text-xs text-rose-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clearKey}
+                        onChange={(e) => setClearKey(e.target.checked)}
+                      />
+                      Clear saved key
+                    </label>
+                  )}
+                </div>
+                <input
+                  type="password"
+                  disabled={clearKey}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={settings?.has_api_key ? "Leave blank to keep existing key" : "sk-..."}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none disabled:opacity-40"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block" title="HTTP request timeout in seconds before aborting a slow or stalled model call (5–600s).">
+                  <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                    Timeout (sec) <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  <input
+                    type="number"
+                    min={5}
+                    max={600}
+                    step="any"
+                    value={timeoutS}
+                    onChange={(e) => setTimeoutS(parseFloat(e.target.value) || 90)}
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                  />
+                </label>
+                <label className="block" title="How many times to automatically retry transient API rate-limit (429) or overload (503) errors before failing the turn.">
+                  <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                    Retry Attempts (0–5) <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={5}
+                    value={retryAttempts}
+                    onChange={(e) => setRetryAttempts(parseInt(e.target.value, 10) || 0)}
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                  />
+                </label>
+              </div>
+
+              {testResult && (
+                <div
+                  className={`rounded-md border px-3 py-2 text-xs ${
+                    testResult.ok
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                      : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-medium">
+                    {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                    {testResult.detail}
+                  </div>
+                  {testResult.models.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {testResult.models.slice(0, 12).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setModel(m)}
+                          className="rounded bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-cyan-300 hover:bg-slate-800"
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={handleTest}
+                  disabled={testing}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 hover:border-cyan-500/60"
+                >
+                  {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5 text-cyan-400" />}
+                  Test Connection
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : "Save Settings"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {activeTab === "tuning" && (
+            <form onSubmit={handleSaveConnectionOrTuning} className="space-y-4">
+              {/* Tuning Presets */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    title="Apply or save a full Turn & Tuning profile (thinking, tone, sampling, memory & context limits)."
+                  >
+                    Tuning Presets
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  {!savingTuningPreset ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTuningPresetName("");
+                        setSavingTuningPreset(true);
+                      }}
+                      className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/20"
+                    >
+                      + Save Current as Preset
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={tuningPresetName}
+                        onChange={(e) => setTuningPresetName(e.target.value)}
+                        placeholder="Preset name..."
+                        className="w-36 rounded border border-cyan-500/60 bg-slate-950 px-2 py-0.5 text-xs text-slate-100 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const label = tuningPresetName.trim();
+                          if (!label) return;
+                          const next: TuningPreset[] = [
+                            ...customTuningPresets.filter((p) => p.label.toLowerCase() !== label.toLowerCase()),
+                            {
+                              label,
+                              gm_thinking_mode: gmThinkingMode,
+                              gm_style: gmStyle,
+                              narrator_length: narratorLength,
+                              temperature,
+                              max_tokens: maxTokens,
+                              top_p: topP,
+                              presence_penalty: presencePenalty,
+                              frequency_penalty: frequencyPenalty,
+                              history_window: historyWindow,
+                              compression_threshold: compressionThreshold,
+                              citation_limit: citationLimit,
+                              default_time_step_minutes: defaultTimeStep,
+                              enable_chronicler: enableChronicler,
+                            },
+                          ];
+                          setCustomTuningPresets(next);
+                          saveStoredList(STORAGE_TUNING_PRESETS, next);
+                          setSavingTuningPreset(false);
+                          onNotify?.(`Saved tuning preset "${label}".`);
+                        }}
+                        className="rounded bg-cyan-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-cyan-500"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSavingTuningPreset(false)}
+                        className="px-1 text-[11px] text-slate-400 hover:text-slate-200"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {BUILTIN_TUNING_PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => {
+                        setGmThinkingMode(p.gm_thinking_mode);
+                        setGmStyle(p.gm_style);
+                        setNarratorLength(p.narrator_length);
+                        setTemperature(p.temperature);
+                        setMaxTokens(p.max_tokens);
+                        setTopP(p.top_p);
+                        setPresencePenalty(p.presence_penalty);
+                        setFrequencyPenalty(p.frequency_penalty);
+                        setHistoryWindow(p.history_window);
+                        setCompressionThreshold(p.compression_threshold);
+                        setCitationLimit(p.citation_limit);
+                        setDefaultTimeStep(p.default_time_step_minutes);
+                        setEnableChronicler(p.enable_chronicler);
+                      }}
+                      className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-300 hover:border-cyan-500/60 hover:text-cyan-300"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  {customTuningPresets.map((p) => (
+                    <div
+                      key={`custom-tune-${p.label}`}
+                      className="inline-flex items-center rounded border border-cyan-500/40 bg-cyan-950/30 text-xs text-cyan-200"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGmThinkingMode(p.gm_thinking_mode);
+                          setGmStyle(p.gm_style);
+                          setNarratorLength(p.narrator_length);
+                          setTemperature(p.temperature);
+                          setMaxTokens(p.max_tokens);
+                          setTopP(p.top_p);
+                          setPresencePenalty(p.presence_penalty);
+                          setFrequencyPenalty(p.frequency_penalty);
+                          setHistoryWindow(p.history_window);
+                          setCompressionThreshold(p.compression_threshold);
+                          setCitationLimit(p.citation_limit);
+                          setDefaultTimeStep(p.default_time_step_minutes);
+                          setEnableChronicler(p.enable_chronicler);
+                        }}
+                        className="px-2.5 py-1 hover:text-white"
+                      >
+                        {p.label}
+                      </button>
+                      <button
+                        type="button"
+                        title={`Delete preset ${p.label}`}
+                        onClick={() => {
+                          const next = customTuningPresets.filter((x) => x.label !== p.label);
+                          setCustomTuningPresets(next);
+                          saveStoredList(STORAGE_TUNING_PRESETS, next);
+                        }}
+                        className="border-l border-cyan-500/30 px-1.5 py-1 text-cyan-400 hover:text-rose-300"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Group 1: GM Thinking & Style */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    title="Controls reasoning depth, narrative tone, and response length."
+                  >
+                    GM Thinking &amp; Style
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-400">
+                    {gmThinkingMode === "balanced" ? "Balanced (~43s)" : "Quality (~73s)"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="GM Thinking Profile">
+                  <button
+                    type="button"
+                    aria-pressed={gmThinkingMode === "quality"}
+                    onClick={() => setGmThinkingMode("quality")}
+                    className={`rounded-md border px-3 py-2 text-left transition ${
+                      gmThinkingMode === "quality"
+                        ? "border-cyan-500/70 bg-cyan-500/15 text-cyan-100"
+                        : "border-slate-800 bg-slate-900/70 text-slate-300 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">GM Quality</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      Thinking ON for all 3 steps — strictest HP/prose sync &amp; zero roll leaks.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={gmThinkingMode === "balanced"}
+                    onClick={() => setGmThinkingMode("balanced")}
+                    className={`rounded-md border px-3 py-2 text-left transition ${
+                      gmThinkingMode === "balanced"
+                        ? "border-amber-500/70 bg-amber-500/15 text-amber-100"
+                        : "border-slate-800 bg-slate-900/70 text-slate-300 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">GM Balanced</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      Same writing, less waiting — Thinking ON for rules/dice, OFF for story &amp; memory.
+                    </div>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label
+                    className="block"
+                    title="Sets the GM's pacing, lethality, and dramatic emphasis across Night City scenes."
+                  >
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help">
+                      GM Tone / Style <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <select
+                      value={gmStyle}
+                      onChange={(e) => setGmStyle(e.target.value as typeof gmStyle)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    >
+                      <option value="grounded">Grounded Street-Level (Default)</option>
+                      <option value="cinematic">Cinematic Action</option>
+                      <option value="lethal">Lethal / High-Stakes</option>
+                      <option value="sandbox">Open-Ended Sandbox</option>
+                    </select>
+                  </label>
+
+                  <label
+                    className="block"
+                    title="Target paragraph length for each GM reply. Concise is snappy for combat; Detailed gives richer atmosphere."
+                  >
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help">
+                      Narration Length <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <select
+                      value={narratorLength}
+                      onChange={(e) => setNarratorLength(e.target.value as typeof narratorLength)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    >
+                      <option value="concise">Concise (1–2 paragraphs)</option>
+                      <option value="standard">Standard (2–4 paragraphs)</option>
+                      <option value="detailed">Detailed (3–5 paragraphs)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {/* Group 2: Sampling & Output */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                <div
+                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                  title="Controls how creative vs deterministic the model's wording is, and how long each output can be."
+                >
+                  Sampling &amp; Output
+                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      title="Controls randomness/creativity (0.0 = deterministic & blunt, 1.5 = wild & creative)."
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        Temperature ({temperature.toFixed(2)})
+                        <HelpCircle className="h-3 w-3 text-slate-500" />
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        {temperature >= 0.7 ? "Expressive" : temperature <= 0.4 ? "Blunt" : "Balanced"}
+                      </span>
+                    </label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1.5}
+                      step={0.05}
+                      value={temperature}
+                      onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                      className="w-full accent-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                      title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models like Nemotron spend thinking tokens out of this budget — 4096–8192 is recommended."
+                    >
+                      Max Output Tokens
+                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </label>
+                    <input
+                      type="number"
+                      min={128}
+                      max={65536}
+                      step={1}
+                      value={maxTokens}
+                      onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="block" title="Nucleus sampling: limits token choices to the top cumulative probability mass (lower = more focused, 1.0 = full vocabulary).">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Top-P <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={0.05}
+                      max={1}
+                      step="any"
+                      value={topP}
+                      onChange={(e) => setTopP(parseFloat(e.target.value) || 0.95)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="block" title="Penalizes tokens that already appeared at least once, encouraging new topics and descriptions (-2 to 2).">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Presence Penalty <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={-2}
+                      max={2}
+                      step="any"
+                      value={presencePenalty}
+                      onChange={(e) => setPresencePenalty(parseFloat(e.target.value) || 0)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="block" title="Penalizes tokens proportionally to how often they already appeared, reducing repetitive phrasing (-2 to 2).">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Frequency Penalty <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={-2}
+                      max={2}
+                      step="any"
+                      value={frequencyPenalty}
+                      onChange={(e) => setFrequencyPenalty(parseFloat(e.target.value) || 0)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Group 3: Context, Memory & World */}
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                <div
+                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                  title="Controls how much chat history, rulebook lore, and automatic world-state tracking runs each turn."
+                >
+                  Context, Memory &amp; World
+                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <label className="block" title="How many recent chat messages are sent to the AI on each turn (Narrator uses up to 500; Planner uses up to 200).">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      History Window (4–500) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={500}
+                      value={historyWindow}
+                      onChange={(e) => setHistoryWindow(parseInt(e.target.value, 10) || 14)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="block" title="Turns since last compression before the UI nudges you to compress older turns into Campaign Library dossiers & summary.">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Compress After (6–1000) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={6}
+                      max={1000}
+                      value={compressionThreshold}
+                      onChange={(e) => setCompressionThreshold(parseInt(e.target.value, 10) || 14)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="block" title="Number of Corebook & Campaign Library entries retrieved and injected into each turn's context (1–30).">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Rule Citations (1–30) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={citationLimit}
+                      onChange={(e) => setCitationLimit(parseInt(e.target.value, 10) || 4)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="block" title="In-game minutes automatically added to the Night City world clock per turn when the Chronicler doesn't specify an elapsed time.">
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
+                      Default Time Step (m) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      value={defaultTimeStep}
+                      onChange={(e) => setDefaultTimeStep(parseInt(e.target.value, 10) || 0)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </label>
+                </div>
+
+                <label
+                  className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-help"
+                  title="Runs a post-turn extraction pass to automatically log new NPCs, clues, scene changes, world clock time, and homebrew entries from the GM's reply."
+                >
+                  <input
+                    type="checkbox"
+                    checked={enableChronicler}
+                    onChange={(e) => setEnableChronicler(e.target.checked)}
+                  />
+                  <span>Enable automatic Chronicler time &amp; NPC memory extraction pass</span>
+                  <HelpCircle className="h-3 w-3 shrink-0 text-slate-500" />
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save Turn Tuning"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {activeTab === "prompts" && (
+            <form onSubmit={handleSavePrompts} className="space-y-3">
+              {PROMPT_FIELDS.map((field) => (
+                <label key={field.key} className="block">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-200">{field.label}</span>
+                    {prompts[field.key] !== promptDefaults[field.key] && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPrompts((prev) => ({
+                            ...prev,
+                            [field.key]: promptDefaults[field.key] ?? "",
+                          }))
+                        }
+                        className="text-[11px] text-cyan-300 hover:underline"
+                      >
+                        Revert field
+                      </button>
+                    )}
+                  </div>
+                  <p className="mb-1 text-[11px] text-slate-400">{field.hint}</p>
+                  <textarea
+                    rows={field.rows}
+                    value={prompts[field.key]}
+                    onChange={(e) =>
+                      setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                </label>
+              ))}
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleResetPrompts()}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-300 hover:border-amber-500/60 hover:text-amber-200"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset All Prompts
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md px-3 py-2 text-xs text-slate-400 hover:text-slate-200"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : "Save Prompts"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {activeTab === "network" && (
+            <form onSubmit={handleSaveNetwork} className="space-y-4">
+              {runtimeInfo && (
+                <div className="rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
+                  <div>
+                    Active listener:{" "}
+                    <span className="font-mono text-cyan-300">
+                      {runtimeInfo.active_host}:{runtimeInfo.active_port}
+                    </span>
+                    {runtimeInfo.in_docker && (
+                      <span className="ml-2 rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                        Docker
+                      </span>
+                    )}
+                  </div>
+                  {runtimeInfo.restart_required && (
+                    <div className="mt-1 text-[11px] text-amber-300">
+                      Saved IP/Port differs from active listener. Restart server to rebind.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-300">
+                    Bind IP / Interface
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={serverCfg.bind_host}
+                    onChange={(e) => setServerCfg((prev) => ({ ...prev, bind_host: e.target.value }))}
+                    placeholder="127.0.0.1 or 0.0.0.0"
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                  <div className="mt-1.5 flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setServerCfg((prev) => ({ ...prev, bind_host: "127.0.0.1" }))}
+                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 hover:border-cyan-500/60"
+                    >
+                      127.0.0.1 (Local)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setServerCfg((prev) => ({ ...prev, bind_host: "0.0.0.0" }))}
+                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 hover:border-cyan-500/60"
+                    >
+                      0.0.0.0 (LAN / Public)
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-300">Listen Port</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    value={serverCfg.port}
+                    onChange={(e) =>
+                      setServerCfg((prev) => ({ ...prev, port: parseInt(e.target.value, 10) || 8765 }))
+                    }
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-slate-300">
+                  Public URL (for reverse-proxied Co-op join links, optional)
+                </span>
+                <input
+                  type="url"
+                  value={serverCfg.public_url}
+                  onChange={(e) => setServerCfg((prev) => ({ ...prev, public_url: e.target.value }))}
+                  placeholder="https://redgm.example.com"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-slate-300">
+                  Allowed Browser Origins (one exact http(s)://host[:port] per line)
+                </span>
+                <textarea
+                  rows={3}
+                  value={originsText}
+                  onChange={(e) => setOriginsText(e.target.value)}
+                  placeholder="https://redgm.example.com"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </label>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                {runtimeInfo?.restart_supported ? (
+                  <button
+                    type="button"
+                    disabled={restarting}
+                    onClick={() => void handleRestartServer()}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                  >
+                    {restarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    Restart Server Now
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    Restart the process manually after saving IP/port when not running under `redkb.py serve`.
+                  </span>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md px-3 py-2 text-xs text-slate-400 hover:text-slate-200"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : "Save Network Settings"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {activeTab === "access" && (
+            <div className="space-y-4">
+              {authStatus?.can_bootstrap ? (
+                <form onSubmit={handleBootstrapAuth} className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                    Enable Admin &amp; User Sign-In
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Currently running in open loopback mode. Set an Admin account below to protect server settings, prompts, and IP/port controls.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-300">Admin Username</span>
+                      <input
+                        type="text"
+                        required
+                        value={bootAdminUser}
+                        onChange={(e) => setBootAdminUser(e.target.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-300">Admin Password (min 6)</span>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={bootAdminPass}
+                        onChange={(e) => setBootAdminPass(e.target.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-300">Initial Player Username</span>
+                      <input
+                        type="text"
+                        value={bootPlayerUser}
+                        onChange={(e) => setBootPlayerUser(e.target.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-300">Initial Player Password (optional)</span>
+                      <input
+                        type="password"
+                        value={bootPlayerPass}
+                        onChange={(e) => setBootPlayerPass(e.target.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                    >
+                      <Shield className="h-3.5 w-3.5" />
+                      Enable Accounts
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      Configured Accounts
+                    </div>
+                    {accounts.length === 0 ? (
+                      <p className="text-xs text-slate-400">No file-backed accounts listed (using env or PIN).</p>
+                    ) : (
+                      <div className="divide-y divide-slate-800/80">
+                        {accounts.map((acc) => (
+                          <div key={acc.username} className="flex items-center justify-between py-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-semibold text-slate-100">{acc.username}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  acc.role === "admin"
+                                    ? "bg-rose-500/20 text-rose-300"
+                                    : "bg-cyan-500/20 text-cyan-300"
+                                }`}
+                              >
+                                {acc.role}
+                              </span>
+                              <span className="text-[11px] text-slate-500">({acc.source})</span>
+                            </div>
+                            {acc.source !== "env" && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void handleDeleteAccount(acc.username)}
+                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleUpsertAccount} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      <UserPlus className="h-3.5 w-3.5 text-cyan-400" />
+                      Add or Update Account
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <input
+                        type="text"
+                        required
+                        value={newUserName}
+                        onChange={(e) => setNewUserName(e.target.value)}
+                        placeholder="Username"
+                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                      />
+                      <input
+                        type="password"
+                        required
+                        minLength={newUserRole === "admin" ? 6 : 4}
+                        value={newUserPass}
+                        onChange={(e) => setNewUserPass(e.target.value)}
+                        placeholder={newUserRole === "admin" ? "Password (min 6)" : "Password (min 4)"}
+                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                      />
+                      <select
+                        value={newUserRole}
+                        onChange={(e) => setNewUserRole(e.target.value === "admin" ? "admin" : "user")}
+                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                      >
+                        <option value="user">User (Play Only)</option>
+                        <option value="admin">Admin (Full Access)</option>
+                      </select>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                      >
+                        Save Account
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      Player Policy &amp; Sessions
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={allowGuests}
+                        onChange={(e) => setAllowGuests(e.target.checked)}
+                      />
+                      Allow passwordless guest player sign-in
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-slate-400">
+                        Update shared Player Passcode {passcodeConfigured ? "(currently set)" : "(none)"}
+                      </span>
+                      <input
+                        type="password"
+                        value={sharedPasscode}
+                        onChange={(e) => setSharedPasscode(e.target.value)}
+                        placeholder="Leave blank to keep unchanged"
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                      />
+                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void handleUpdateAccessPolicy(true)}
+                        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-500/20"
+                      >
+                        Revoke All Existing Tokens
+                      </button>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void handleUpdateAccessPolicy(false)}
+                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
+                      >
+                        Save Access Policy
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

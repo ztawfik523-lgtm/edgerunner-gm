@@ -1,0 +1,12 @@
+[
+  {"query":"Critical Success Critical Failure natural 10 on d10", "expected_printed_pages":[130], "top_k":5},
+  {"query":"skill check resolution difficulty value opposed roll defender tie", "expected_printed_pages":[129], "top_k":5},
+  {"query":"using luck points before rolling skill check", "expected_printed_pages":[130], "top_k":5},
+  {"query":"how much time is one combat round initiative", "expected_printed_pages":[126], "top_k":5},
+  {"query":"cover hit points steel concrete wood", "expected_printed_pages":[182,183], "top_k":5},
+  {"query":"stabilization and healing death saves mortally wounded", "expected_printed_pages":[222], "top_k":5},
+  {"query":"netrunning interface net actions cyberdeck architecture", "expected_printed_pages":[197,198,199], "top_k":5},
+  {"query":"cyberpsychosis humanity loss empathy cyberware", "expected_printed_pages":[108,109,110,111], "top_k":5},
+  {"query":"roll for vehicle combat collision", "expected_printed_pages":[192], "evidence_patterns":["ramming", "6d6"], "top_k":5},
+  {"query":"Streetrat template character creation", "expected_printed_pages":[40,41,42], "top_k":5}
+]

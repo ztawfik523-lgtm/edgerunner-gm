@@ -1,0 +1,7 @@
+[
+  {"query": "What happens on a natural 10?", "expected_printed_pages": [130], "evidence_patterns": ["natural 10", "another 1d10", "do not score another Critical Success"], "top_k": 5},
+  {"query": "Can I attempt this skill check again?", "expected_printed_pages": [130], "evidence_patterns": ["can't try again unless", "chances of success have improved"], "top_k": 5},
+  {"query": "How does armor ablation work?", "expected_printed_pages": [96,186], "evidence_patterns": ["ablat", "lowered by one|reducing its SP by 1"], "top_k": 5},
+  {"query": "What happens when my character is Mortally Wounded?", "expected_printed_pages": [186,220], "evidence_patterns": ["Mortally Wounded", "-4 to all Actions", "Death Save at start"], "top_k": 5},
+  {"query": "What does the book say on page 130?", "expected_printed_pages": [130], "top_k": 5}
+]

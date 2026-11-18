@@ -1,0 +1,17 @@
+.venv/
+*.sqlite*
+*.db
+*.pdf
+*.jsonl
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+.source-review/
+ui/node_modules/
+ui/dist/
+ui/tsconfig.tsbuildinfo
+coverage/
+.DS_Store
+*.log
