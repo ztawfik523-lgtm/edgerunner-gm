@@ -10,6 +10,31 @@
     --cyber-crimson: #ff003c;
     --cyber-yellow: #fcee0a;
     --cyber-cyan: #00f0ff;
+    --ui-body-weight: 600;
+  }
+
+  html {
+    font-size: 16px;
+  }
+
+  html[data-ui-scale="large"] {
+    font-size: 17.5px;
+  }
+
+  html[data-ui-scale="xl"] {
+    font-size: 19px;
+  }
+
+  html[data-ui-weight="normal"] {
+    --ui-body-weight: 500;
+  }
+
+  html[data-ui-weight="semibold"] {
+    --ui-body-weight: 600;
+  }
+
+  html[data-ui-weight="bold"] {
+    --ui-body-weight: 700;
   }
 
   * {
@@ -19,9 +44,23 @@
 
   body {
     font-family: var(--font-cyber-hud);
+    font-weight: var(--ui-body-weight);
     letter-spacing: 0.015em;
     background-color: #06080e;
     color: #f1f5f9;
+  }
+
+  html[data-ui-scale="large"] .text-\[10px\] {
+    font-size: 11px;
+  }
+  html[data-ui-scale="large"] .text-\[11px\] {
+    font-size: 12.5px;
+  }
+  html[data-ui-scale="xl"] .text-\[10px\] {
+    font-size: 12px;
+  }
+  html[data-ui-scale="xl"] .text-\[11px\] {
+    font-size: 13.5px;
   }
 
   h1, h2, h3 {

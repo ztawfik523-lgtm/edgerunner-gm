@@ -312,9 +312,35 @@ export interface SoloRuntime {
   clock_minutes: number;
 }
 
+export interface NpcIdentityProfile {
+  handle: string;
+  real_name?: string;
+  real_name_hidden?: boolean;
+}
+
+export interface PartyChannelInfo {
+  id: string;
+  name: string;
+  location: string;
+  character_ids: string[];
+  handles: string[];
+}
+
+export interface PartyGroupingState {
+  mode: "together" | "split";
+  characters: Array<{ id: string; handle: string; location: string; channel_id: string }>;
+  channels: PartyChannelInfo[];
+  char_channel_map: Record<string, string>;
+  active_channel_id: string;
+  active_location: string;
+  prompt_summary: string;
+}
+
 export interface CampaignContext {
   campaign: CampaignRecord;
   characters: CharacterRecord[];
+  npc_profiles?: Record<string, NpcIdentityProfile>;
+  party_grouping?: PartyGroupingState;
   solo: {
     revision: number;
     runtime: SoloRuntime;
@@ -411,6 +437,7 @@ export interface ChatMessageMetadata {
 export interface ChatMessageNode {
   id: string;
   campaign_id: string;
+  channel_id?: string;
   parent_id: string | null;
   role: "user" | "assistant" | "system";
   content: string;
@@ -428,6 +455,8 @@ export interface ChatMessageNode {
 
 export interface ChatTreeResponse {
   campaign_id: string;
+  channel_id?: string;
+  channels?: string[];
   nodes: ChatMessageNode[];
   active_branch: ChatMessageNode[];
   active_leaf_id: string | null;
@@ -654,6 +683,7 @@ export interface CreationAiAssistRequest {
     handle?: string;
     real_name?: string;
     real_name_hidden?: boolean;
+    gender?: string;
     pronouns?: string;
     age?: string;
     role: string;

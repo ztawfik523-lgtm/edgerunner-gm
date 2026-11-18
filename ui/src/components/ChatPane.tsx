@@ -40,6 +40,12 @@ import {
   Zap,
 } from "lucide-react";
 import { rollQuickDice } from "../api";
+import {
+  CHARACTER_COLOR_THEMES,
+  isHexColor,
+  normalizeColorHex,
+  resolveCharacterColor,
+} from "../utils/characterColors";
 import type {
   ActiveTurnInfo,
   CampaignRecord,
@@ -47,8 +53,12 @@ import type {
   ChatMessageNode,
   DiceRollResult,
   LibraryEntry,
+  NpcIdentityProfile,
+  PartyGroupingState,
   StatePatchEvent,
 } from "../types";
+
+export { CHARACTER_COLOR_THEMES };
 
 const COLOR_CLASS_MAP: Record<string, string> = {
   cyan: "font-medium text-cyan-300",
@@ -72,60 +82,6 @@ const COLOR_CLASS_MAP: Record<string, string> = {
   muted: "text-slate-400",
   dim: "text-slate-400",
   gray: "text-slate-400",
-};
-
-export const CHARACTER_COLOR_THEMES: Record<
-  string,
-  {
-    label: string;
-    dotClass: string;
-    nameBadgeClass: string;
-    cardBorderClass: string;
-    avatarRingClass: string;
-  }
-> = {
-  cyan: {
-    label: "Kiroshi Cyan",
-    dotClass: "bg-cyan-400",
-    nameBadgeClass: "border-cyan-400/60 bg-cyan-500/20 text-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.2)]",
-    cardBorderClass: "border-cyan-500/40 bg-[#0b1624]/90",
-    avatarRingClass: "ring-cyan-400/70",
-  },
-  rose: {
-    label: "Samurai Crimson",
-    dotClass: "bg-rose-500",
-    nameBadgeClass: "border-rose-400/60 bg-rose-500/20 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.2)]",
-    cardBorderClass: "border-rose-500/40 bg-[#1c0d18]/90",
-    avatarRingClass: "ring-rose-400/70",
-  },
-  amber: {
-    label: "Cyber Yellow",
-    dotClass: "bg-amber-400",
-    nameBadgeClass: "border-amber-400/60 bg-amber-500/20 text-amber-200 shadow-[0_0_10px_rgba(251,191,36,0.2)]",
-    cardBorderClass: "border-amber-500/40 bg-[#1b160b]/90",
-    avatarRingClass: "ring-amber-400/70",
-  },
-  emerald: {
-    label: "Biotechnica Green",
-    dotClass: "bg-emerald-400",
-    nameBadgeClass: "border-emerald-400/60 bg-emerald-500/20 text-emerald-200 shadow-[0_0_10px_rgba(52,211,153,0.2)]",
-    cardBorderClass: "border-emerald-500/40 bg-[#0a1a17]/90",
-    avatarRingClass: "ring-emerald-400/70",
-  },
-  violet: {
-    label: "NetWatch Violet",
-    dotClass: "bg-violet-400",
-    nameBadgeClass: "border-violet-400/60 bg-violet-500/20 text-violet-200 shadow-[0_0_10px_rgba(167,139,250,0.2)]",
-    cardBorderClass: "border-violet-500/40 bg-[#141024]/90",
-    avatarRingClass: "ring-violet-400/70",
-  },
-  magenta: {
-    label: "Mox Magenta",
-    dotClass: "bg-fuchsia-400",
-    nameBadgeClass: "border-fuchsia-400/60 bg-fuchsia-500/20 text-fuchsia-200 shadow-[0_0_10px_rgba(232,121,249,0.2)]",
-    cardBorderClass: "border-fuchsia-500/40 bg-[#1d0e22]/90",
-    avatarRingClass: "ring-fuchsia-400/70",
-  },
 };
 
 const COLOR_SWATCHES: Array<{ id: string; label: string; dotClass: string }> = [
@@ -232,8 +188,13 @@ export interface StreamingTurnState {
 interface ChatPaneProps {
   campaignId: string | null;
   campaign?: CampaignRecord | null;
+  npcProfiles?: Record<string, NpcIdentityProfile>;
+  partyGrouping?: PartyGroupingState | null;
+  activeChannelId?: string;
+  onChangeChannelId?: (channelId: string) => void;
   messages: ChatMessageNode[];
   streaming: StreamingTurnState | null;
+  isPeerStreaming?: boolean;
   characters: CharacterRecord[];
   selectedSpeakerId: string;
   activeTurn: ActiveTurnInfo | null;
@@ -420,8 +381,13 @@ function getSkipStorageKey(campaignId: string | null, username?: string | null):
 export function ChatPane({
   campaignId,
   campaign,
+  npcProfiles = {},
+  partyGrouping = null,
+  activeChannelId = "main",
+  onChangeChannelId,
   messages,
   streaming,
+  isPeerStreaming = false,
   characters,
   selectedSpeakerId,
   activeTurn,
@@ -477,6 +443,15 @@ export function ChatPane({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottomRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [colorPreview, setColorPreview] = useState<string | null>(null);
+  const colorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setColorPreview(null);
+    return () => {
+      if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+    };
+  }, [selectedSpeakerId]);
 
   useEffect(() => {
     try {
@@ -621,7 +596,7 @@ export function ChatPane({
     return Boolean(currentUsername && owner.toLowerCase() === currentUsername.toLowerCase());
   });
 
-  const busy = Boolean(streaming) || Boolean(deletingId);
+  const busy = (Boolean(streaming) && !isPeerStreaming) || Boolean(deletingId);
   const lockedByPeer = Boolean(activeTurn && activeTurn.client_id !== selfClientId);
   const speakerChar = selectableCharacters.find((c) => c.id === selectedSpeakerId) ?? null;
   const luckChar = speakerChar ?? selectableCharacters[0] ?? null;
@@ -803,21 +778,43 @@ export function ChatPane({
   const activeNpcs = Object.entries(campState?.npcs ?? {});
 
   const speakerCharDetail = (speakerChar?.detail ?? {}) as Record<string, unknown>;
+  const rawSpeakerColor = typeof speakerCharDetail.color === "string" ? speakerCharDetail.color.trim() : "";
   const activeSpeakerColor =
-    typeof speakerCharDetail.color === "string" && CHARACTER_COLOR_THEMES[speakerCharDetail.color]
-      ? speakerCharDetail.color
+    rawSpeakerColor && (CHARACTER_COLOR_THEMES[rawSpeakerColor] || isHexColor(rawSpeakerColor))
+      ? rawSpeakerColor
       : "cyan";
+
+  const visibleSplitChannels = (() => {
+    if (!partyGrouping || partyGrouping.mode !== "split") return [];
+    const myCharId = speakerChar?.id || selectedSpeakerId || "";
+    const myChan = myCharId ? partyGrouping.char_channel_map?.[myCharId] : undefined;
+    if (isAdmin) return partyGrouping.channels;
+    return partyGrouping.channels.filter((ch) => ch.id === myChan || ch.id === activeChannelId);
+  })();
 
   return (
     <div className="relative flex h-full flex-col bg-[#080b12]/80">
-      {/* Compact Subheader for Orientation / Screamsheet Re-open */}
+      {/* Compact Subheader for Orientation / Screamsheet Re-open + Party Location */}
       {!showOrientation && (
-        <div className="flex items-center justify-between border-b border-slate-800/80 bg-[#0b0f19]/90 px-4 py-1.5 text-[11px]">
-          <div className="flex items-center gap-2 truncate text-slate-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 bg-[#0b0f19]/90 px-4 py-1.5 text-[11px]">
+          <div className="flex min-w-0 items-center gap-2 truncate text-slate-400">
             <Radio className="h-3 w-3 shrink-0 text-rose-400" />
             <span className="font-mono uppercase tracking-wider text-rose-300">
               {campaign?.name || "NIGHT CITY // 2045"}
             </span>
+            {partyGrouping && characters.length >= 2 && (
+              <span
+                className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                  partyGrouping.mode === "split"
+                    ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
+                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                }`}
+              >
+                {partyGrouping.mode === "split"
+                  ? `SPLIT (${partyGrouping.channels.length} scenes)`
+                  : `TOGETHER @ ${partyGrouping.active_location}`}
+              </span>
+            )}
             {campState?.scene && (
               <>
                 <span className="text-slate-600">//</span>
@@ -833,6 +830,40 @@ export function ChatPane({
             <Newspaper className="h-3 w-3" />
             <span>Screamsheet &amp; Briefing</span>
           </button>
+        </div>
+      )}
+
+      {/* Split-Scene Channel Bar */}
+      {partyGrouping?.mode === "split" && visibleSplitChannels.length > 0 && onChangeChannelId && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-amber-500/25 bg-[#0e1422]/95 px-4 py-1.5 text-[11px]">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
+            Scene Channels:
+          </span>
+          <button
+            type="button"
+            onClick={() => onChangeChannelId("main")}
+            className={`rounded border px-2 py-0.5 font-mono text-[10px] transition ${
+              activeChannelId === "main"
+                ? "border-cyan-400 bg-cyan-500/20 font-bold text-cyan-100"
+                : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Main Table
+          </button>
+          {visibleSplitChannels.map((ch) => (
+            <button
+              key={ch.id}
+              type="button"
+              onClick={() => onChangeChannelId(ch.id)}
+              className={`rounded border px-2 py-0.5 font-mono text-[10px] transition ${
+                activeChannelId === ch.id
+                  ? "border-amber-400 bg-amber-500/20 font-bold text-amber-100"
+                  : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/50"
+              }`}
+            >
+              {ch.location} ({ch.handles.join(", ")})
+            </button>
+          ))}
         </div>
       )}
 
@@ -955,8 +986,8 @@ export function ChatPane({
                               const roles = Array.isArray(d.roles) ? (d.roles as Array<{ role?: string; rank?: number }>) : [];
                               const primaryRole = roles[0]?.role || "Edgerunner";
                               const weapon = typeof d.equipped_weapon === "string" ? d.equipped_weapon : null;
-                              const colorKey = typeof d.color === "string" && CHARACTER_COLOR_THEMES[d.color] ? d.color : "cyan";
-                              const theme = CHARACTER_COLOR_THEMES[colorKey];
+                              const colorKey = typeof d.color === "string" && d.color.trim() ? d.color.trim() : "cyan";
+                              const theme = resolveCharacterColor(colorKey);
                               return (
                                 <div
                                   key={c.id}
@@ -964,7 +995,7 @@ export function ChatPane({
                                 >
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-1.5">
-                                      <span className={`h-2 w-2 rounded-full ${theme.dotClass}`} />
+                                      <span className={`h-2 w-2 rounded-full ${theme.dotClass}`} style={theme.dotStyle} />
                                       <span className="truncate font-bold text-slate-100">{handle}</span>
                                       <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
                                         {primaryRole}
@@ -988,13 +1019,29 @@ export function ChatPane({
                             <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
                               Active Objectives
                             </div>
-                            <ul className="mt-1 space-y-1 text-[11px] text-slate-300">
-                              {activeObjectives.slice(0, 3).map(([obj, status]) => (
-                                <li key={obj} className="flex items-center justify-between gap-2">
-                                  <span className="truncate">• {obj}</span>
-                                  <span className="font-mono text-[10px] text-amber-200">{status}</span>
-                                </li>
-                              ))}
+                            <ul className="mt-1.5 max-h-48 space-y-1.5 overflow-y-auto pr-1 text-[11px] text-slate-300">
+                              {activeObjectives.map(([obj, status]) => {
+                                const statusStr = String(status || "");
+                                const isShortStatus = statusStr.length <= 24;
+                                return (
+                                  <li
+                                    key={obj}
+                                    className="rounded border border-slate-800/70 bg-slate-900/55 px-2 py-1.5"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <span className="font-semibold text-amber-200 break-words">• {obj}</span>
+                                      {isShortStatus && (
+                                        <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                                          {statusStr}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {!isShortStatus && (
+                                      <p className="mt-0.5 leading-snug text-slate-300">{statusStr}</p>
+                                    )}
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </div>
                         )}
@@ -1007,12 +1054,29 @@ export function ChatPane({
                           Known Fixers, Contacts &amp; Local Figures
                         </div>
                         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                          {activeNpcs.slice(0, 4).map(([npcName, desc]) => (
-                            <div key={npcName} className="rounded border border-slate-800/80 bg-slate-900/60 px-2.5 py-1.5 text-[11px]">
-                              <span className="font-bold text-rose-300">{npcName}:</span>{" "}
-                              <span className="text-slate-300">{desc}</span>
-                            </div>
-                          ))}
+                          {activeNpcs.slice(0, 4).map(([npcName, desc]) => {
+                            const prof = npcProfiles[npcName];
+                            const npcReal = prof?.real_name;
+                            const npcHidden = Boolean(prof?.real_name_hidden);
+                            return (
+                              <div key={npcName} className="rounded border border-slate-800/80 bg-slate-900/60 px-2.5 py-1.5 text-[11px]">
+                                <span className="font-bold text-rose-300">{npcName}</span>
+                                {npcReal && !npcHidden && npcReal !== npcName && (
+                                  <span className="ml-1 text-[10px] text-slate-400">({npcReal})</span>
+                                )}
+                                {npcHidden && isAdmin && (
+                                  <span
+                                    title={npcReal ? `Real name '${npcReal}' is hidden from players` : "Hidden real name"}
+                                    className="ml-1 inline-flex items-center gap-0.5 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 font-mono text-[9px] text-slate-400"
+                                  >
+                                    <EyeOff className="h-2.5 w-2.5" /> {npcReal ? `Alias (${npcReal})` : "Alias Only"}
+                                  </span>
+                                )}
+                                <span className="font-bold text-rose-300">:</span>{" "}
+                                <span className="text-slate-300">{desc}</span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -1162,7 +1226,7 @@ export function ChatPane({
                   (typeof charDetail.color === "string" ? charDetail.color : "") ||
                   "cyan"
                 : "rose";
-              const speakerTheme = CHARACTER_COLOR_THEMES[colorId] ?? CHARACTER_COLOR_THEMES.cyan;
+              const speakerTheme = resolveCharacterColor(colorId);
               const portraitUrl = isUser
                 ? msg.metadata?.speaker_portrait_url ||
                   (typeof charDetail.portrait_url === "string" ? charDetail.portrait_url : "")
@@ -1203,6 +1267,7 @@ export function ChatPane({
                         ? `max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
                         : "w-full border border-slate-800/90 bg-[#0e1422] text-slate-100"
                     }`}
+                    style={isUser ? speakerTheme.cardBorderStyle : undefined}
                   >
                     {/* Message Header */}
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
@@ -1214,18 +1279,21 @@ export function ChatPane({
                                 src={portraitUrl}
                                 alt={speakerHandle}
                                 className={`h-6 w-6 rounded-full object-cover ring-2 ${speakerTheme.avatarRingClass}`}
+                                style={speakerTheme.avatarRingStyle}
                               />
                             ) : (
                               <span
                                 className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${speakerTheme.nameBadgeClass}`}
+                                style={speakerTheme.nameBadgeStyle}
                               >
                                 <User className="h-3 w-3" />
                               </span>
                             )}
                             <span
                               className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-cyber-hud text-xs font-bold tracking-wider uppercase ${speakerTheme.nameBadgeClass}`}
+                              style={speakerTheme.nameBadgeStyle}
                             >
-                              <span className={`h-1.5 w-1.5 rounded-full ${speakerTheme.dotClass}`} />
+                              <span className={`h-1.5 w-1.5 rounded-full ${speakerTheme.dotClass}`} style={speakerTheme.dotStyle} />
                               {speakerHandle}
                             </span>
                             {primaryRole && (
@@ -1638,22 +1706,20 @@ export function ChatPane({
               );
             })}
 
-            {streaming && (
+            {streaming && (() => {
+              const streamTheme = resolveCharacterColor(streaming.speakerColor || activeSpeakerColor);
+              return (
               <div className="space-y-3">
-                {streaming.userText && (
+                {streaming.userText && !isPeerStreaming && (
                   <div className="flex justify-end">
                     <div
-                      className={`max-w-[90%] rounded-xl border px-4 py-3 text-slate-100 ${
-                        (CHARACTER_COLOR_THEMES[streaming.speakerColor || activeSpeakerColor] ??
-                          CHARACTER_COLOR_THEMES.cyan).cardBorderClass
-                      }`}
+                      className={`max-w-[90%] rounded-xl border px-4 py-3 text-slate-100 ${streamTheme.cardBorderClass}`}
+                      style={streamTheme.cardBorderStyle}
                     >
                       <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
                         <span
-                          className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-cyber-hud text-xs font-bold uppercase ${
-                            (CHARACTER_COLOR_THEMES[streaming.speakerColor || activeSpeakerColor] ??
-                              CHARACTER_COLOR_THEMES.cyan).nameBadgeClass
-                          }`}
+                          className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-cyber-hud text-xs font-bold uppercase ${streamTheme.nameBadgeClass}`}
+                          style={streamTheme.nameBadgeStyle}
                         >
                           {streaming.speakerName || "You"}
                         </span>
@@ -1723,7 +1789,8 @@ export function ChatPane({
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             <div ref={bottomRef} />
           </div>
@@ -1851,6 +1918,32 @@ export function ChatPane({
                       }`}
                     />
                   ))}
+                  <label
+                    className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 hover:border-cyan-400"
+                    title="Pick any custom Name Tag Color from the color wheel"
+                  >
+                    <input
+                      type="color"
+                      aria-label="Custom name tag color wheel"
+                      value={normalizeColorHex(colorPreview || activeSpeakerColor)}
+                      onChange={(e) => {
+                        const nextHex = e.target.value;
+                        const targetCharId = speakerChar.id;
+                        setColorPreview(nextHex);
+                        if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+                        colorDebounceRef.current = setTimeout(() => {
+                          colorDebounceRef.current = null;
+                          void onUpdateCharacterColor(targetCharId, nextHex);
+                        }, 140);
+                      }}
+                      className="h-3.5 w-4 cursor-pointer border-0 bg-transparent p-0"
+                    />
+                    <span>
+                      {isHexColor(colorPreview || activeSpeakerColor)
+                        ? (colorPreview || activeSpeakerColor).toUpperCase()
+                        : "Wheel"}
+                    </span>
+                  </label>
                 </div>
               )}
             </div>

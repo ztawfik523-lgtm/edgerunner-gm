@@ -1058,8 +1058,16 @@ describe("Cyberpunk RED GM UI", () => {
     await waitFor(() => {
       expect(screen.getByText("USER")).toBeInTheDocument();
     });
-    // Regular User does not see the Admin AI/Settings button
-    expect(screen.queryByRole("button", { name: /^Settings$/i })).not.toBeInTheDocument();
+    // Regular User can open User Settings (Display & Font + My Account) without Admin tabs
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /User Settings/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /Display & Font/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /My Account/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Prompts$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Network$/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Close settings/i }));
 
     // Switch to Admin via TopBar Admin Login button
     fireEvent.click(screen.getByRole("button", { name: /Admin Login/i }));
@@ -1461,7 +1469,7 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.getByText("Language (Japanese)")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Exotic & Heavy/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Exotic$/i }));
     expect(screen.getByText("Malorian Arms 3516 (Exotic VH Pistol)")).toBeInTheDocument();
     // Sort catalog & Bag toggle
     expect(screen.getByLabelText("Sort catalog")).toBeInTheDocument();
@@ -2412,6 +2420,373 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.queryByRole("button", { name: /GM Ops/i })).not.toBeInTheDocument();
     // Since "admin" in User View does not own "Ghostwire" (owned by "alice"), speaking is locked until creating/claiming a character
     expect(screen.getByText(/Admin requires an active Edgerunner sheet to speak in chat/i)).toBeInTheDocument();
+  });
+
+  it("renders full objective names, custom color wheel, gender+pronouns, weapon genre/tier multi-select + sort, and live peer streaming", async () => {
+    class MockEventSource {
+      static instances: MockEventSource[] = [];
+      listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
+      url: string;
+      constructor(url: string) {
+        this.url = url;
+        MockEventSource.instances.push(this);
+      }
+      addEventListener(type: string, cb: (ev: MessageEvent) => void) {
+        const list = this.listeners.get(type) ?? [];
+        list.push(cb);
+        this.listeners.set(type, list);
+      }
+      emit(type: string, data: unknown) {
+        const ev = { data: JSON.stringify(data) } as MessageEvent;
+        for (const cb of this.listeners.get(type) ?? []) cb(ev);
+      }
+      close() {}
+    }
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const campaign = {
+      id: "camp-new-1",
+      name: "Zhirafa Heist",
+      revision: 1,
+      session_number: 1,
+      is_primary: true,
+      character_ids: ["char-1", "char-2"],
+      state: {
+        scene: "La Casita Rooftop",
+        summary: "Night falls over Heywood Glen.",
+        npcs: { "Drone-Mother": "Rigger, Heywood — Neutral 0" },
+        objectives: {
+          "Clear Sibling Debt": "Resolve sibling's gambling debt with Jace either by completing the heist or paying off the note before dawn.",
+          "Fence Prototype Rig": "Deliver Aguila-7 safely.",
+        },
+        discoveries: {},
+        unresolved: {},
+      },
+    };
+    let char1 = {
+      id: "char-1",
+      name: "Vee",
+      stats: { INT: 6, REF: 7, DEX: 6, TECH: 5, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 5, EMP: 6 },
+      skills: { Handgun: 6 },
+      hp: 35,
+      max_hp: 35,
+      humanity: 60,
+      luck_remaining: 6,
+      money: 500,
+      inventory: { "Microwaver (Exotic)": 1 },
+      revision: 1,
+      detail: { handle: "Vee", color: "cyan", roles: [{ role: "Solo", rank: 4 }] },
+    };
+    const char2 = {
+      id: "char-2",
+      name: "Kira",
+      stats: { INT: 7, REF: 6, DEX: 6, TECH: 7, COOL: 5, WILL: 6, LUCK: 5, MOVE: 6, BODY: 5, EMP: 6 },
+      skills: { Interface: 6 },
+      hp: 35,
+      max_hp: 35,
+      humanity: 60,
+      luck_remaining: 5,
+      money: 500,
+      inventory: {},
+      revision: 1,
+      detail: { handle: "Kira", color: "rose", roles: [{ role: "Netrunner", rank: 4 }] },
+    };
+    const branchMsgs: Array<Record<string, unknown>> = [
+      {
+        id: "m1",
+        campaign_id: campaign.id,
+        channel_id: "main",
+        parent_id: null,
+        role: "assistant",
+        content: "Opening table scene.",
+        raw_content: "Opening table scene.",
+        model: "nemotron",
+        campaign_revision: 1,
+        solo_revision: 0,
+        metadata: {},
+        is_active: true,
+        created_at: "2026-11-18T08:00:00Z",
+      },
+    ];
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, auth_enabled: false });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({
+          auth_enabled: false,
+          pin_only_mode: false,
+          authenticated: true,
+          role: "open",
+          username: null,
+          admin_configured: false,
+          user_configured: false,
+          user_passcode_configured: false,
+          allow_guest_users: true,
+          can_bootstrap: false,
+          require_character_to_speak: false,
+        });
+      }
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({ base_url: "http://127.0.0.1:11434/v1", model: "nemotron", mode: "two_pass" });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/campaigns/") && url.endsWith("/presence")) {
+        return jsonResponse({ players: [], active_turn: null, sync_seq: 1 });
+      }
+      if (url.startsWith("/v1/campaigns/") && url.endsWith("/clocks")) {
+        return jsonResponse({ campaign_id: campaign.id, clocks: [] });
+      }
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          channel_id: "main",
+          channels: ["main", "scene-dock"],
+          nodes: branchMsgs,
+          active_branch: branchMsgs,
+          active_leaf_id: "m1",
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: true,
+          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+          stats: {
+            INT: { name: "Intelligence", short: "Knowledge", mechanics: "Perception.", tip: "" },
+            REF: { name: "Reflexes", short: "Ranged aim", mechanics: "Initiative.", tip: "" },
+            DEX: { name: "Dexterity", short: "Agility", mechanics: "Evasion.", tip: "" },
+            TECH: { name: "Technique", short: "Tech", mechanics: "Repairs.", tip: "" },
+            COOL: { name: "Cool", short: "Poise", mechanics: "Persuasion.", tip: "" },
+            WILL: { name: "Willpower", short: "Grit", mechanics: "HP.", tip: "" },
+            LUCK: { name: "Luck", short: "Fortune", mechanics: "Clutch.", tip: "" },
+            MOVE: { name: "Movement", short: "Speed", mechanics: "Move.", tip: "" },
+            BODY: { name: "Body", short: "Physique", mechanics: "Death save.", tip: "" },
+            EMP: { name: "Empathy", short: "Humanity", mechanics: "Cyberware.", tip: "" },
+          },
+          methods: [
+            { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
+            { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "Custom buy." },
+          ],
+          roles: [
+            {
+              name: "Solo",
+              ability: "Combat Awareness",
+              ability_summary: "Tactical edge",
+              tagline: "Combat specialist",
+              best_for: "Combat",
+              key_stats: ["REF"],
+              page: 29,
+              templates: [[6, 8, 7, 5, 6, 6, 6, 6, 7, 5]],
+              skills: { Handgun: 6 },
+              starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
+              starting_armor: ["Light Armorjack Body (SP 11)"],
+              starting_outfit: ["Agent"],
+              starting_cyberware: [],
+              starting_hl: 0,
+              role_lifepath: [],
+            },
+          ],
+          skills: [
+            { name: "Handgun", stat: "REF", cost: 1, basic: false, basic_skill_name: "Handgun", specializable: false, group: "Ranged", summary: "Pistols & SMGs", description: "Handgun skill." },
+          ],
+          cultural_regions: [{ region: "North American", languages: ["Streetslang", "English", "Spanish"], notes: "NC" }],
+          lifepath_tables: {
+            personalities: ["Stable and serious"],
+            clothing_styles: ["Urban Flash"],
+            hairstyles: ["Short and spiked"],
+            affectations: ["Mirrorshades"],
+            values: ["Your word"],
+            feelings_about_people: ["Wary"],
+            valued_people: ["A friend"],
+            valued_possessions: ["A weapon"],
+            family_backgrounds: ["Edgerunners"],
+            childhood_environments: ["Streets"],
+            family_crises: ["Betrayal"],
+            life_goals: ["Survive"],
+            enemy_causes: ["Saved someone"],
+            enemy_backup: ["Just themselves"],
+            enemy_revenge: ["Avoid them"],
+            friend_relationships: ["Like a sibling"],
+            love_tragedies: ["Lover vanished"],
+          },
+          shop: {
+            weapon: [
+              {
+                id: "w-poor-pistol",
+                name: "Dai Lung Streetmaster (Poor Medium Pistol)",
+                category: "weapon",
+                cost_eb: 20,
+                summary: "Budget Medium Pistol",
+                description: "Jams on 1",
+                stats: { subtype: "Poor / Budget", weapon_class: "pistol", quality: "Poor (Jams on 1)", skill: "Handgun", damage: "2d6" },
+              },
+              {
+                id: "w-microwaver",
+                name: "Microwaver (Exotic)",
+                category: "weapon",
+                cost_eb: 500,
+                summary: "Exotic · Disabled Cyberware · Handgun",
+                description: "Exotic Very Heavy Pistol",
+                stats: { subtype: "Exotic", weapon_class: "pistol", quality: "Exotic", skill: "Handgun", damage: "EMP Effect" },
+              },
+              {
+                id: "w-shotgun",
+                name: "Militech Bulldog (Excellent Shotgun)",
+                category: "weapon",
+                cost_eb: 1000,
+                summary: "+1 Attack Check",
+                description: "Excellent Shotgun",
+                stats: { subtype: "Excellent (+1 Hit)", weapon_class: "shotgun", quality: "Excellent (+1 Attack)", skill: "Shoulder Arms", damage: "5d6" },
+              },
+            ],
+            armor: [],
+            cyberware: [],
+            gear: [],
+            program: [],
+            hardware: [],
+            vehicle: [],
+            drug: [],
+            attachment: [],
+            ammo: [],
+          },
+          fashion: [],
+        });
+      }
+      if (url === "/v1/library") return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [char1, char2],
+              npc_profiles: {
+                "Drone-Mother": { handle: "Drone-Mother", real_name: "Marta Koval", real_name_hidden: true },
+              },
+              party_grouping: {
+                mode: "split",
+                characters: [
+                  { id: "char-1", handle: "Vee", location: "Zhirafa Dock", channel_id: "scene-dock" },
+                  { id: "char-2", handle: "Kira", location: "La Casita Rooftop", channel_id: "scene-rooftop" },
+                ],
+                channels: [
+                  { id: "scene-dock", name: "Zhirafa Dock", location: "Zhirafa Dock", character_ids: ["char-1"], handles: ["Vee"] },
+                  { id: "scene-rooftop", name: "La Casita Rooftop", location: "La Casita Rooftop", character_ids: ["char-2"], handles: ["Kira"] },
+                ],
+                char_channel_map: { "char-1": "scene-dock", "char-2": "scene-rooftop" },
+                active_channel_id: "scene-dock",
+                active_location: "Zhirafa Dock",
+                prompt_summary: "SPLIT",
+              },
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+        if (body.action === "update_character_profile") {
+          char1 = {
+            ...char1,
+            revision: char1.revision + 1,
+            detail: { ...char1.detail, color: body.arguments.profile.color },
+          };
+          return jsonResponse({ result: char1 });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+
+    // 1. Objective names are rendered cleanly in Screamsheet without truncation
+    fireEvent.click(await screen.findByRole("button", { name: /Screamsheet & Briefing/i }));
+    expect(screen.getByText(/• Clear Sibling Debt/)).toBeInTheDocument();
+    expect(screen.getByText(/• Fence Prototype Rig/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Skip Briefing/i }));
+
+    // 2. Split Scene channel bar appears
+    expect(screen.getByText(/Scene Channels:/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Zhirafa Dock \(Vee\)/i })).toBeInTheDocument();
+
+    // 3. Color wheel sets custom hex color
+    fireEvent.click(screen.getByRole("button", { name: /^Color$/i }));
+    const colorInput = screen.getByLabelText(/Custom name tag color wheel/i);
+    fireEvent.change(colorInput, { target: { value: "#ff00aa" } });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/v1/game",
+        expect.objectContaining({
+          body: expect.stringContaining("#ff00aa"),
+        }),
+      );
+    });
+
+    // 4. Live peer streaming renders incoming peer message + streaming GM text
+    const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+    es.emit("peer_user_message", {
+      campaign_id: campaign.id,
+      channel_id: "scene-dock",
+      client_id: "peer-client-99",
+      message: {
+        id: "m-peer-u1",
+        campaign_id: campaign.id,
+        channel_id: "scene-dock",
+        parent_id: "m1",
+        role: "user",
+        content: "I scan the dock lock.",
+        raw_content: "I scan the dock lock.",
+        model: "",
+        campaign_revision: 1,
+        solo_revision: 0,
+        metadata: { speaker_name: "Vee", speaker_character_id: "char-1" },
+        is_active: true,
+        created_at: "2026-11-18T08:01:00Z",
+      },
+    });
+    expect(await screen.findByText(/I scan the dock lock\./i)).toBeInTheDocument();
+
+    es.emit("peer_stream", {
+      campaign_id: campaign.id,
+      channel_id: "scene-dock",
+      client_id: "peer-client-99",
+      speaker_name: "Vee",
+      event: "text_delta",
+      data: { delta: "The maglock hums softly under your scanner." },
+    });
+    expect(await screen.findByText(/The maglock hums softly under your scanner\./i)).toBeInTheDocument();
+
+    // 5. Character Creator: Gender + Pronouns, Street Origins & Background, Genre + Tier filters + Sort by Tier
+    const newButtons = screen.getAllByRole("button", { name: /^New$/i });
+    fireEvent.click(newButtons[newButtons.length - 1]);
+    expect(await screen.findByLabelText(/^Gender$/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
+    expect(screen.getByText(/Street Origins & Background/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Corebook Lifepath Tables/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Roll d10, Pick, or Type Custom/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
+    // Switch to Complete Package so shop catalog shows
+    fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Complete Package/i }));
+    fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
+
+    // Select Pistols & SMGs genre AND Exotic tier -> Microwaver (Exotic) appears, Poor Pistol & Shotgun hidden
+    fireEvent.click(screen.getByRole("button", { name: /^Pistols & SMGs$/i }));
+    expect(screen.getByText(/Microwaver \(Exotic\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Dai Lung Streetmaster/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Militech Bulldog/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Exotic$/i }));
+    expect(screen.getByText(/Microwaver \(Exotic\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Dai Lung Streetmaster/i)).not.toBeInTheDocument();
+
+    // Clear tier filter & sort by Tier: Exotic -> Poor
+    fireEvent.click(screen.getByRole("button", { name: /^All Tiers$/i }));
+    fireEvent.change(screen.getByLabelText(/Sort catalog/i), { target: { value: "tier_desc" } });
+    const catalogText = document.body.textContent ?? "";
+    expect(catalogText.indexOf("Microwaver (Exotic)")).toBeLessThan(catalogText.indexOf("Dai Lung Streetmaster"));
   });
 });
 

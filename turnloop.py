@@ -158,15 +158,16 @@ _DEFAULT_MULTIPLAYER_RULES = (
     "- Each turn arrives tagged with its active speaker (`[Character]: ...` and `Active Player / Speaker`). Resolve checks, LUCK, Overclock, and direct NPC replies primarily for that speaker unless multiple players acted in sequence.\n"
     "- When multiple consecutive `[Speaker]: ...` player turns appear since your last reply, resolve all of those players' declared actions and dialogue together in one cohesive scene response.\n"
     "- Protect teammate agency: NEVER invent dialogue, movement, or decisions for other player characters in the party while resolving a turn—leave idle or off-spotlight PCs free to jump in on their own turn.\n"
+    "- Respect Party Grouping & Split Scenes: check `Party Grouping & Locations` carefully. If the party is SPLIT, only characters at the active scene/location can see, hear, fight, or hand over items here—never pull off-site PCs into this scene unless they physically travel or use an Agent/comms.\n"
     "- Keep party members distinct: honor each PC's separate HP, ammo, cyberware, location, and NPC disposition from `Characters`, and do not merge their inventory or private knowledge unless they are together and share it.\n"
-    "- Handle vs Real Name Privacy: Always refer to and have NPCs address player characters by their Street Handle (`handle` / `name`). If a character has `real_name_hidden: true`, NPCs and the world DO NOT know their real/legal name unless they explicitly reveal it in play."
+    "- Handle vs Real Name Privacy: Always refer to and have NPCs address player characters AND NPCs by their Street Handle (`handle` / `name`). If a PC or NPC has `real_name_hidden: true`, the world does NOT know their real/legal name unless explicitly revealed in play."
 )
 
 _DEFAULT_NARRATOR_CORE_RULES = (
     "Information Fog-of-War & Earned Intel:\n"
     "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
     "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
-    "- Handle vs Real Name Privacy: If a character has `real_name_hidden: true` in `Characters`, NPCs and public terminals only know their `handle` (never their hidden `real_name`).\n"
+    "- Handle vs Real Name Privacy: For both PCs (`Characters`) and NPCs (`NPC Identities`), if `real_name_hidden: true`, NPCs and public terminals only know their street `handle` (never reveal their hidden `real_name` unless uncovered or voluntarily shared in play).\n"
     "Character voice, naming & grounded realism:\n"
     "- Keep the tone gritty, everyday, and street-level—transactional, awkward, tense, and worn down—NOT witty action-movie banter, snappy one-liners, or fantastical heroics. People care about rent, cheap food, NCPD heat, and getting home alive.\n"
     "- Write NPCs as ordinary, flawed people first (tired, defensive, irritated, blunt, hesitant, or quietly worried), each with a distinct rhythm and speech pattern rather than stoic thriller stereotypes.\n"
@@ -200,16 +201,34 @@ _DEFAULT_ARCHIVIST_CORE_RULES = (
     "3. Preserve established names, eddies/gear facts, and unresolved obligations accurately."
 )
 
+_STATIC_INTRO_PRIMER = (
+    "### WELCOME TO CYBERPUNK RED (NIGHT CITY, 2045)\n"
+    "**The Setting:** In the Time of the Red, the Fourth Corporate War has shattered global supply chains, orbital debris stains the sky crimson at dawn, and megacorporations rebuild behind private walls while edgerunners survive on street gigs, scavenged chrome, and Fixer-brokered Night Markets.\n\n"
+    "### HOW THE RULES & STATS WORK\n"
+    "- **10 Core STATs (2–8):** `INT`, `REF`, `DEX`, `TECH`, `COOL`, `WILL`, `LUCK`, `MOVE`, `BODY`, `EMP`.\n"
+    "- **Skill Checks:** Roll **`1d10 + STAT + Skill`** and beat the **Difficulty Value (DV)** — `DV 13` Everyday, `DV 15` Difficult, `DV 17` Professional, `DV 21` Heroic. A natural **10** explodes (`+1d10`); a natural **1** fumbles (`-1d10`).\n"
+    "- **LUCK & Overclock:** Commit **LUCK** points *before* rolling (`+1` each, refills every session) or toggle **Overclock** (`-2 Humanity` for `+2` on a check) in the chat bar.\n"
+    "- **Wounds, Armor & Humanity:** Armor **Stopping Power (SP)** absorbs damage before **HP** drops; below half HP you are **Seriously Wounded** (`-2` to all checks). Installing cyberware costs **Humanity**.\n\n"
+    "### PLAYABLE ROLES\n"
+    "- **Solo** *(Combat Awareness)*: Tactical edge, initiative boost, and precision damage.\n"
+    "- **Netrunner** *(Interface)*: Breach local NET architectures, fight Black ICE, and hijack systems.\n"
+    "- **Tech** *(Maker)*: Repair, upgrade, fabricate, and invent gear and weapons.\n"
+    "- **Medtech** *(Medicine)*: Trauma surgery, combat pharmaceuticals, and cryotanks.\n"
+    "- **Rockerboy** *(Charismatic Impact)*: Sway crowds, fans, and street venues.\n"
+    "- **Media** *(Credibility)*: Dig up rumors, expose coverups, and shape public truth.\n"
+    "- **Exec** *(Teamwork)*: Corporate perks, housing, and a loyal specialist teammate.\n"
+    "- **Lawman** *(Backup)*: Call armed patrol or tactical response when heat rises.\n"
+    "- **Fixer** *(Operator)*: Source scarce Night Market gear, haggle prices, and broker deals.\n"
+    "- **Nomad** *(Moto)*: Access clan vehicles, armored upgrades, and highway networks."
+)
+
 _DEFAULT_INTRO_PROMPT = (
-    "You are running a Cyberpunk RED (2045, Time of the Red) campaign table. Write a tight, authentic in-universe Screamsheet & Tactical Briefing.\n"
-    "STRICT ANTI-SLOP RULES:\n"
-    "- NEVER use emojis (no 🖥️, 🎯, ⚡, 🎲, etc.).\n"
-    "- NEVER use generic AI sign-offs or corny catchphrases ('Roll up. Jack in. Style over substance. — Your GM').\n"
-    "- Keep it sharp, readable, and under 380 words total.\n"
-    "Structure your briefing into three clean sections:\n"
-    "1. **N54 SCREAMSHEET // LOCAL DISPATCH**: A 1-paragraph cynical Night City 2045 news feed or Fixer wire broadcast grounding the district, the scarcity/corporate friction of the Time of the Red, and the immediate stakes of the active campaign.\n"
-    "2. **ACTIVE CREW & SITUATION**: State the exact current scene, active objectives, known NPCs, and who is currently at the table (using their Street Handles, Roles, and actual gear—never exposing hidden real names). If no character is attached yet, tell the player to open the Character tab to build or claim their Edgerunner.\n"
-    "3. **OPENING BEAT**: Drop directly into the immediate, grounded scene at hand and end with a concrete situational choice."
+    "The player has just been shown the static Cyberpunk RED rules, stats, and 10 playable roles primer.\n"
+    "DO NOT repeat the general Cyberpunk RED rules, dice formulas, or list of 10 roles.\n"
+    "Write ONLY a tight, grounded **Campaign Welcome & Table Tie-In** (under 180 words, zero emojis, zero cheesy sign-offs):\n"
+    "1. Briefly welcome the player to the active campaign's district, tone, and immediate stakes using `Campaign Scene`, `Campaign Summary`, and `Known NPCs`.\n"
+    "2. Note any attached `Party Characters Attached` by Street Handle and Role (never expose hidden `real_name`s); if none are attached yet, tell them to open the **Character** tab to build or claim their Edgerunner.\n"
+    "3. End with 2–3 concrete ways they can jump straight into the opening scene once ready."
 )
 
 DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
@@ -825,6 +844,7 @@ class ChatTreeStore:
                 CREATE TABLE IF NOT EXISTS chat_messages (
                     id TEXT PRIMARY KEY,
                     campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+                    channel_id TEXT NOT NULL DEFAULT 'main',
                     parent_id TEXT REFERENCES chat_messages(id),
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
@@ -838,15 +858,28 @@ class ChatTreeStore:
                 )
                 """
             )
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_messages)")}
+            if "channel_id" not in cols:
+                conn.execute("ALTER TABLE chat_messages ADD COLUMN channel_id TEXT NOT NULL DEFAULT 'main'")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_camp_parent ON chat_messages(campaign_id, parent_id, created_at)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_camp_chan ON chat_messages(campaign_id, channel_id, parent_id, created_at)"
+            )
+
+    @staticmethod
+    def _norm_channel(channel_id: str | None) -> str:
+        clean = str(channel_id or "main").strip()
+        return clean[:80] if clean else "main"
 
     @staticmethod
     def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
+        keys = row.keys()
         return {
             "id": row["id"],
             "campaign_id": row["campaign_id"],
+            "channel_id": row["channel_id"] if "channel_id" in keys and row["channel_id"] else "main",
             "parent_id": row["parent_id"],
             "role": row["role"],
             "content": row["content"],
@@ -880,9 +913,11 @@ class ChatTreeStore:
         solo_revision: int,
         metadata: dict[str, Any] | None = None,
         activate: bool = True,
+        channel_id: str = "main",
     ) -> dict[str, Any]:
         if role not in {"user", "assistant", "system"}:
             raise ValueError("role must be user, assistant, or system")
+        chan = self._norm_channel(channel_id)
         msg_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         raw = content if raw_content is None else raw_content
@@ -892,32 +927,36 @@ class ChatTreeStore:
                 raise ValueError(f"campaign not found: {campaign_id}")
             if parent_id is not None:
                 parent = conn.execute(
-                    "SELECT 1 FROM chat_messages WHERE campaign_id=? AND id=?",
+                    "SELECT channel_id FROM chat_messages WHERE campaign_id=? AND id=?",
                     (campaign_id, parent_id),
                 ).fetchone()
                 if not parent:
                     raise ValueError(f"parent message not found in campaign: {parent_id}")
+                parent_chan = self._norm_channel(parent["channel_id"] if "channel_id" in parent.keys() else "main")
+                if parent_chan != chan:
+                    chan = parent_chan
             if activate:
                 if parent_id is None:
                     conn.execute(
-                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND parent_id IS NULL",
-                        (campaign_id,),
+                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND channel_id=? AND parent_id IS NULL",
+                        (campaign_id, chan),
                     )
                 else:
                     conn.execute(
-                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND parent_id=?",
-                        (campaign_id, parent_id),
+                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND channel_id=? AND parent_id=?",
+                        (campaign_id, chan, parent_id),
                     )
             conn.execute(
                 """
                 INSERT INTO chat_messages(
-                    id, campaign_id, parent_id, role, content, raw_content, model,
+                    id, campaign_id, channel_id, parent_id, role, content, raw_content, model,
                     campaign_revision, solo_revision, metadata_json, is_active, created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     msg_id,
                     campaign_id,
+                    chan,
                     parent_id,
                     role,
                     content,
@@ -940,13 +979,19 @@ class ChatTreeStore:
             "solo_revision": int(ctx["solo"]["revision"]),
         }
 
-    def get_tree(self, campaign_id: str) -> dict[str, Any]:
+    def get_tree(self, campaign_id: str, channel_id: str = "main") -> dict[str, Any]:
+        chan = self._norm_channel(channel_id)
         revs = self._current_revisions(campaign_id)
         with closing(self.store._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM chat_messages WHERE campaign_id=? ORDER BY created_at, id",
+            chan_rows = conn.execute(
+                "SELECT DISTINCT channel_id FROM chat_messages WHERE campaign_id=? ORDER BY channel_id",
                 (campaign_id,),
             ).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM chat_messages WHERE campaign_id=? AND channel_id=? ORDER BY created_at, id",
+                (campaign_id, chan),
+            ).fetchall()
+        channels = sorted({"main", *(self._norm_channel(r["channel_id"]) for r in chan_rows)}, key=lambda c: (0 if c == "main" else 1, c))
         nodes = [self._row_dict(r) for r in rows]
         by_parent: dict[str | None, list[dict[str, Any]]] = {}
         for node in nodes:
@@ -979,6 +1024,8 @@ class ChatTreeStore:
         )
         return {
             "campaign_id": campaign_id,
+            "channel_id": chan,
+            "channels": channels,
             "nodes": nodes,
             "active_branch": active_branch,
             "active_leaf_id": leaf["id"] if leaf else None,
@@ -1029,11 +1076,19 @@ class ChatTreeStore:
             cur_id = cur_active["id"]
 
     def switch_branch(self, campaign_id: str, message_id: str) -> dict[str, Any]:
+        target_chan = "main"
         with closing(self.store._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
+            target = conn.execute(
+                "SELECT channel_id FROM chat_messages WHERE campaign_id=? AND id=?",
+                (campaign_id, message_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError(f"message not found in campaign: {message_id}")
+            target_chan = self._norm_channel(target["channel_id"] if "channel_id" in target.keys() else "main")
             rows = conn.execute(
-                "SELECT * FROM chat_messages WHERE campaign_id=? ORDER BY created_at, id",
-                (campaign_id,),
+                "SELECT * FROM chat_messages WHERE campaign_id=? AND channel_id=? ORDER BY created_at, id",
+                (campaign_id, target_chan),
             ).fetchall()
             by_id = {r["id"]: r for r in rows}
             if message_id not in by_id:
@@ -1047,19 +1102,19 @@ class ChatTreeStore:
                 parent_id = row["parent_id"]
                 if parent_id is None:
                     conn.execute(
-                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND parent_id IS NULL",
-                        (campaign_id,),
+                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND channel_id=? AND parent_id IS NULL",
+                        (campaign_id, target_chan),
                     )
                 else:
                     conn.execute(
-                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND parent_id=?",
-                        (campaign_id, parent_id),
+                        "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND channel_id=? AND parent_id=?",
+                        (campaign_id, target_chan, parent_id),
                     )
                 conn.execute("UPDATE chat_messages SET is_active=1 WHERE id=?", (cur_id,))
                 cur_id = parent_id
             # Ensure the selected node's downward active chain has no duplicate active siblings.
             self._activate_descendant_chain(conn, campaign_id, message_id, children, set())
-        return self.get_tree(campaign_id)
+        return self.get_tree(campaign_id, channel_id=target_chan)
 
     def delete_message(
         self, campaign_id: str, message_id: str, *, scope: str = "branch"
@@ -1067,11 +1122,19 @@ class ChatTreeStore:
         """Delete either a single message (re-parenting children) or the entire subtree below it."""
         if scope not in {"branch", "single"}:
             raise ValueError("scope must be 'branch' or 'single'")
+        target_chan = "main"
         with closing(self.store._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
+            target_meta = conn.execute(
+                "SELECT channel_id FROM chat_messages WHERE campaign_id=? AND id=?",
+                (campaign_id, message_id),
+            ).fetchone()
+            if target_meta is None:
+                raise ValueError(f"message not found in campaign: {message_id}")
+            target_chan = self._norm_channel(target_meta["channel_id"] if "channel_id" in target_meta.keys() else "main")
             rows = conn.execute(
-                "SELECT id, parent_id, is_active, created_at FROM chat_messages WHERE campaign_id=? ORDER BY created_at, id",
-                (campaign_id,),
+                "SELECT id, parent_id, is_active, created_at FROM chat_messages WHERE campaign_id=? AND channel_id=? ORDER BY created_at, id",
+                (campaign_id, target_chan),
             ).fetchall()
             by_id = {r["id"]: r for r in rows}
             if message_id not in by_id:
@@ -1186,21 +1249,23 @@ class ChatTreeStore:
                                 (campaign_id, sib["id"]),
                             )
                     self._activate_descendant_chain(conn, campaign_id, replacement["id"], children, excluded)
-        return self.get_tree(campaign_id)
+        return self.get_tree(campaign_id, channel_id=target_chan)
 
     def update_message(self, campaign_id: str, message_id: str, content: str) -> dict[str, Any]:
         """Update an existing message's text in place without spawning a new branch."""
         if not isinstance(content, str) or not content.strip():
             raise ValueError("content must be a nonempty string")
         cleaned = content.strip()
+        target_chan = "main"
         with closing(self.store._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT metadata_json FROM chat_messages WHERE campaign_id=? AND id=?",
+                "SELECT metadata_json, channel_id FROM chat_messages WHERE campaign_id=? AND id=?",
                 (campaign_id, message_id),
             ).fetchone()
             if row is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
+            target_chan = self._norm_channel(row["channel_id"] if "channel_id" in row.keys() else "main")
             meta = json.loads(row["metadata_json"])
             meta["edited"] = True
             meta["edited_at"] = datetime.now(timezone.utc).isoformat()
@@ -1208,7 +1273,7 @@ class ChatTreeStore:
                 "UPDATE chat_messages SET content=?, raw_content=?, metadata_json=? WHERE campaign_id=? AND id=?",
                 (cleaned, cleaned, _json(meta), campaign_id, message_id),
             )
-        return self.get_tree(campaign_id)
+        return self.get_tree(campaign_id, channel_id=target_chan)
 
     def update_message_metadata(
         self,
@@ -1241,9 +1306,10 @@ class ChatTreeStore:
             ).fetchone()
             return self._row_dict(updated) if updated else None
 
-    def sync_active_leaf_revisions(self, campaign_id: str) -> dict[str, Any]:
+    def sync_active_leaf_revisions(self, campaign_id: str, channel_id: str = "main") -> dict[str, Any]:
         """Sync the active branch leaf's stored revisions to current live campaign/solo revisions."""
-        tree = self.get_tree(campaign_id)
+        chan = self._norm_channel(channel_id)
+        tree = self.get_tree(campaign_id, channel_id=chan)
         leaf_id = tree.get("active_leaf_id")
         revs = tree.get("current_revisions") or self._current_revisions(campaign_id)
         if leaf_id:
@@ -1253,12 +1319,12 @@ class ChatTreeStore:
                     "UPDATE chat_messages SET campaign_revision=?, solo_revision=? WHERE campaign_id=? AND id=?",
                     (int(revs["campaign_revision"]), int(revs["solo_revision"]), campaign_id, leaf_id),
                 )
-        return self.get_tree(campaign_id)
+        return self.get_tree(campaign_id, channel_id=chan)
 
-    def export_branch(self, campaign_id: str, leaf_id: str | None = None) -> dict[str, Any]:
+    def export_branch(self, campaign_id: str, leaf_id: str | None = None, channel_id: str = "main") -> dict[str, Any]:
         """Return both structured JSON and Markdown transcript for the active or requested branch."""
         ctx = self.gameplay.campaign_context(campaign_id)
-        tree = self.get_tree(campaign_id)
+        tree = self.get_tree(campaign_id, channel_id=channel_id)
         branch = self.get_branch_to(campaign_id, leaf_id) if leaf_id else tree["active_branch"]
         lines = [
             f"# {ctx['campaign']['name']} — Session {ctx['campaign']['session_number']}",
@@ -1362,6 +1428,8 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
         **({"real_name": real_name} if real_name else {}),
         "real_name_hidden": real_name_hidden,
         "identity_note": identity_note,
+        **({"gender": str(d["gender"]).strip()} if isinstance(d.get("gender"), str) and str(d["gender"]).strip() else {}),
+        **({"pronouns": str(d["pronouns"]).strip()} if isinstance(d.get("pronouns"), str) and str(d["pronouns"]).strip() else {}),
         **({"owner_username": d["owner_username"]} if d.get("owner_username") else {}),
         **({"color": d["color"]} if d.get("color") else {}),
         "hp": char["hp"],
@@ -1427,12 +1495,282 @@ def _normalize_character_changes(
     return clean, notes
 
 
+def _slug_channel_id(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (label or "").strip().lower()).strip("-")
+    return f"scene-{slug[:42]}" if slug else "scene-split"
+
+
+def parse_party_locations(state: dict[str, Any] | None) -> dict[str, Any]:
+    disc = (state or {}).get("discoveries") or {}
+    raw = disc.get("__party_locations")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                locs = parsed.get("locations") if isinstance(parsed.get("locations"), dict) else {}
+                chans = parsed.get("channels") if isinstance(parsed.get("channels"), dict) else {}
+                mode = "split" if parsed.get("mode") == "split" else "together"
+                return {
+                    "mode": mode,
+                    "locations": {str(k): str(v).strip()[:160] for k, v in locs.items() if str(k).strip() and str(v).strip()},
+                    "channels": chans,
+                }
+        except json.JSONDecodeError:
+            pass
+    return {"mode": "together", "locations": {}, "channels": {}}
+
+
+def compute_party_grouping(
+    characters: list[dict[str, Any]],
+    state: dict[str, Any] | None,
+    active_channel_id: str = "main",
+) -> dict[str, Any]:
+    """Resolve whether attached PCs are together or split into separate scene channels."""
+    default_scene = str((state or {}).get("scene") or "").strip() or "Current Scene"
+    stored = parse_party_locations(state)
+    locs: dict[str, str] = stored["locations"]
+    stored_channels: dict[str, Any] = stored.get("channels") or {}
+    pc_rows: list[dict[str, Any]] = []
+    for c in characters:
+        cid = str(c.get("id") or "")
+        d = c.get("detail") or {}
+        handle = str(d.get("handle") or c.get("name") or "Edgerunner").strip()
+        loc = locs.get(cid) or locs.get(handle) or default_scene
+        pc_rows.append({"id": cid, "handle": handle, "location": loc, "norm": " ".join(loc.lower().split())})
+
+    clusters: dict[str, list[dict[str, Any]]] = {}
+    for row in pc_rows:
+        clusters.setdefault(row["norm"], []).append(row)
+
+    is_split = len(characters) >= 2 and (len(clusters) > 1 or stored["mode"] == "split" and len(stored_channels) > 1)
+    channels_list: list[dict[str, Any]] = []
+    char_channel_map: dict[str, str] = {}
+
+    if is_split:
+        used_ids: set[str] = set()
+        for norm_loc, members in clusters.items():
+            loc_label = members[0]["location"]
+            existing_cid = None
+            member_ids = {m["id"] for m in members}
+            for ch_id, ch_meta in stored_channels.items():
+                if isinstance(ch_meta, dict):
+                    ch_mems = set(ch_meta.get("character_ids") or [])
+                    if ch_mems & member_ids and ch_id not in used_ids and ch_id != "main":
+                        existing_cid = ch_id
+                        break
+            cid = existing_cid or _slug_channel_id(loc_label)
+            base_cid = cid
+            suffix = 2
+            while cid in used_ids or cid == "main":
+                cid = f"{base_cid}-{suffix}"
+                suffix += 1
+            used_ids.add(cid)
+            channels_list.append({
+                "id": cid,
+                "name": loc_label,
+                "location": loc_label,
+                "character_ids": [m["id"] for m in members],
+                "handles": [m["handle"] for m in members],
+            })
+            for m in members:
+                char_channel_map[m["id"]] = cid
+    else:
+        for row in pc_rows:
+            char_channel_map[row["id"]] = "main"
+
+    active_chan = str(active_channel_id or "main").strip() or "main"
+    active_group = next((ch for ch in channels_list if ch["id"] == active_chan), None) if is_split else None
+    if is_split and active_group is not None:
+        present_handles = active_group["handles"]
+        absent = [f"{r['handle']} (@ {r['location']})" for r in pc_rows if r["id"] not in set(active_group["character_ids"])]
+        prompt_summary = (
+            f"SPLIT PARTY — Active Scene Channel '{active_group['location']}' ({active_chan}): "
+            f"Present here: {', '.join(present_handles)}. "
+            f"Elsewhere (NOT present in this scene): {', '.join(absent) if absent else 'none'}."
+        )
+    elif is_split:
+        parts = [f"[{', '.join(ch['handles'])}] @ {ch['location']} ({ch['id']})" for ch in channels_list]
+        prompt_summary = "SPLIT PARTY — Separate groups: " + " | ".join(parts)
+    elif pc_rows:
+        prompt_summary = f"TOGETHER — All party members ({', '.join(r['handle'] for r in pc_rows)}) are together at: {pc_rows[0]['location']}."
+    else:
+        prompt_summary = f"Scene location: {default_scene}."
+
+    return {
+        "mode": "split" if is_split else "together",
+        "characters": [{"id": r["id"], "handle": r["handle"], "location": r["location"], "channel_id": char_channel_map.get(r["id"], "main")} for r in pc_rows],
+        "channels": channels_list,
+        "char_channel_map": char_channel_map,
+        "active_channel_id": active_chan,
+        "active_location": active_group["location"] if active_group else (pc_rows[0]["location"] if pc_rows and not is_split else default_scene),
+        "prompt_summary": prompt_summary,
+    }
+
+
+def _encode_party_locations_json(mode: str, locations: dict[str, str], channels: dict[str, Any]) -> str:
+    """Serialize __party_locations cleanly within the 2000-char discovery field limit without breaking JSON."""
+    payload = {
+        "mode": mode,
+        "locations": {str(k)[:48]: str(v)[:100] for k, v in locations.items()},
+        "channels": {
+            str(cid)[:40]: {
+                "id": str(meta.get("id") or cid)[:40],
+                "name": str(meta.get("name") or "")[:64],
+                "location": str(meta.get("location") or "")[:64],
+                "character_ids": [str(x)[:48] for x in (meta.get("character_ids") or [])],
+                "handles": [str(x)[:32] for x in (meta.get("handles") or [])],
+            }
+            for cid, meta in (channels or {}).items()
+            if isinstance(meta, dict)
+        },
+    }
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    if len(raw) <= 2000:
+        return raw
+    payload["locations"] = {k: v[:40] for k, v in payload["locations"].items()}
+    for meta in payload["channels"].values():
+        meta["name"] = meta["name"][:32]
+        meta["location"] = meta["location"][:32]
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    if len(raw) <= 2000:
+        return raw
+    # Last resort: drop redundant channel mirrors since compute_party_grouping rebuilds them from locations
+    payload["channels"] = {}
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)[:2000]
+
+
+def _encode_npc_identities_json(cur_ids: dict[str, dict[str, Any]]) -> str:
+    """Serialize __npc_identities within 2000 chars without ever producing truncated invalid JSON."""
+    clean: dict[str, dict[str, Any]] = dict(cur_ids)
+    raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    while len(raw) > 2000 and clean:
+        first_key = next(iter(clean))
+        clean.pop(first_key, None)
+        raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    return raw if len(raw) <= 2000 else "{}"
+
+
+def apply_pc_locations_to_discoveries(
+    current_state: dict[str, Any],
+    characters: list[dict[str, Any]],
+    pc_locations: dict[str, Any] | None = None,
+    *,
+    all_together_location: str | None = None,
+) -> dict[str, str]:
+    """Return an updated discoveries dict with __party_locations encoded."""
+    disc = dict((current_state or {}).get("discoveries") or {})
+    default_scene = str((current_state or {}).get("scene") or "").strip() or "Current Scene"
+    if isinstance(all_together_location, str) and all_together_location.strip():
+        loc = all_together_location.strip()[:160]
+        locs = {str(c["id"]): loc for c in characters if c.get("id")}
+        disc["__party_locations"] = _encode_party_locations_json("together", locs, {})
+        return disc
+
+    stored = parse_party_locations(current_state)
+    locs = dict(stored["locations"])
+    for c in characters:
+        cid = str(c.get("id") or "")
+        if cid and cid not in locs:
+            locs[cid] = default_scene
+
+    if isinstance(pc_locations, dict):
+        for raw_actor, raw_loc in pc_locations.items():
+            loc_str = str(raw_loc or "").strip()[:160]
+            if not loc_str:
+                continue
+            matched = _resolve_character(str(raw_actor), characters)
+            key = str(matched["id"]) if matched else str(raw_actor).strip()
+            if key:
+                locs[key] = loc_str
+
+    # Recompute clusters naturally without forcing "split" when everyone converges to one location.
+    temp_state = {
+        **(current_state or {}),
+        "discoveries": {
+            **disc,
+            "__party_locations": _encode_party_locations_json("together", locs, stored.get("channels") or {}),
+        },
+    }
+    grouped = compute_party_grouping(characters, temp_state)
+    channels_map = {ch["id"]: ch for ch in grouped["channels"]} if grouped["mode"] == "split" else {}
+    disc["__party_locations"] = _encode_party_locations_json(grouped["mode"], locs, channels_map)
+    return disc
+
+
+def parse_npc_identities_public(state: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    disc = (state or {}).get("discoveries") or {}
+    raw = disc.get("__npc_identities")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                out: dict[str, dict[str, Any]] = {}
+                for k, v in parsed.items():
+                    if isinstance(k, str) and k.strip() and isinstance(v, dict):
+                        out[k.strip()] = {
+                            "handle": str(v.get("handle") or k).strip(),
+                            **({"real_name": str(v["real_name"]).strip()} if isinstance(v.get("real_name"), str) and v["real_name"].strip() else {}),
+                            "real_name_hidden": bool(v.get("real_name_hidden", True)),
+                        }
+                return out
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def build_npc_profiles(
+    state: dict[str, Any] | None,
+    gm_secrets: dict[str, str] | None = None,
+    *,
+    include_hidden: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Combine public NPC entries, public identity metadata, and secret NPC legal names."""
+    public_ids = parse_npc_identities_public(state)
+    profiles: dict[str, dict[str, Any]] = {}
+    for npc_name in ((state or {}).get("npcs") or {}).keys():
+        clean = str(npc_name).strip()
+        if clean:
+            profiles[clean] = dict(public_ids.get(clean) or {"handle": clean, "real_name_hidden": False})
+    for handle, entry in public_ids.items():
+        if handle not in profiles:
+            profiles[handle] = dict(entry)
+    for sk, sv in (gm_secrets or {}).items():
+        if isinstance(sk, str) and sk.startswith("__npc_real:") and isinstance(sv, str) and sv.strip():
+            handle = sk[len("__npc_real:"):].strip()
+            if not handle:
+                continue
+            prof = profiles.setdefault(handle, {"handle": handle, "real_name_hidden": True})
+            prof["real_name_hidden"] = True
+            if include_hidden:
+                prof["real_name"] = sv.strip()
+    if not include_hidden:
+        for prof in profiles.values():
+            if prof.get("real_name_hidden"):
+                prof.pop("real_name", None)
+    return profiles
+
+
+def _visible_state_for_prompt(state: dict[str, Any]) -> dict[str, Any]:
+    """Return narrative state with internal __* storage keys stripped from discoveries."""
+    cleaned = dict(state or {})
+    disc = dict(cleaned.get("discoveries") or {})
+    cleaned["discoveries"] = {k: v for k, v in disc.items() if not str(k).startswith("__")}
+    return cleaned
+
+
 def _normalize_campaign_changes(
-    raw_changes: dict[str, Any], current_state: dict[str, Any]
+    raw_changes: dict[str, Any],
+    current_state: dict[str, Any],
+    *,
+    characters: list[dict[str, Any]] | None = None,
+    existing_secrets: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     mapped = dict(raw_changes)
     if "location" in mapped and "scene" not in mapped:
         mapped["scene"] = mapped.pop("location")
+    pc_locations_in = mapped.pop("pc_locations", None)
+    all_together_in = mapped.pop("all_together", None)
+    npc_identities_in = mapped.pop("npc_identities", None)
     allowed = {"scene", "summary", "npcs", "objectives", "discoveries", "unresolved"}
     ignored = sorted(k for k in mapped if k not in allowed)
     clean: dict[str, Any] = {}
@@ -1467,6 +1805,39 @@ def _normalize_campaign_changes(
         if len(merged) > 40:
             merged = dict(list(merged.items())[-40:])
         clean[section] = merged
+
+    if characters is not None and (isinstance(pc_locations_in, dict) or (isinstance(all_together_in, str) and all_together_in.strip())):
+        base_state = {**current_state, **clean}
+        clean["discoveries"] = apply_pc_locations_to_discoveries(
+            base_state,
+            characters,
+            pc_locations_in if isinstance(pc_locations_in, dict) else None,
+            all_together_location=all_together_in if isinstance(all_together_in, str) else None,
+        )
+
+    if isinstance(npc_identities_in, dict):
+        base_disc = dict(clean.get("discoveries") or current_state.get("discoveries") or {})
+        cur_ids = parse_npc_identities_public({"discoveries": base_disc})
+        for raw_handle, raw_meta in npc_identities_in.items():
+            handle = str(raw_handle or "").strip()[:80]
+            if not handle:
+                continue
+            if raw_meta is None:
+                cur_ids.pop(handle, None)
+            elif isinstance(raw_meta, dict):
+                hidden = bool(raw_meta.get("real_name_hidden", True))
+                rname = str(raw_meta.get("real_name") or "").strip()[:100]
+                if not hidden and not rname:
+                    prev_entry = cur_ids.get(handle) or {}
+                    sec_val = (existing_secrets or {}).get(f"__npc_real:{handle}") or ""
+                    rname = (str(sec_val).strip() or str(prev_entry.get("real_name") or "").strip())[:100]
+                entry: dict[str, Any] = {"handle": handle, "real_name_hidden": hidden}
+                if not hidden and rname:
+                    entry["real_name"] = rname
+                cur_ids[handle] = entry
+        base_disc["__npc_identities"] = _encode_npc_identities_json(cur_ids)
+        clean["discoveries"] = base_disc
+
     return clean, notes
 
 
@@ -1817,21 +2188,66 @@ class TurnEngine:
                     (campaign_id, clk_json),
                 )
 
+    def _latest_snapshot_leaf(self, campaign_id: str) -> str | None:
+        with closing(self.gameplay.store._connect()) as conn:
+            row = conn.execute(
+                """
+                SELECT s.message_id
+                FROM turn_gm_snapshots s
+                JOIN chat_messages m ON s.message_id = m.id AND s.campaign_id = m.campaign_id
+                WHERE s.campaign_id = ? AND m.is_active = 1
+                ORDER BY m.created_at DESC, m.rowid DESC
+                LIMIT 1
+                """,
+                (campaign_id,),
+            ).fetchone()
+        if row:
+            return str(row["message_id"])
+        return self.tree.get_tree(campaign_id).get("active_leaf_id")
+
+    def _active_channel_leaves(self, campaign_id: str) -> list[str]:
+        main_tree = self.tree.get_tree(campaign_id, "main")
+        leaves: list[str] = []
+        seen: set[str] = set()
+        for ch in main_tree.get("channels") or ["main"]:
+            t = main_tree if ch == "main" else self.tree.get_tree(campaign_id, ch)
+            lid = t.get("active_leaf_id")
+            if lid and lid not in seen:
+                seen.add(lid)
+                leaves.append(lid)
+        return leaves
+
     def _get_gm_secrets(self, campaign_id: str) -> dict[str, str]:
-        leaf_id = self.tree.get_tree(campaign_id).get("active_leaf_id")
+        leaf_id = self._latest_snapshot_leaf(campaign_id)
         secrets, _ = self._load_branch_private_state(campaign_id, leaf_id)
         return secrets
 
+    def update_gm_secrets(self, campaign_id: str, updates: dict[str, str | None]) -> dict[str, str]:
+        """Persist secret updates across root gm_secrets AND all active channel branch snapshots."""
+        self.gameplay.campaign_context(campaign_id)
+        root_sec, root_clk = self._load_branch_private_state(campaign_id, None)
+        merged_root = self._merge_gm_secrets(root_sec, updates)
+        self._save_branch_private_state(campaign_id, None, None, merged_root, root_clk)
+
+        latest_sec = merged_root
+        for lid in self._active_channel_leaves(campaign_id):
+            b_sec, b_clk = self._load_branch_private_state(campaign_id, lid)
+            merged_b = self._merge_gm_secrets(b_sec, updates)
+            msg = self.tree.get_message(campaign_id, lid)
+            parent_id = msg["parent_id"] if msg else None
+            self._save_branch_private_state(campaign_id, lid, parent_id, merged_b, b_clk)
+            latest_sec = merged_b
+        return latest_sec
+
     def list_public_clocks(self, campaign_id: str, leaf_id: str | None = None) -> list[dict[str, Any]]:
         self.gameplay.campaign_context(campaign_id)
-        target_leaf = leaf_id if leaf_id is not None else self.tree.get_tree(campaign_id).get("active_leaf_id")
+        target_leaf = leaf_id if leaf_id is not None else self._latest_snapshot_leaf(campaign_id)
         _, clocks = self._load_branch_private_state(campaign_id, target_leaf)
         return [c for c in clocks if c.get("visibility") != "secret"]
 
     def mutate_public_clock(self, campaign_id: str, body: dict[str, Any], leaf_id: str | None = None) -> list[dict[str, Any]]:
         self.gameplay.campaign_context(campaign_id)
-        tree = self.tree.get_tree(campaign_id)
-        target_leaf = leaf_id if leaf_id is not None else tree.get("active_leaf_id")
+        target_leaf = leaf_id if leaf_id is not None else self._latest_snapshot_leaf(campaign_id)
         secrets, clocks = self._load_branch_private_state(campaign_id, target_leaf)
         action = str(body.get("action") or "upsert").strip().lower()
         op: dict[str, Any]
@@ -2406,11 +2822,13 @@ class TurnEngine:
         parent_id: str | None = None,
         branch_from_root: bool = False,
         turn_id: str | None = None,
+        channel_id: str = "main",
     ) -> dict[str, Any]:
         """Gather dual memory, branch secrets/clocks, pre-rolled server dice pool, rulebook cards, and branch history."""
         op_base = turn_id or uuid.uuid4().hex[:12]
         context = self.gameplay.campaign_context(campaign_id)
-        tree_state = self.tree.get_tree(campaign_id)
+        chan = ChatTreeStore._norm_channel(channel_id)
+        tree_state = self.tree.get_tree(campaign_id, channel_id=chan)
         if branch_from_root:
             branch_parent = None
             branch = []
@@ -2423,6 +2841,11 @@ class TurnEngine:
         else:
             branch_parent = None
             branch = []
+
+        main_tail: list[dict[str, Any]] = []
+        if chan != "main":
+            main_tree = self.tree.get_tree(campaign_id, channel_id="main")
+            main_tail = list(main_tree.get("active_branch") or [])[-6:]
 
         branch_secrets, branch_clocks = self._load_branch_private_state(campaign_id, branch_parent)
 
@@ -2441,13 +2864,19 @@ class TurnEngine:
         compressed_count = self._get_compressed_count(campaign_id)
         turns_since_compress = max(0, len(branch) - compressed_count)
         threshold = max(4, int(self.turn_settings.get("compression_threshold", _COMPRESSION_MESSAGE_THRESHOLD)))
+        party_grouping = compute_party_grouping(context["characters"], context["campaign"]["state"], active_channel_id=chan)
+        npc_profiles = build_npc_profiles(context["campaign"]["state"], branch_secrets, include_hidden=True)
         return {
             "turn_id": op_base,
+            "channel_id": chan,
             "context": context,
             "parent_id": branch_parent,
             "branch": branch,
+            "main_tail": main_tail,
             "gm_secrets": branch_secrets,
             "clocks": branch_clocks,
+            "party_grouping": party_grouping,
+            "npc_profiles": npc_profiles,
             "dice_pool": {"d10": d10_pool["dice"], "d6": d6_pool["dice"]},
             "citations": citations,
             "compression_recommended": bool(self.turn_settings.get("auto_compress_prompt", True)) and turns_since_compress >= threshold,
@@ -2464,8 +2893,11 @@ class TurnEngine:
         guidance: str | None = None,
     ) -> list[dict[str, str]]:
         ctx = prep["context"]
-        state = ctx["campaign"]["state"]
+        state = _visible_state_for_prompt(ctx["campaign"]["state"])
         chars_summary = [_summarize_character(c) for c in ctx["characters"]]
+        chan = str(prep.get("channel_id") or "main")
+        grouping = prep.get("party_grouping") or compute_party_grouping(ctx["characters"], ctx["campaign"]["state"], active_channel_id=chan)
+        npc_profiles = prep.get("npc_profiles") or build_npc_profiles(ctx["campaign"]["state"], prep.get("gm_secrets") or {}, include_hidden=True)
         cards = [
             {
                 "id": e["id"],
@@ -2523,7 +2955,7 @@ class TurnEngine:
             '  "checks": [{"actor": "name", "skill": "Handgun|Interface|Perception|...", "stat": "REF|INT|ROLE|...", "dv": 13, "modifier": 0, "luck": 0, "overclock": false, "reason": "..."}],\n'
             '  "start_time": "22:15",\n'
             '  "time_elapsed_minutes": 0,\n'
-            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "5th & Main, Rain-slicked street", "summary": "...", "npcs": {"NPC Name": "Role, location — Disposition (Neutral 0); tie-in"}, "objectives": {"Clear your name": "Active"}, "discoveries": {"Topic": "Observed clue"}}, "reason": "..."}],\n'
+            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "5th & Main, Rain-slicked street", "summary": "...", "npcs": {"NPC Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"NPC Handle": {"real_name": "Optional legal name", "real_name_hidden": true}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "objectives": {"Clear your name": "Active"}, "discoveries": {"Topic": "Observed clue"}}, "reason": "..."}],\n'
             '  "solo_ops": [{"action": "economy_action|health_action|gear_action|role_action|start_encounter|encounter_action|end_encounter", "subaction": "job_reward|pay_month|hustle|rest|stabilize|quick_fix|treat_injury|buy|sell|equip_weapon|equip_armor|award_ip|solo_allocate|attack|move|reload|next_turn", "actor": "name", "arguments": {...}, "reason": "..."}],\n'
             '  "clock_ops": [{"id": "militech-heat", "name": "Militech Sweep Heat", "delta": 1, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}],\n'
             '  "gm_secrets": {"npc_or_topic": "private GM truth, motive, trap, or null once learned by PC"},\n'
@@ -2534,12 +2966,14 @@ class TurnEngine:
             f"{step_note}"
             f"{homebrew_note}"
             f"{party_line}"
+            f"Party Grouping & Locations: {grouping.get('prompt_summary')}\n"
             f"{speaker_line}"
             f"{guidance_line}"
             f"Overclock requested by player: {overclock}.\n"
             f"Pre-committed LUCK by player: {max(0, int(luck_spend))}.\n"
             f"Pre-rolled server dice pool available if needed: {json.dumps(prep['dice_pool'])}.\n"
             f"Narrative Memory: {json.dumps(state)}\n"
+            f"NPC Identities (Respect real_name_hidden): {json.dumps(npc_profiles)}\n"
             f"Solo Engine State: {json.dumps(solo_summary)}\n"
             f"Active Clocks (secret clocks are GM-only): {json.dumps(clocks)}\n"
             f"Hidden GM Secrets (NEVER expose in state_ops unless earned): {json.dumps(gm_secrets)}\n"
@@ -2548,6 +2982,13 @@ class TurnEngine:
         )
         hist_win = max(4, min(200, int(self.turn_settings.get("history_window", 14))))
         msgs = [{"role": "system", "content": system_prompt}]
+        main_tail = prep.get("main_tail") or []
+        if chan != "main" and main_tail and not prep["branch"]:
+            tail_lines = [
+                f"{(m.get('metadata') or {}).get('speaker_name') or m['role']}: {m['content'][:320]}"
+                for m in main_tail
+            ]
+            msgs.append({"role": "system", "content": "Prior Main Table context before party split:\n" + "\n".join(tail_lines)})
         for item in prep["branch"][-hist_win:]:
             item_speaker = (item.get("metadata") or {}).get("speaker_name")
             content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
@@ -2565,7 +3006,7 @@ class TurnEngine:
     ) -> list[dict[str, str]]:
         ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
         camp = ctx["campaign"]
-        state = camp["state"]
+        state = _visible_state_for_prompt(camp["state"])
         chars = [_summarize_character(c) for c in ctx["characters"]]
         intro_prompt = (self.prompt_settings.get("intro_prompt") or "").strip() or _DEFAULT_INTRO_PROMPT
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
@@ -2582,6 +3023,7 @@ class TurnEngine:
             f"Active Campaign: {camp.get('name', 'Night City Run')} (Session {camp.get('session_number', 1)})\n"
             f"Campaign Scene: {state.get('scene') or '(not yet set)'}\n"
             f"Campaign Summary: {state.get('summary') or '(not yet set)'}\n"
+            f"Known NPCs: {json.dumps(state.get('npcs') or {})}\n"
             f"Party Characters Attached: {json.dumps(chars)}"
         )
         speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
@@ -2655,7 +3097,11 @@ class TurnEngine:
         guidance: str | None = None,
     ) -> list[dict[str, str]]:
         ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
-        state = ctx["campaign"]["state"]
+        state = _visible_state_for_prompt(ctx["campaign"]["state"])
+        chan = str(prep.get("channel_id") or "main")
+        grouping = compute_party_grouping(ctx["characters"], ctx["campaign"]["state"], active_channel_id=chan)
+        gm_secrets = executed.get("gm_secrets", prep.get("gm_secrets") or {})
+        npc_profiles = build_npc_profiles(ctx["campaign"]["state"], gm_secrets, include_hidden=True)
         cards = [
             {
                 "name": e["name"],
@@ -2673,7 +3119,6 @@ class TurnEngine:
             for e in prep["citations"]
         ]
         narrator_chars = [_summarize_character(c) for c in ctx["characters"]]
-        gm_secrets = executed.get("gm_secrets", prep.get("gm_secrets") or {})
         clocks = executed.get("clocks", prep.get("clocks") or [])
         solo_summary = self._solo_summary(ctx)
         speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
@@ -2729,6 +3174,8 @@ class TurnEngine:
             f"{core_block}"
             f"{flair_line}"
             f"- Narrative State: {json.dumps(state)}\n"
+            f"- NPC Identities (Respect real_name_hidden): {json.dumps(npc_profiles)}\n"
+            f"- Party Grouping & Locations: {grouping.get('prompt_summary')}\n"
             f"- Solo Engine State: {json.dumps(solo_summary)}\n"
             f"- Active Clocks (secret clocks are GM eyes only): {json.dumps(clocks)}\n"
             f"- Hidden GM Secrets (GM eyes only—NEVER leak unobservably or give away for free): {json.dumps(gm_secrets)}\n"
@@ -2747,6 +3194,13 @@ class TurnEngine:
             )
         hist_win = max(4, min(500, int(self.turn_settings.get("history_window", 14))))
         msgs = [{"role": "system", "content": system_prompt}]
+        main_tail = prep.get("main_tail") or []
+        if chan != "main" and main_tail and not prep["branch"]:
+            tail_lines = [
+                f"{(m.get('metadata') or {}).get('speaker_name') or m['role']}: {m['content'][:320]}"
+                for m in main_tail
+            ]
+            msgs.append({"role": "system", "content": "Prior Main Table context before party split:\n" + "\n".join(tail_lines)})
         for item in prep["branch"][-hist_win:]:
             item_speaker = (item.get("metadata") or {}).get("speaker_name")
             content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
@@ -2764,9 +3218,12 @@ class TurnEngine:
         speaker: dict[str, str] | None = None,
     ) -> list[dict[str, str]]:
         ctx = prep["context"]
-        state = ctx["campaign"]["state"]
+        state = _visible_state_for_prompt(ctx["campaign"]["state"])
+        chan = str(prep.get("channel_id") or "main")
+        grouping = compute_party_grouping(ctx["characters"], ctx["campaign"]["state"], active_channel_id=chan)
         solo_summary = self._solo_summary(ctx)
         gm_secrets = executed.get("gm_secrets", prep.get("gm_secrets") or {})
+        npc_profiles = build_npc_profiles(ctx["campaign"]["state"], gm_secrets, include_hidden=True)
         clocks = executed.get("clocks", prep.get("clocks") or [])
         chron_extra = (self.prompt_settings.get("chronicler_extra") or "").strip()
         chron_core = (self.prompt_settings.get("chronicler_core_rules") or "").strip()
@@ -2782,13 +3239,15 @@ class TurnEngine:
             "Return ONLY a single valid JSON object with no markdown:\n"
             "{\n"
             '  "time_elapsed_minutes": 0,\n'
-            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "...", "npcs": {"Name": "Role, location — Disposition (Neutral 0); tie-in"}, "discoveries": {"Topic": "PC-observed clue"}, "objectives": {"Obj": "Active|Completed"}, "unresolved": {"Thread": "..."}}, "reason": "..."}],\n'
+            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "...", "npcs": {"Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"Handle": {"real_name": "Optional legal name", "real_name_hidden": true}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "discoveries": {"Topic": "PC-observed clue"}, "objectives": {"Obj": "Active|Completed"}, "unresolved": {"Thread": "..."}}, "reason": "..."}],\n'
             '  "clock_ops": [{"id": "...", "name": "...", "delta": 0, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}],\n'
             '  "gm_secrets": {"secret_key": "unrevealed off-screen motive/consequence or null if revealed in prose"},\n'
             '  "new_homebrew": [{"name": "...", "category": "npc|location|faction|gear|program|rule|ammo|attachment|vehicle|drug|service|housing|mook|encounter|streetslang|screamsheet", "summary": "1-sentence player-known summary", "description": "concise factual entry", "stats": {...}}]\n'
             "}\n"
             f"{core_block}"
             f"{homebrew_note}"
+            f"Party Grouping & Locations: {grouping.get('prompt_summary')}\n"
+            f"NPC Identities: {json.dumps(npc_profiles)}\n"
             f"Current Narrative State: {json.dumps(state)}\n"
             f"Solo Engine State: {json.dumps(solo_summary)}\n"
             f"Active Clocks: {json.dumps(clocks)}\n"
@@ -2964,8 +3423,31 @@ class TurnEngine:
                 raw_changes = op.get("changes")
                 if not isinstance(raw_changes, dict) or not raw_changes:
                     continue
-                live_camp = self.gameplay.campaign_context(campaign_id)["campaign"]
-                changes, norm_notes = _normalize_campaign_changes(raw_changes, live_camp["state"])
+                live_ctx = self.gameplay.campaign_context(campaign_id)
+                live_camp = live_ctx["campaign"]
+                changes, norm_notes = _normalize_campaign_changes(
+                    raw_changes,
+                    live_camp["state"],
+                    characters=live_ctx["characters"],
+                    existing_secrets=prep.get("gm_secrets") or {},
+                )
+                # Mirror hidden NPC legal names into secret gm_secrets updates so players cannot inspect them
+                if isinstance(raw_changes.get("npc_identities"), dict):
+                    sec_up = dict(plan.get("gm_secrets") or {}) if isinstance(plan.get("gm_secrets"), dict) else {}
+                    for raw_h, raw_m in raw_changes["npc_identities"].items():
+                        h = str(raw_h or "").strip()
+                        if not h:
+                            continue
+                        if raw_m is None:
+                            sec_up[f"__npc_real:{h}"] = None
+                        elif isinstance(raw_m, dict):
+                            hidden = bool(raw_m.get("real_name_hidden", True))
+                            rname = str(raw_m.get("real_name") or "").strip()
+                            if hidden and rname:
+                                sec_up[f"__npc_real:{h}"] = rname
+                            elif not hidden:
+                                sec_up[f"__npc_real:{h}"] = None
+                    plan["gm_secrets"] = sec_up
                 warnings.extend(norm_notes)
                 if not changes:
                     continue
@@ -3143,15 +3625,25 @@ class TurnEngine:
                 "clocks": prep.get("clocks") or [],
                 "outcomes": {},
             }
+            primer_block = f"{_STATIC_INTRO_PRIMER}\n\n---\n\n### CAMPAIGN TABLE WELCOME\n"
+            raw_chunks.append(primer_block)
+            yield {"event": "text_delta", "data": {"delta": primer_block}}
             intro_msgs = self._build_intro_messages(prep, user_text, speaker=speaker, guidance=guidance)
             intro_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
             intro_max_tokens = max(256, int(self.turn_settings.get("intro_max_tokens") or 4096))
             if self._supports_kwarg(self.llm.stream, "max_tokens"):
                 intro_kwargs["max_tokens"] = intro_max_tokens
             stream_t0 = time.perf_counter()
-            async for delta in self.llm.stream(intro_msgs, **intro_kwargs):
-                raw_chunks.append(delta)
-                yield {"event": "text_delta", "data": {"delta": delta}}
+            try:
+                async for delta in self.llm.stream(intro_msgs, **intro_kwargs):
+                    raw_chunks.append(delta)
+                    yield {"event": "text_delta", "data": {"delta": delta}}
+            except Exception as exc:
+                fallback = "Open the **Character** tab to build or claim your Edgerunner, or click **Screamsheet & Briefing** at the top to review the campaign situation."
+                raw_chunks.append(fallback)
+                yield {"event": "text_delta", "data": {"delta": fallback}}
+                executed["warnings"].append(f"Campaign welcome generation skipped ({exc}); static rules primer delivered.")
+                yield {"event": "warning", "data": {"message": executed["warnings"][-1]}}
             stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
             _collect_usage()
             raw_text = "".join(raw_chunks)
@@ -3351,6 +3843,7 @@ class TurnEngine:
             if updated_user is not None:
                 user_msg = updated_user
 
+        chan = str(prep.get("channel_id") or "main")
         assistant_msg = self.tree.append_message(
             campaign_id,
             parent_id=user_msg["id"],
@@ -3360,8 +3853,10 @@ class TurnEngine:
             model=model_name,
             campaign_revision=post_ctx["campaign"]["revision"],
             solo_revision=post_ctx["solo"]["revision"],
+            channel_id=chan,
             metadata={
                 "turn_id": prep["turn_id"],
+                "channel_id": chan,
                 "mode": "intro" if is_intro else active_mode,
                 **({"is_intro": True} if is_intro else {}),
                 "generation_stats": generation_stats,
@@ -3385,6 +3880,7 @@ class TurnEngine:
             "event": "turn_done",
             "data": {
                 "turn_id": prep["turn_id"],
+                "channel_id": chan,
                 "user_message": user_msg,
                 "assistant_message": assistant_msg,
                 "generation_stats": generation_stats,
@@ -3622,6 +4118,7 @@ class TurnEngine:
         is_intro: bool = False,
         gm_mode: str = "auto",
         coop_player_count: int = 1,
+        channel_id: str = "main",
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one complete AI GM turn and stream typed events for the frontend UI."""
         if not isinstance(user_text, str) or not user_text.strip():
@@ -3632,15 +4129,19 @@ class TurnEngine:
         if active_mode not in {"two_pass", "single_pass_tagged"}:
             raise ValueError(f"Unsupported turn mode: {active_mode!r}")
 
-        prep = self.preprocess(
-            campaign_id,
-            user_text.strip(),
-            parent_id=parent_id,
-            branch_from_root=branch_from_root,
+        chan = ChatTreeStore._norm_channel(channel_id)
+        prep = await asyncio.to_thread(
+            lambda: self.preprocess(
+                campaign_id,
+                user_text.strip(),
+                parent_id=parent_id,
+                branch_from_root=branch_from_root,
+                channel_id=chan,
+            )
         )
         pre_ctx = prep["context"]
         speaker = self._resolve_speaker(pre_ctx["characters"], speaker_character_id, speaker_name)
-        meta: dict[str, Any] = {"overclock": overclock, "luck_spend": luck_spend}
+        meta: dict[str, Any] = {"overclock": overclock, "luck_spend": luck_spend, "channel_id": chan}
         if is_intro:
             meta["is_intro"] = True
         if speaker.get("id"):
@@ -3660,10 +4161,19 @@ class TurnEngine:
                 should_run_gm = False
                 defer_reason = "Action/dialogue posted to table — waiting for party or 'Resolve GM Turn'"
             elif clean_gm_mode == "auto":
+                grouping = prep.get("party_grouping") or {}
+                channel_chars = (
+                    [
+                        c for c in pre_ctx["characters"]
+                        if (grouping.get("char_channel_map") or {}).get(c["id"], "main") == chan
+                    ]
+                    if grouping.get("mode") == "split" and chan != "main"
+                    else pre_ctx["characters"]
+                )
                 should_run_gm, defer_reason = self.should_gm_intervene(
                     user_text.strip(),
                     branch=prep["branch"],
-                    characters=pre_ctx["characters"],
+                    characters=channel_chars,
                     npcs=(pre_ctx["campaign"].get("state") or {}).get("npcs") or {},
                     speaker=speaker,
                     coop_player_count=coop_player_count,
@@ -3682,12 +4192,15 @@ class TurnEngine:
                 content=user_text.strip(),
                 campaign_revision=revs["campaign_revision"],
                 solo_revision=revs["solo_revision"],
+                channel_id=chan,
                 metadata=meta,
             )
+            yield {"event": "user_message", "data": {"message": user_msg, "channel_id": chan}}
             yield {
                 "event": "turn_done",
                 "data": {
                     "turn_id": prep["turn_id"],
+                    "channel_id": chan,
                     "user_message": user_msg,
                     "assistant_message": None,
                     "gm_deferred": True,
@@ -3709,8 +4222,10 @@ class TurnEngine:
             content=user_text.strip(),
             campaign_revision=pre_ctx["campaign"]["revision"],
             solo_revision=pre_ctx["solo"]["revision"],
+            channel_id=chan,
             metadata=meta,
         )
+        yield {"event": "user_message", "data": {"message": user_msg, "channel_id": chan}}
         turn_completed = False
         try:
             async for ev in self._stream_turn_from_user_msg(
@@ -3782,15 +4297,19 @@ class TurnEngine:
             raise ValueError("Only user or assistant messages can be regenerated")
 
         self.tree.switch_branch(campaign_id, user_msg["id"])
+        chan = ChatTreeStore._norm_channel(user_msg.get("channel_id"))
         use_overclock = bool(user_msg["metadata"].get("overclock", False)) if overclock is None else bool(overclock)
         use_luck = int(user_msg["metadata"].get("luck_spend", 0)) if luck_spend is None else int(luck_spend)
         if use_luck < 0:
             raise ValueError("luck_spend must be a nonnegative integer")
-        prep = self.preprocess(
-            campaign_id,
-            user_msg["content"],
-            parent_id=user_msg["parent_id"],
-            branch_from_root=(user_msg["parent_id"] is None),
+        prep = await asyncio.to_thread(
+            lambda: self.preprocess(
+                campaign_id,
+                user_msg["content"],
+                parent_id=user_msg["parent_id"],
+                branch_from_root=(user_msg["parent_id"] is None),
+                channel_id=chan,
+            )
         )
         speaker = self._resolve_speaker(
             prep["context"]["characters"],

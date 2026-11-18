@@ -581,3 +581,71 @@ class AuthManager:
             "username": uname,
             "expires_in": _TOKEN_TTL_SECONDS,
         }
+
+    def update_self_account(
+        self,
+        current_username: str,
+        *,
+        current_password: str,
+        new_username: str | None = None,
+        new_password: str | None = None,
+    ) -> dict[str, Any]:
+        """Allow a signed-in saved account user (or admin) to update their own username and/or password."""
+        cur_name = (current_username or "").strip()
+        if not cur_name:
+            raise AuthError("You must be signed in with a named account to update account settings.")
+        if not isinstance(current_password, str) or not current_password:
+            raise AuthError("Current password is required to confirm account changes.")
+
+        cur_key = cur_name.lower()
+        target_name = (new_username or "").strip() if isinstance(new_username, str) and new_username.strip() else cur_name
+        if len(target_name) > 40:
+            raise AuthError("Username must be 1-40 characters")
+        target_key = target_name.lower()
+        change_name = target_key != cur_key or target_name != cur_name
+        change_pw = isinstance(new_password, str) and len(new_password) > 0
+        if not change_name and not change_pw:
+            raise AuthError("Provide a new username or a new password.")
+        if change_pw and (len(new_password) < 4 or len(new_password) > 256):
+            raise AuthError("New password must be 4-256 characters")
+
+        env_admin = self._env_admin()
+        env_user = self._env_user()
+        if (env_admin and cur_key == env_admin[0].lower()) or (env_user and cur_key == env_user[0].lower()):
+            raise AuthError("Environment-configured accounts cannot be modified from the UI.")
+        if change_name and ((env_admin and target_key == env_admin[0].lower()) or (env_user and target_key == env_user[0].lower())):
+            raise AuthError("That username is already taken.")
+
+        updated_meta: dict[str, str] = {}
+
+        def _apply(cur: dict[str, Any]) -> dict[str, Any]:
+            accs = self._saved_accounts(cur)
+            entry = accs.get(cur_key)
+            if entry is None:
+                raise AuthError("Only saved accounts can update their username or password here.")
+            if not verify_password(current_password, entry["password_hash"]):
+                raise AuthError("Current password is incorrect.")
+            if target_key != cur_key and target_key in accs:
+                raise AuthError("That username is already taken.")
+            next_entry = dict(entry)
+            next_entry["username"] = target_name
+            if change_pw:
+                next_entry["password_hash"] = hash_password(str(new_password))
+            if target_key != cur_key:
+                del accs[cur_key]
+            accs[target_key] = next_entry
+            cur["accounts"] = accs
+            updated_meta["username"] = target_name
+            updated_meta["role"] = str(next_entry["role"])
+            return cur
+
+        self._update_auth_section(_apply)
+        final_user = updated_meta["username"]
+        final_role = updated_meta["role"]
+        return {
+            "token": self.issue_token(final_user, final_role),
+            "role": final_role,
+            "username": final_user,
+            "previous_username": cur_name,
+            "expires_in": _TOKEN_TTL_SECONDS,
+        }

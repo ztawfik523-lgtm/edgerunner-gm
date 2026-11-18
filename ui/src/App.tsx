@@ -42,7 +42,12 @@ import { ChatPane, type StreamingTurnState } from "./components/ChatPane";
 import { CommandPalette } from "./components/CommandPalette";
 import { CoopModal } from "./components/CoopModal";
 import { LibraryPanel } from "./components/LibraryPanel";
-import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
+import {
+  SettingsModal,
+  type SettingsTab,
+  type UiFontWeight,
+  type UiTextScale,
+} from "./components/SettingsModal";
 import { TopBar } from "./components/TopBar";
 import type {
   ActiveTurnInfo,
@@ -132,8 +137,26 @@ export function App() {
       : window.matchMedia("(min-width: 768px)").matches,
   );
   const [streaming, setStreaming] = useState<StreamingTurnState | null>(null);
+  const [peerStreaming, setPeerStreaming] = useState<StreamingTurnState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [viewAsUser, setViewAsUser] = useState<boolean>(() => getStoredViewRoleOverride() === "user");
+  const [uiScale, setUiScale] = useState<UiTextScale>(() => {
+    const raw = safeStorageGet("redgm:uiScale");
+    return raw === "large" || raw === "xl" ? raw : "standard";
+  });
+  const [uiWeight, setUiWeight] = useState<UiFontWeight>(() => {
+    const raw = safeStorageGet("redgm:uiWeight");
+    return raw === "normal" || raw === "bold" ? raw : "semibold";
+  });
+  const [activeChannelId, setActiveChannelId] = useState<string>("main");
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.uiScale = uiScale;
+    document.documentElement.dataset.uiWeight = uiWeight;
+    safeStorageSet("redgm:uiScale", uiScale);
+    safeStorageSet("redgm:uiWeight", uiWeight);
+  }, [uiScale, uiWeight]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -152,14 +175,24 @@ export function App() {
   const [compressingMemory, setCompressingMemory] = useState(false);
   const [roster, setRoster] = useState<CoopPlayer[]>([]);
   const [activeTurn, setActiveTurn] = useState<ActiveTurnInfo | null>(null);
+  const [activeTurnsMap, setActiveTurnsMap] = useState<Record<string, ActiveTurnInfo>>({});
 
   const abortRef = useRef<AbortController | null>(null);
   const activeCampaignIdRef = useRef<string | null>(activeCampaignId);
+  const activeChannelIdRef = useRef<string>(activeChannelId);
+  const lastSyncSeqRef = useRef<number>(0);
+  const userPinnedMainRef = useRef<boolean>(false);
   const selfClientId = getClientId();
 
   useEffect(() => {
     activeCampaignIdRef.current = activeCampaignId;
+    lastSyncSeqRef.current = 0;
+    userPinnedMainRef.current = false;
   }, [activeCampaignId]);
+
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -183,10 +216,11 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const loadCampaignData = useCallback(async (campId: string) => {
+  const loadCampaignData = useCallback(async (campId: string, chanId?: string) => {
+    const targetChan = chanId ?? activeChannelIdRef.current ?? "main";
     const [ctx, tree] = await Promise.all([
       fetchCampaignContext(campId),
-      fetchChatTree(campId),
+      fetchChatTree(campId, targetChan),
     ]);
     if (activeCampaignIdRef.current && activeCampaignIdRef.current !== campId) return;
     setCampaignContext(ctx);
@@ -294,13 +328,60 @@ export function App() {
     }
   }, [campaignContext?.characters, claimedCharId, speakerId, activeCampaignId, authStatus?.username, authStatus?.authenticated, authStatus?.role, viewAsUser]);
 
-  // Live Co-op presence heartbeat + SSE subscription
+  // Keep activeChannelId aligned when party splits or reunites (without trapping clicks on Main Table)
+  useEffect(() => {
+    const grouping = campaignContext?.party_grouping;
+    if (!grouping || grouping.mode !== "split") {
+      userPinnedMainRef.current = false;
+      if (activeChannelId !== "main") {
+        setActiveChannelId("main");
+        setPeerStreaming(null);
+        if (activeCampaignId) {
+          void fetchChatTree(activeCampaignId, "main").then(setChatTree).catch(() => {});
+        }
+      }
+      return;
+    }
+    const targetChar = speakerId || claimedCharId;
+    const assignedChan = targetChar ? grouping.char_channel_map?.[targetChar] : undefined;
+    const validIds = new Set(["main", ...grouping.channels.map((ch) => ch.id)]);
+    if (!userPinnedMainRef.current && assignedChan && validIds.has(assignedChan) && activeChannelId === "main") {
+      setActiveChannelId(assignedChan);
+      setPeerStreaming(null);
+      if (activeCampaignId) {
+        void fetchChatTree(activeCampaignId, assignedChan).then(setChatTree).catch(() => {});
+      }
+    } else if (!validIds.has(activeChannelId)) {
+      const nextChan = assignedChan || grouping.channels[0]?.id || "main";
+      setActiveChannelId(nextChan);
+      setPeerStreaming(null);
+      if (activeCampaignId) {
+        void fetchChatTree(activeCampaignId, nextChan).then(setChatTree).catch(() => {});
+      }
+    }
+  }, [campaignContext?.party_grouping, speakerId, claimedCharId, activeChannelId, activeCampaignId]);
+
+  // Live Co-op presence heartbeat + SSE subscription + real-time peer streaming
   useEffect(() => {
     if (!activeCampaignId) {
       setRoster([]);
       setActiveTurn(null);
+      setActiveTurnsMap({});
+      setPeerStreaming(null);
       return;
     }
+
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSync = (delayMs = 60) => {
+      if (syncTimer) return;
+      syncTimer = setTimeout(() => {
+        syncTimer = null;
+        if (!abortRef.current) {
+          void loadCampaignData(activeCampaignId, activeChannelIdRef.current);
+          void listCampaigns().then(setCampaigns).catch(() => {});
+        }
+      }, delayMs);
+    };
 
     const ping = () => {
       void sendPresence(activeCampaignId, {
@@ -310,50 +391,165 @@ export function App() {
         .then((res) => {
           if (Array.isArray(res?.players)) setRoster(res.players);
           if ("active_turn" in res) setActiveTurn(res.active_turn ?? null);
+          if (res?.active_turns) setActiveTurnsMap(res.active_turns);
+          if (typeof res?.sync_seq === "number" && res.sync_seq > lastSyncSeqRef.current) {
+            lastSyncSeqRef.current = res.sync_seq;
+            if (!abortRef.current) {
+              scheduleSync(40);
+            }
+          }
         })
         .catch(() => {
           // ignore offline / mocked environment
         });
     };
     ping();
-    const heartbeat = setInterval(ping, 20000);
+    const heartbeat = setInterval(ping, 8000);
 
-    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && !abortRef.current) {
+        ping();
+        scheduleSync(40);
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+
     const unsubscribe = subscribeCampaignEvents(activeCampaignId, {
       onPresence: (data) => {
         if (Array.isArray(data.players)) setRoster(data.players);
         setActiveTurn(data.active_turn ?? null);
+        if (data.active_turns) setActiveTurnsMap(data.active_turns);
+        if (typeof data.sync_seq === "number" && data.sync_seq > lastSyncSeqRef.current) {
+          lastSyncSeqRef.current = data.sync_seq;
+          if (!abortRef.current) scheduleSync(40);
+        }
       },
-      onTurnLock: (turn) => setActiveTurn(turn),
-      onSync: () => {
-        if (abortRef.current || syncTimer) return;
-        syncTimer = setTimeout(() => {
-          syncTimer = null;
-          if (!abortRef.current) {
-            void loadCampaignData(activeCampaignId);
-            void listCampaigns().then(setCampaigns).catch(() => {});
+      onTurnLock: (turn, turns) => {
+        setActiveTurn(turn);
+        if (turns) setActiveTurnsMap(turns);
+        const curChan = activeChannelIdRef.current || "main";
+        const chanTurn = turns ? turns[curChan] : (curChan === "main" ? turn : null);
+        if (!chanTurn) {
+          setPeerStreaming(null);
+        }
+      },
+      onPeerUserMessage: (data) => {
+        if (data.client_id === selfClientId) return;
+        const evChan = data.channel_id || "main";
+        if (evChan !== (activeChannelIdRef.current || "main")) return;
+        const msg = data.message;
+        if (!msg || !msg.id) return;
+        setChatTree((prev) => {
+          if (!prev || prev.campaign_id !== activeCampaignId) return prev;
+          if (prev.active_branch.some((m) => m.id === msg.id)) return prev;
+          return {
+            ...prev,
+            nodes: prev.nodes.some((m) => m.id === msg.id) ? prev.nodes : [...prev.nodes, msg],
+            active_branch: [...prev.active_branch, msg],
+            active_leaf_id: msg.id,
+          };
+        });
+      },
+      onPeerStream: (data) => {
+        if (data.client_id === selfClientId) return;
+        const evChan = data.channel_id || "main";
+        if (evChan !== (activeChannelIdRef.current || "main")) return;
+        setPeerStreaming((prev) => {
+          const base: StreamingTurnState = prev ?? {
+            userText: data.user_text || "",
+            speakerName: data.speaker_name,
+            speakerColor: data.speaker_color,
+            speakerPortraitUrl: data.speaker_portrait_url,
+            text: "",
+            citations: [],
+            rolls: [],
+            patches: [],
+            libraryAdded: [],
+            warnings: [],
+            overclock: Boolean(data.overclock),
+            truncateFromId: data.truncate_from_id,
+            startedAt: Date.now(),
+          };
+          switch (data.event) {
+            case "rule_citation":
+              return { ...base, citations: ((data.data?.entries as LibraryEntry[]) ?? base.citations) };
+            case "dice_roll":
+              return { ...base, rolls: [...base.rolls, data.data as unknown as StreamingTurnState["rolls"][number]] };
+            case "state_patch":
+              return { ...base, patches: [...base.patches, data.data as unknown as StreamingTurnState["patches"][number]] };
+            case "library_added":
+              return { ...base, libraryAdded: [...base.libraryAdded, data.data as unknown as LibraryEntry] };
+            case "warning":
+              return { ...base, warnings: [...base.warnings, String(data.data?.message ?? "")] };
+            case "text_delta":
+              return { ...base, text: base.text + String(data.data?.delta ?? "") };
+            default:
+              return base;
           }
-        }, 200);
+        });
+      },
+      onPeerTurnDone: (data) => {
+        if (data.client_id === selfClientId) return;
+        const evChan = String(data.channel_id || "main");
+        if (evChan === (activeChannelIdRef.current || "main")) {
+          setPeerStreaming(null);
+        }
+        scheduleSync(30);
+      },
+      onSync: (_kind, meta) => {
+        if (typeof meta?.sync_seq === "number" && meta.sync_seq > lastSyncSeqRef.current) {
+          lastSyncSeqRef.current = meta.sync_seq;
+        }
+        if (abortRef.current) return;
+        scheduleSync(50);
+      },
+      onPing: (data) => {
+        if (typeof data?.sync_seq === "number" && data.sync_seq > lastSyncSeqRef.current) {
+          lastSyncSeqRef.current = data.sync_seq;
+          if (!abortRef.current) scheduleSync(50);
+        }
       },
     });
 
     return () => {
       clearInterval(heartbeat);
       if (syncTimer) clearTimeout(syncTimer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       unsubscribe();
     };
-  }, [activeCampaignId, playerName, claimedCharId, loadCampaignData]);
+  }, [activeCampaignId, playerName, claimedCharId, loadCampaignData, selfClientId]);
 
   const handleSelectCampaign = async (id: string) => {
     abortRef.current?.abort();
     activeCampaignIdRef.current = id;
+    activeChannelIdRef.current = "main";
+    setActiveChannelId("main");
+    setPeerStreaming(null);
     setActiveCampaignId(id);
     setSelectedLibraryEntry((cur) => (cur?.source === "homebrew" ? null : cur));
     safeStorageSet(userCampaignStorageKey(authStatus?.username), id);
     try {
-      await loadCampaignData(id);
+      await loadCampaignData(id, "main");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to load campaign");
+    }
+  };
+
+  const handleSelectChannel = async (channelId: string) => {
+    if (!activeCampaignId) return;
+    userPinnedMainRef.current = channelId === "main";
+    activeChannelIdRef.current = channelId;
+    setActiveChannelId(channelId);
+    setPeerStreaming(null);
+    try {
+      const tree = await fetchChatTree(activeCampaignId, channelId);
+      setChatTree(tree);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Failed to switch scene channel");
     }
   };
 
@@ -420,7 +616,7 @@ export function App() {
   const handleExportChat = async () => {
     if (!activeCampaignId) return;
     try {
-      const data = await exportChatBranch(activeCampaignId, chatTree?.active_leaf_id ?? undefined);
+      const data = await exportChatBranch(activeCampaignId, chatTree?.active_leaf_id ?? undefined, activeChannelId);
       const blob = new Blob([data.markdown], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -437,7 +633,7 @@ export function App() {
 
   const refreshActiveCampaign = async () => {
     if (!activeCampaignId) return;
-    await loadCampaignData(activeCampaignId);
+    await loadCampaignData(activeCampaignId, activeChannelIdRef.current);
     const updatedList = await listCampaigns();
     setCampaigns(updatedList);
   };
@@ -539,6 +735,7 @@ export function App() {
         {
           campaign_id: activeCampaignId,
           user_text: text,
+          channel_id: activeChannelId,
           overclock: opts.overclock,
           luck_spend: opts.luckSpend || undefined,
           speaker_character_id: opts.speakerCharacterId,
@@ -560,6 +757,7 @@ export function App() {
         {
           campaign_id: activeCampaignId,
           user_text: introPromptText,
+          channel_id: activeChannelId,
           is_intro: true,
         },
         callbacks,
@@ -584,7 +782,9 @@ export function App() {
           {
             campaign_id: activeCampaignId,
             user_text: newText,
+            channel_id: activeChannelId,
             parent_id: msg.parent_id,
+            replace_message_id: msg.id,
             branch_from_root: msg.parent_id === null,
             overclock,
             luck_spend: luckSpend || undefined,
@@ -698,7 +898,7 @@ export function App() {
   const handleSyncRevisions = async () => {
     if (!activeCampaignId) return;
     try {
-      const res = await syncChatRevisions(activeCampaignId);
+      const res = await syncChatRevisions(activeCampaignId, activeChannelId);
       setChatTree(res);
       notify("Synced branch state with live campaign revisions.");
     } catch (err) {
@@ -771,6 +971,7 @@ export function App() {
             selfClientId={selfClientId}
             isAdmin={isEffectiveAdmin}
             currentUsername={authStatus?.username}
+            activeChannelId={activeChannelId}
             protectOthers={protectOthers}
             preferredSelectedId={preferredCharacterId}
             onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
@@ -789,6 +990,8 @@ export function App() {
             context={campaignContext}
             campaigns={campaigns}
             canManageCampaigns={canManageCampaigns}
+            isAdmin={isEffectiveAdmin}
+            currentUsername={authStatus?.username}
             activeLeafId={chatTree?.active_leaf_id ?? null}
             onSelectCampaign={handleSelectCampaign}
             onSetPrimaryCampaign={handleSetPrimaryCampaign}
@@ -826,15 +1029,22 @@ export function App() {
     </div>
   );
 
+  const channelActiveTurn = activeTurnsMap[activeChannelId] ?? (activeChannelId === "main" ? activeTurn : null);
+
   const chatPaneNode = (
     <ChatPane
       campaignId={activeCampaignId}
       campaign={activeCampaign}
+      npcProfiles={campaignContext?.npc_profiles}
+      partyGrouping={campaignContext?.party_grouping}
+      activeChannelId={activeChannelId}
+      onChangeChannelId={handleSelectChannel}
       messages={chatTree?.active_branch ?? []}
-      streaming={streaming}
+      streaming={streaming ?? peerStreaming}
+      isPeerStreaming={!streaming && Boolean(peerStreaming)}
       characters={campaignContext?.characters ?? []}
       selectedSpeakerId={speakerId}
-      activeTurn={activeTurn}
+      activeTurn={channelActiveTurn}
       selfClientId={selfClientId}
       isAdmin={isEffectiveAdmin}
       currentUsername={authStatus?.username}
@@ -898,7 +1108,7 @@ export function App() {
         onExportChat={handleExportChat}
         onOpenCoop={() => setCoopOpen(true)}
         onOpenSettings={() => {
-          setSettingsInitialTab("connection");
+          setSettingsInitialTab(isEffectiveAdmin ? "connection" : "display");
           setSettingsOpen(true);
         }}
         onOpenCorebookSettings={() => {
@@ -1040,8 +1250,13 @@ export function App() {
       <SettingsModal
         open={settingsOpen}
         initialTab={settingsInitialTab}
+        isAdmin={isEffectiveAdmin}
         settings={llmSettings}
         authStatus={authStatus}
+        uiScale={uiScale}
+        uiWeight={uiWeight}
+        onChangeUiScale={setUiScale}
+        onChangeUiWeight={setUiWeight}
         onClose={() => setSettingsOpen(false)}
         onSaved={(updated) => {
           setLlmSettings(updated);

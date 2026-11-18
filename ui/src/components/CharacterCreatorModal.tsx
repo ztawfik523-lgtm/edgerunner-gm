@@ -39,6 +39,19 @@ import {
 } from "../api";
 import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
 import {
+  CHARACTER_COLOR_THEMES,
+  isHexColor,
+  normalizeColorHex,
+  resolveCharacterColor,
+} from "../utils/characterColors";
+import {
+  classifyWeaponGenre,
+  classifyWeaponTiers,
+  getWeaponTierTheme,
+  type WeaponGenre,
+  type WeaponTierFilter,
+} from "../utils/weaponQuality";
+import {
   STAT_NAMES,
   type CreationMethodInfo,
   type CreationReference,
@@ -47,7 +60,6 @@ import {
   type CreationSkillInfo,
   type StatName,
 } from "../types";
-import { CHARACTER_COLOR_THEMES } from "./ChatPane";
 import { FieldAiActions } from "./FieldAiActions";
 
 interface CharacterCreatorModalProps {
@@ -327,6 +339,7 @@ export function CharacterCreatorModal({
   const [realNameHidden, setRealNameHidden] = useState(true);
   const [portraitUrl, setPortraitUrl] = useState("");
   const [characterColor, setCharacterColor] = useState("cyan");
+  const [gender, setGender] = useState("");
   const [pronouns, setPronouns] = useState("");
   const [age, setAge] = useState("");
   const [conceptTagline, setConceptTagline] = useState("");
@@ -411,15 +424,14 @@ export function CharacterCreatorModal({
   const [shopCategory, setShopCategory] = useState<
     "weapon" | "armor" | "cyberware" | "gear" | "program" | "hardware" | "vehicle" | "drug" | "fashion"
   >("weapon");
-  const [weaponSubFilter, setWeaponSubFilter] = useState<
-    "all" | "pistols" | "rifles" | "exotic" | "excellent" | "standard" | "poor" | "melee" | "attachment" | "ammo"
-  >("all");
+  const [weaponGenres, setWeaponGenres] = useState<WeaponGenre[]>([]);
+  const [weaponTiers, setWeaponTiers] = useState<WeaponTierFilter[]>([]);
   const [armorSubFilter, setArmorSubFilter] = useState<"all" | "body" | "head" | "shield">("all");
   const [cyberwareSubFilter, setCyberwareSubFilter] = useState<
     "all" | "foundation" | "neural" | "cyberoptic" | "cyberaudio" | "cyberlimb" | "body" | "fashionware"
   >("all");
   const [programSubFilter, setProgramSubFilter] = useState<"all" | "booster" | "defender" | "attacker" | "black_ice">("all");
-  const [shopSort, setShopSort] = useState<"cost_asc" | "cost_desc" | "name_asc" | "sp_desc" | "hl_asc">("cost_asc");
+  const [shopSort, setShopSort] = useState<"cost_asc" | "cost_desc" | "name_asc" | "sp_desc" | "hl_asc" | "tier_asc" | "tier_desc">("cost_asc");
   const [affordableOnly, setAffordableOnly] = useState(false);
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [loadoutOpen, setLoadoutOpen] = useState(true);
@@ -451,6 +463,8 @@ export function CharacterCreatorModal({
   };
 
   const resetCharacterDefaults = () => {
+    setGender("");
+    setPronouns("");
     setStep("identity");
     setName("");
     setRealName("");
@@ -533,6 +547,7 @@ export function CharacterCreatorModal({
       if (typeof saved.realNameHidden === "boolean") setRealNameHidden(saved.realNameHidden);
       if (typeof saved.portraitUrl === "string") setPortraitUrl(saved.portraitUrl);
       if (typeof saved.characterColor === "string") setCharacterColor(saved.characterColor);
+      if (typeof saved.gender === "string") setGender(saved.gender);
       if (typeof saved.pronouns === "string") setPronouns(saved.pronouns);
       if (typeof saved.age === "string") setAge(saved.age);
       if (typeof saved.conceptTagline === "string") setConceptTagline(saved.conceptTagline);
@@ -598,6 +613,7 @@ export function CharacterCreatorModal({
       name.trim() ||
         realName.trim() ||
         portraitUrl.trim() ||
+        gender.trim() ||
         pronouns.trim() ||
         age.trim() ||
         conceptTagline.trim() ||
@@ -621,6 +637,7 @@ export function CharacterCreatorModal({
       realNameHidden,
       portraitUrl,
       characterColor,
+      gender,
       pronouns,
       age,
       conceptTagline,
@@ -680,6 +697,7 @@ export function CharacterCreatorModal({
     realNameHidden,
     portraitUrl,
     characterColor,
+    gender,
     pronouns,
     age,
     conceptTagline,
@@ -1348,6 +1366,7 @@ export function CharacterCreatorModal({
           handle: name.trim() || undefined,
           real_name: realName.trim() || undefined,
           real_name_hidden: realNameHidden,
+          gender: (gender === "__custom__" ? "" : gender.trim()) || undefined,
           pronouns: pronouns.trim() || undefined,
           age: age.trim() || undefined,
           role: selectedRole,
@@ -1485,7 +1504,9 @@ export function CharacterCreatorModal({
         enemies,
         tragic_love_affairs: loveAffairs,
       };
+      const cleanGender = gender === "__custom__" ? "" : gender.trim();
       const backstoryPayload = {
+        gender: cleanGender || undefined,
         pronouns: pronouns.trim() || undefined,
         age: age.trim() || undefined,
         concept: conceptTagline.trim() || undefined,
@@ -1504,6 +1525,8 @@ export function CharacterCreatorModal({
           handle: handleVal,
           real_name: realNameVal,
           real_name_hidden: realNameHidden,
+          gender: cleanGender || undefined,
+          pronouns: pronouns.trim() || undefined,
           portrait_url: portraitUrl.trim() || undefined,
           color: characterColor,
           role: selectedRole,
@@ -1539,6 +1562,8 @@ export function CharacterCreatorModal({
             handle: handleVal,
             ...(realNameVal ? { real_name: realNameVal } : {}),
             real_name_hidden: realNameHidden,
+            ...(cleanGender ? { gender: cleanGender } : {}),
+            ...(pronouns.trim() ? { pronouns: pronouns.trim() } : {}),
             ...(portraitUrl.trim() ? { portrait_url: portraitUrl.trim() } : {}),
             color: characterColor,
             roles: [{ role: selectedRole, rank: 4, choices: buildRoleChoicesPayload() }],
@@ -1658,17 +1683,25 @@ export function CharacterCreatorModal({
 
   const weaponItemsForFilter: CreationShopItem[] = (() => {
     const baseWeapons = refData?.shop.weapon ?? [];
-    if (weaponSubFilter === "attachment") {
-      const extra = refData?.shop?.attachment ?? [];
-      const seen = new Set(baseWeapons.map((w) => w.name.toLowerCase()));
-      return [...baseWeapons, ...extra.filter((a) => !seen.has(a.name.toLowerCase()))];
+    const seen = new Set(baseWeapons.map((w) => w.name.toLowerCase()));
+    const combined = [...baseWeapons];
+    if (weaponGenres.length === 0 || weaponGenres.includes("attachment")) {
+      for (const a of refData?.shop?.attachment ?? []) {
+        if (!seen.has(a.name.toLowerCase())) {
+          seen.add(a.name.toLowerCase());
+          combined.push(a);
+        }
+      }
     }
-    if (weaponSubFilter === "ammo") {
-      const extra = refData?.shop?.ammo ?? [];
-      const seen = new Set(baseWeapons.map((w) => w.name.toLowerCase()));
-      return [...baseWeapons, ...extra.filter((a) => !seen.has(a.name.toLowerCase()))];
+    if (weaponGenres.length === 0 || weaponGenres.includes("ammo")) {
+      for (const am of refData?.shop?.ammo ?? []) {
+        if (!seen.has(am.name.toLowerCase())) {
+          seen.add(am.name.toLowerCase());
+          combined.push(am);
+        }
+      }
     }
-    return baseWeapons;
+    return combined;
   })();
 
   const classifyCyberwareSubcategory = (
@@ -1732,21 +1765,15 @@ export function CharacterCreatorModal({
     const rawList = shopCategory === "weapon" ? weaponItemsForFilter : (refData?.shop[shopCategory] ?? []);
     const filtered = rawList.filter((item) => {
       const stats = item.stats ?? {};
-      if (shopCategory === "weapon" && weaponSubFilter !== "all") {
-        const st = String(stats.subtype ?? "").toLowerCase();
-        const wc = String(stats.weapon_class ?? "").toLowerCase();
-        const q = String(stats.quality ?? "").toLowerCase();
-        const cat = String(item.category ?? "").toLowerCase();
-        const n = item.name.toLowerCase();
-        if (weaponSubFilter === "pistols" && !/pistol|smg/.test(`${st} ${wc} ${n}`)) return false;
-        if (weaponSubFilter === "rifles" && !/rifle|shotgun|bow|crossbow/.test(`${st} ${wc} ${n}`)) return false;
-        if (weaponSubFilter === "exotic" && !st.includes("exotic") && !q.includes("exotic")) return false;
-        if (weaponSubFilter === "excellent" && !q.includes("excellent") && !st.includes("excellent")) return false;
-        if (weaponSubFilter === "standard" && !q.includes("standard") && !st.includes("standard")) return false;
-        if (weaponSubFilter === "poor" && !q.includes("poor") && !st.includes("poor")) return false;
-        if (weaponSubFilter === "melee" && st !== "melee" && !n.includes("melee")) return false;
-        if (weaponSubFilter === "attachment" && !st.includes("attachment") && cat !== "attachment") return false;
-        if (weaponSubFilter === "ammo" && !st.includes("ammo") && !st.includes("ammunition") && cat !== "ammo") return false;
+      if (shopCategory === "weapon") {
+        if (weaponGenres.length > 0) {
+          const g = classifyWeaponGenre(item);
+          if (!weaponGenres.includes(g)) return false;
+        }
+        if (weaponTiers.length > 0) {
+          const t = classifyWeaponTiers(item);
+          if (!t.tiers.some((tier) => weaponTiers.includes(tier))) return false;
+        }
       }
       if (shopCategory === "armor" && armorSubFilter !== "all") {
         const loc = String(stats.location ?? "").toLowerCase();
@@ -1781,6 +1808,16 @@ export function CharacterCreatorModal({
       if (shopSort === "name_asc") return a.name.localeCompare(b.name);
       if (shopSort === "sp_desc") return parseSpVal(b.stats) - parseSpVal(a.stats) || a.cost_eb - b.cost_eb;
       if (shopSort === "hl_asc") return parseHlVal(a.stats) - parseHlVal(b.stats) || a.cost_eb - b.cost_eb;
+      if (shopSort === "tier_asc") {
+        return classifyWeaponTiers(a).sortRank - classifyWeaponTiers(b).sortRank || a.cost_eb - b.cost_eb || a.name.localeCompare(b.name);
+      }
+      if (shopSort === "tier_desc") {
+        const ra = classifyWeaponTiers(a).sortRank;
+        const rb = classifyWeaponTiers(b).sortRank;
+        const normA = ra === 99 ? -1 : ra;
+        const normB = rb === 99 ? -1 : rb;
+        return normB - normA || b.cost_eb - a.cost_eb || a.name.localeCompare(b.name);
+      }
       return a.cost_eb - b.cost_eb || a.name.localeCompare(b.name);
     });
   })();
@@ -1908,7 +1945,7 @@ export function CharacterCreatorModal({
             {step === "identity" && (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-                  <div className="sm:col-span-5">
+                  <div className="sm:col-span-4">
                     <label className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-300">
                       <span>Street Handle / Name *</span>
                       <button
@@ -1927,10 +1964,10 @@ export function CharacterCreatorModal({
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
-                  <div className="sm:col-span-4">
-                    <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold text-slate-300">
-                      <span>Real / Legal Name (optional)</span>
-                      <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-normal text-amber-300" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
+                  <div className="sm:col-span-3">
+                    <div className="mb-1 flex items-center justify-between gap-1 text-xs font-semibold text-slate-300">
+                      <span className="truncate">Real / Legal Name</span>
+                      <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[10px] font-normal text-amber-300" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
                         <input
                           type="checkbox"
                           checked={realNameHidden}
@@ -1938,26 +1975,76 @@ export function CharacterCreatorModal({
                           className="accent-amber-400"
                         />
                         {realNameHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                        <span>{realNameHidden ? "Hidden / Secret" : "Publicly Known"}</span>
+                        <span>{realNameHidden ? "Hidden" : "Public"}</span>
                       </label>
                     </div>
                     <input
                       type="text"
                       value={realName}
                       onChange={(e) => setRealName(e.target.value)}
-                      placeholder="Leave blank if known only by Handle"
+                      placeholder="Optional legal name"
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Gender</label>
+                    <select
+                      aria-label="Gender"
+                      value={
+                        gender === "__custom__"
+                          ? "__custom__"
+                          : ["", "Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(gender)
+                            ? gender
+                            : "__custom__"
+                      }
+                      onChange={(e) => {
+                        if (e.target.value === "__custom__") {
+                          setGender("__custom__");
+                        } else {
+                          setGender(e.target.value);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    >
+                      <option value="">Select…</option>
+                      <option value="Woman">Woman</option>
+                      <option value="Man">Man</option>
+                      <option value="Non-Binary">Non-Binary</option>
+                      <option value="Genderfluid">Genderfluid</option>
+                      <option value="Agender">Agender</option>
+                      <option value="Prefer not to say">Prefer not to say</option>
+                      <option value="__custom__">Custom…</option>
+                    </select>
+                    {gender !== "" &&
+                      !["Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(gender) && (
+                        <input
+                          type="text"
+                          aria-label="Custom gender"
+                          value={gender === "__custom__" ? "" : gender}
+                          onChange={(e) => setGender(e.target.value.trim() ? e.target.value : "__custom__")}
+                          placeholder="Type gender…"
+                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        />
+                      )}
                   </div>
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Pronouns</label>
                     <input
                       type="text"
+                      list="cpr-pronouns-list"
                       value={pronouns}
                       onChange={(e) => setPronouns(e.target.value)}
                       placeholder="they/them…"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
+                    <datalist id="cpr-pronouns-list">
+                      <option value="she/her" />
+                      <option value="he/him" />
+                      <option value="they/them" />
+                      <option value="she/they" />
+                      <option value="he/they" />
+                      <option value="any/all" />
+                    </datalist>
                   </div>
                   <div className="sm:col-span-1">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Age</label>
@@ -2042,6 +2129,19 @@ export function CharacterCreatorModal({
                           </button>
                         );
                       })}
+                      <label
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-200 hover:border-cyan-400"
+                        style={isHexColor(characterColor) ? resolveCharacterColor(characterColor).nameBadgeStyle : undefined}
+                      >
+                        <input
+                          type="color"
+                          aria-label="Custom chat color wheel"
+                          value={normalizeColorHex(characterColor)}
+                          onChange={(e) => setCharacterColor(e.target.value)}
+                          className="h-3.5 w-4 cursor-pointer border-0 bg-transparent p-0"
+                        />
+                        <span>{isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}</span>
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -2813,7 +2913,7 @@ export function CharacterCreatorModal({
                   <div>
                     <div className="text-xs font-bold text-rose-100">Lifepath, Backstory &amp; Established History</div>
                     <p className="text-[11px] text-rose-200/80">
-                      Roll Corebook tables or customize freely—the AI GM reads every ally, grudge, and backstory line from Turn 1.
+                      Roll origin tables or customize freely—the AI GM reads every ally, grudge, and backstory line from Turn 1.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -2956,7 +3056,7 @@ export function CharacterCreatorModal({
                 {/* B. General Lifepath Tables */}
                 <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Corebook Lifepath Tables (Roll d10, Pick, or Type Custom)
+                    Street Origins &amp; Background
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
@@ -3731,6 +3831,8 @@ export function CharacterCreatorModal({
                             <option value="cost_asc" className="bg-slate-950">Price: Low → High</option>
                             <option value="cost_desc" className="bg-slate-950">Price: High → Low</option>
                             <option value="name_asc" className="bg-slate-950">Name: A → Z</option>
+                            {shopCategory === "weapon" && <option value="tier_asc" className="bg-slate-950">Tier: Poor → Exotic</option>}
+                            {shopCategory === "weapon" && <option value="tier_desc" className="bg-slate-950">Tier: Exotic → Poor</option>}
                             {shopCategory === "armor" && <option value="sp_desc" className="bg-slate-950">Armor SP: High → Low</option>}
                             {shopCategory === "cyberware" && <option value="hl_asc" className="bg-slate-950">Humanity Loss: Low → High</option>}
                           </select>
@@ -3765,34 +3867,102 @@ export function CharacterCreatorModal({
 
                       {/* Sub-filters */}
                       {shopCategory === "weapon" && (
-                        <div className="flex flex-wrap gap-1">
-                          {(
-                            [
-                              ["all", "All Weapons"],
-                              ["pistols", "Pistols & SMGs"],
-                              ["rifles", "Rifles & Shotguns"],
-                              ["melee", "Melee"],
-                              ["exotic", "Exotic & Heavy"],
-                              ["excellent", "Excellent (+1 Hit)"],
-                              ["standard", "Standard"],
-                              ["poor", "Poor"],
-                              ["attachment", "Attachments"],
-                              ["ammo", "Ammo"],
-                            ] as const
-                          ).map(([id, label]) => (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                              Genre:
+                            </span>
                             <button
-                              key={id}
                               type="button"
-                              onClick={() => setWeaponSubFilter(id)}
+                              onClick={() => setWeaponGenres([])}
                               className={`rounded px-2 py-0.5 text-[11px] ${
-                                weaponSubFilter === id
-                                  ? "border border-rose-500/50 bg-rose-500/15 text-rose-200"
+                                weaponGenres.length === 0
+                                  ? "border border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200"
                                   : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
                               }`}
                             >
-                              {label}
+                              All Weapons
                             </button>
-                          ))}
+                            {(
+                              [
+                                ["pistols", "Pistols & SMGs"],
+                                ["rifles", "Rifles & Shotguns"],
+                                ["heavy", "Heavy Weapons"],
+                                ["melee", "Melee & Brawling"],
+                                ["attachment", "Attachments"],
+                                ["ammo", "Ammo"],
+                              ] as const
+                            ).map(([id, label]) => {
+                              const active = weaponGenres.includes(id);
+                              return (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  aria-pressed={active}
+                                  onClick={() =>
+                                    setWeaponGenres((prev) =>
+                                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                                    )
+                                  }
+                                  className={`rounded px-2 py-0.5 text-[11px] transition ${
+                                    active
+                                      ? "border border-rose-500/60 bg-rose-500/20 font-semibold text-rose-100"
+                                      : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                              Tier:
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setWeaponTiers([])}
+                              className={`rounded px-2 py-0.5 text-[11px] ${
+                                weaponTiers.length === 0
+                                  ? "border border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200"
+                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              All Tiers
+                            </button>
+                            {(
+                              [
+                                ["poor", "Poor"],
+                                ["standard", "Standard"],
+                                ["excellent", "Excellent (+1 Hit)"],
+                                ["exotic", "Exotic"],
+                              ] as const
+                            ).map(([tid, label]) => {
+                              const active = weaponTiers.includes(tid);
+                              const tierTheme = getWeaponTierTheme(tid);
+                              return (
+                                <button
+                                  key={tid}
+                                  type="button"
+                                  aria-pressed={active}
+                                  onClick={() =>
+                                    setWeaponTiers((prev) =>
+                                      prev.includes(tid) ? prev.filter((x) => x !== tid) : [...prev, tid],
+                                    )
+                                  }
+                                  className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                                    active
+                                      ? `${tierTheme.pillActiveClass} font-semibold`
+                                      : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  <span className={`h-1.5 w-1.5 rounded-full ${tierTheme.dotClass}`} />
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 
@@ -3946,6 +4116,11 @@ export function CharacterCreatorModal({
                           const qualityVal = typeof item.stats.quality === "string" ? item.stats.quality : undefined;
                           const subtypeVal = typeof item.stats.subtype === "string" ? item.stats.subtype : undefined;
                           const dmgVal = typeof item.stats.damage === "string" ? item.stats.damage : undefined;
+                          const weaponTierInfo =
+                            shopCategory === "weapon" ? classifyWeaponTiers(item) : null;
+                          const weaponTierTheme = weaponTierInfo
+                            ? getWeaponTierTheme(weaponTierInfo.primaryTier)
+                            : null;
                           const inCart = cartItems.find((x) => x.name === item.name && x.category === item.category);
                           const overBudget = method === "complete_package" && item.cost_eb > remainingGearEb;
                           const inspectPayload: InspectorCard = {
@@ -3966,7 +4141,9 @@ export function CharacterCreatorModal({
                                   ? "border-l-4 border-l-emerald-400 border-emerald-500/50 bg-emerald-950/20 shadow-sm"
                                   : inspectedItemId === item.id
                                     ? "border-cyan-500/60 bg-cyan-950/20"
-                                    : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
+                                    : weaponTierTheme
+                                      ? weaponTierTheme.cardClass
+                                      : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
                               }`}
                             >
                               <div className="min-w-0 flex-1">
@@ -3982,15 +4159,29 @@ export function CharacterCreatorModal({
                                       {dmgVal}
                                     </span>
                                   )}
-                                  {subtypeVal?.toLowerCase().includes("exotic") && (
-                                    <span className="rounded bg-rose-500/20 px-1 py-0.5 font-mono text-[9px] text-rose-300">
-                                      EXOTIC
-                                    </span>
-                                  )}
-                                  {qualityVal?.toLowerCase().includes("excellent") && (
-                                    <span className="rounded bg-emerald-500/20 px-1 py-0.5 font-mono text-[9px] text-emerald-300">
-                                      +1 HIT
-                                    </span>
+                                  {weaponTierInfo && weaponTierInfo.primaryTier !== "other" && (
+                                    <>
+                                      {weaponTierInfo.tiers.includes("exotic") && (
+                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("exotic").badgeClass}`}>
+                                          EXOTIC
+                                        </span>
+                                      )}
+                                      {weaponTierInfo.tiers.includes("excellent") && (
+                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("excellent").badgeClass}`}>
+                                          EXCELLENT (+1 HIT)
+                                        </span>
+                                      )}
+                                      {weaponTierInfo.primaryTier === "standard" && (
+                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("standard").badgeClass}`}>
+                                          STANDARD
+                                        </span>
+                                      )}
+                                      {weaponTierInfo.primaryTier === "poor" && (
+                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("poor").badgeClass}`}>
+                                          POOR
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                   {spVal > 0 && (
                                     <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">

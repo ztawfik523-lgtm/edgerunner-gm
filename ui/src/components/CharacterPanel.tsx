@@ -37,8 +37,14 @@ import {
   updateCharacterState,
 } from "../api";
 import { STAT_NAMES, type CharacterRecord, type CoopPlayer, type StatName } from "../types";
+import {
+  CHARACTER_COLOR_THEMES,
+  isHexColor,
+  normalizeColorHex,
+  resolveCharacterColor,
+} from "../utils/characterColors";
+import { getWeaponTierTheme, inferWeaponTierFromName } from "../utils/weaponQuality";
 import { CharacterCreatorModal } from "./CharacterCreatorModal";
-import { CHARACTER_COLOR_THEMES } from "./ChatPane";
 
 interface CharacterPanelProps {
   campaignId: string;
@@ -52,6 +58,7 @@ interface CharacterPanelProps {
   preferredSelectedId?: string;
   isAdmin?: boolean;
   currentUsername?: string | null;
+  activeChannelId?: string;
   onOpenCreateCharacter?: () => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
@@ -114,6 +121,7 @@ export function CharacterPanel({
   preferredSelectedId = "",
   isAdmin = true,
   currentUsername = null,
+  activeChannelId = "main",
   onOpenCreateCharacter,
   onRefresh,
   onNotify,
@@ -174,6 +182,8 @@ export function CharacterPanel({
   const [bioHandle, setBioHandle] = useState("");
   const [bioRealName, setBioRealName] = useState("");
   const [bioRealNameHidden, setBioRealNameHidden] = useState(true);
+  const [bioGender, setBioGender] = useState("");
+  const [bioPronouns, setBioPronouns] = useState("");
   const [bioPortraitUrl, setBioPortraitUrl] = useState("");
   const [bioColor, setBioColor] = useState("cyan");
   const [bioOwner, setBioOwner] = useState("");
@@ -337,6 +347,7 @@ export function CharacterPanel({
           modifier: checkMod,
           luck: checkLuck,
           reason: checkReason.trim() || "Manual check",
+          channel_id: activeChannelId,
         });
         rollRes = chatRoll.result;
       } catch {
@@ -454,6 +465,8 @@ export function CharacterPanel({
         : {};
     const nextBackstory = {
       ...prevBackstory,
+      gender: bioGender.trim() || undefined,
+      pronouns: bioPronouns.trim() || undefined,
       concept: bioConcept.trim(),
       summary: bioSummary.trim(),
       established_history: bioHistory.trim(),
@@ -471,6 +484,8 @@ export function CharacterPanel({
           handle: bioHandle.trim() || active.name,
           real_name: bioRealName.trim() || null,
           real_name_hidden: bioRealNameHidden,
+          gender: (bioGender === "__custom__" ? "" : bioGender.trim()) || null,
+          pronouns: bioPronouns.trim() || null,
           portrait_url: bioPortraitUrl.trim() || null,
           color: bioColor,
           ...(isAdmin ? { owner_username: bioOwner.trim() || null } : {}),
@@ -644,9 +659,12 @@ export function CharacterPanel({
     detail.real_name_hidden ?? (activeRealName && activeHandle !== activeRealName),
   );
   const activePortraitUrl = typeof detail.portrait_url === "string" ? detail.portrait_url.trim() : "";
+  const rawActiveColor = typeof detail.color === "string" ? detail.color.trim() : "";
   const activeColorKey =
-    typeof detail.color === "string" && CHARACTER_COLOR_THEMES[detail.color] ? detail.color : "cyan";
-  const activeColorTheme = CHARACTER_COLOR_THEMES[activeColorKey];
+    rawActiveColor && (CHARACTER_COLOR_THEMES[rawActiveColor] || isHexColor(rawActiveColor))
+      ? rawActiveColor
+      : "cyan";
+  const activeColorTheme = resolveCharacterColor(activeColorKey);
 
   const rolesList = Array.isArray(detail.roles)
     ? (detail.roles as Array<{
@@ -756,10 +774,12 @@ export function CharacterPanel({
               src={activePortraitUrl}
               alt={activeHandle}
               className={`h-11 w-11 shrink-0 rounded-lg object-cover ring-2 ${activeColorTheme.avatarRingClass}`}
+              style={activeColorTheme.avatarRingStyle}
             />
           ) : (
             <div
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border font-cyber-display text-sm font-bold uppercase ${activeColorTheme.nameBadgeClass}`}
+              style={activeColorTheme.nameBadgeStyle}
             >
               {activeHandle.slice(0, 2)}
             </div>
@@ -1323,11 +1343,19 @@ export function CharacterPanel({
                 Loadout &amp; Cyberware
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {equippedWeapon && (
-                  <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 font-mono text-[11px] text-rose-200">
-                    Weapon: {equippedWeapon}
-                  </span>
-                )}
+                {equippedWeapon && (() => {
+                  const wTier = inferWeaponTierFromName(equippedWeapon);
+                  const wTheme = wTier ? getWeaponTierTheme(wTier) : null;
+                  return (
+                    <span
+                      className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
+                        wTheme ? wTheme.badgeClass : "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      }`}
+                    >
+                      Weapon: {equippedWeapon}
+                    </span>
+                  );
+                })()}
                 {equippedArmor?.name && (
                   <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
                     Armor: {equippedArmor.name} {equippedArmor.sp ? `(SP ${equippedArmor.sp})` : ""}
@@ -1417,13 +1445,23 @@ export function CharacterPanel({
               )}
               {invEntries.map(([name, qty]) => {
                 const confirming = confirmRemoveItem === name;
+                const wTier = inferWeaponTierFromName(name);
+                const wTheme = wTier ? getWeaponTierTheme(wTier) : null;
                 return (
                   <div
                     key={name}
-                    className="flex items-center justify-between rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-1.5 text-xs"
+                    className={`flex items-center justify-between rounded border px-2.5 py-1.5 text-xs ${
+                      wTheme ? wTheme.cardClass : "border-slate-800/80 bg-slate-950/60"
+                    }`}
                   >
-                    <span className="text-slate-200">
-                      {name} <span className="font-mono text-slate-400">×{qty}</span>
+                    <span className="flex flex-wrap items-center gap-1.5 text-slate-200">
+                      <span>{name}</span>
+                      {wTheme && wTier && (
+                        <span className={`rounded px-1 py-0.5 font-mono text-[9px] font-bold ${wTheme.badgeClass}`}>
+                          {wTheme.label}
+                        </span>
+                      )}
+                      <span className="font-mono text-slate-400">×{qty}</span>
                     </span>
                     {confirming ? (
                       <div className="flex items-center gap-1.5 font-mono text-[10px]">
@@ -1481,6 +1519,20 @@ export function CharacterPanel({
                     setBioHandle(activeHandle);
                     setBioRealName(activeRealName ?? "");
                     setBioRealNameHidden(activeRealNameHidden);
+                    setBioGender(
+                      typeof detail.gender === "string"
+                        ? detail.gender
+                        : typeof backstoryObj.gender === "string"
+                          ? backstoryObj.gender
+                          : "",
+                    );
+                    setBioPronouns(
+                      typeof detail.pronouns === "string"
+                        ? detail.pronouns
+                        : typeof backstoryObj.pronouns === "string"
+                          ? backstoryObj.pronouns
+                          : "",
+                    );
                     setBioPortraitUrl(activePortraitUrl);
                     setBioColor(activeColorKey);
                     setBioOwner(ownerUsername ?? "");
@@ -1550,6 +1602,50 @@ export function CharacterPanel({
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">Gender</label>
+                    <select
+                      aria-label="Edit character gender"
+                      value={
+                        bioGender === "__custom__"
+                          ? "__custom__"
+                          : ["", "Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(bioGender)
+                            ? bioGender
+                            : "__custom__"
+                      }
+                      onChange={(e) => setBioGender(e.target.value === "__custom__" ? "__custom__" : e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    >
+                      <option value="">Unspecified</option>
+                      <option value="Woman">Woman</option>
+                      <option value="Man">Man</option>
+                      <option value="Non-Binary">Non-Binary</option>
+                      <option value="Genderfluid">Genderfluid</option>
+                      <option value="Agender">Agender</option>
+                      <option value="Prefer not to say">Prefer not to say</option>
+                      <option value="__custom__">Custom…</option>
+                    </select>
+                    {bioGender !== "" &&
+                      !["Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(bioGender) && (
+                        <input
+                          type="text"
+                          value={bioGender === "__custom__" ? "" : bioGender}
+                          onChange={(e) => setBioGender(e.target.value.trim() ? e.target.value : "__custom__")}
+                          placeholder="Type gender..."
+                          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        />
+                      )}
+                  </div>
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">Pronouns</label>
+                    <input
+                      type="text"
+                      value={bioPronouns}
+                      onChange={(e) => setBioPronouns(e.target.value)}
+                      placeholder="she/her, he/him, they/them..."
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1.5 rounded border border-slate-800 bg-slate-950/60 p-2.5">
@@ -1614,6 +1710,19 @@ export function CharacterPanel({
                         {theme.label.split(" ")[1] || theme.label}
                       </button>
                     ))}
+                    <label
+                      className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[10px] text-slate-200 hover:border-cyan-400"
+                      style={isHexColor(bioColor) ? resolveCharacterColor(bioColor).nameBadgeStyle : undefined}
+                    >
+                      <input
+                        type="color"
+                        aria-label="Edit character color wheel"
+                        value={normalizeColorHex(bioColor)}
+                        onChange={(e) => setBioColor(e.target.value)}
+                        className="h-3 w-3.5 cursor-pointer border-0 bg-transparent p-0"
+                      />
+                      <span>{isHexColor(bioColor) ? bioColor.toUpperCase() : "Wheel"}</span>
+                    </label>
                   </div>
                 </div>
 
@@ -1703,6 +1812,22 @@ export function CharacterPanel({
                   <div className="text-[11px] text-slate-400">
                     Creation Method:{" "}
                     <span className="font-mono text-cyan-300">{creationObj.method}</span>
+                  </div>
+                )}
+                {Boolean(detail.gender || backstoryObj.gender || detail.pronouns || backstoryObj.pronouns) && (
+                  <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
+                    {Boolean(detail.gender || backstoryObj.gender) && (
+                      <span>
+                        <span className="text-slate-500">Gender:</span>{" "}
+                        {String(detail.gender || backstoryObj.gender)}
+                      </span>
+                    )}
+                    {Boolean(detail.pronouns || backstoryObj.pronouns) && (
+                      <span>
+                        <span className="text-slate-500">Pronouns:</span>{" "}
+                        {String(detail.pronouns || backstoryObj.pronouns)}
+                      </span>
+                    )}
                   </div>
                 )}
                 {typeof backstoryObj.concept === "string" && backstoryObj.concept && (

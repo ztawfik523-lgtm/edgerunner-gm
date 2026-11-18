@@ -115,6 +115,32 @@ def parse_sp_int(raw: Any) -> int:
     return 0
 
 
+def _infer_weapon_class(name: str, skill: str, subtype: str) -> str:
+    text = f"{name} {subtype}".lower()
+    sk = (skill or "").lower()
+    if "attachment" in text or sk == "weapon mod":
+        return "attachment"
+    if "ammo" in text or "grenade" in text and "launcher" not in text:
+        return "ammo"
+    if "smg" in text:
+        return "smg"
+    if "pistol" in text or sk == "handgun":
+        return "pistol"
+    if "shotgun" in text or "hurricane" in text:
+        return "shotgun"
+    if "crossbow" in text or "bow" in text or sk == "archery":
+        return "bow"
+    if "rifle" in text or "helix" in text or sk in {"shoulder arms", "autofire"}:
+        return "rifle"
+    if sk == "heavy weapons" or "launcher" in text or "flamethrower" in text or "railgun" in text:
+        return "heavy"
+    if "brawling" in sk or "cyberware" in sk or "battleglove" in text:
+        return "brawling"
+    if "melee" in sk or "melee" in text or "baton" in text or "mono-three" in text or "katana" in text:
+        return "melee"
+    return "weapon"
+
+
 def _weapon_item(
     slug: str,
     name: str,
@@ -131,7 +157,9 @@ def _weapon_item(
     printed_page: int,
     summary: str,
     description: str,
+    weapon_class: str | None = None,
 ) -> dict[str, Any]:
+    resolved_class = weapon_class or _infer_weapon_class(name, skill, subtype)
     return {
         "id": f"corebook:weapon:{slug}",
         "name": name,
@@ -142,6 +170,7 @@ def _weapon_item(
         "printed_page": printed_page,
         "stats": {
             "subtype": subtype,
+            "weapon_class": resolved_class,
             "quality": quality,
             "skill": skill,
             "single_shot_damage": damage,
@@ -1121,6 +1150,7 @@ async def generate_creation_ai_assist(
             if (char_handle and char_real_name)
             else f"Known as '{char_name}'."
         ),
+        "gender": char.get("gender") or "",
         "pronouns": char.get("pronouns") or "",
         "age": char.get("age") or "",
         "role": f"{role_name} (Rank 4)",

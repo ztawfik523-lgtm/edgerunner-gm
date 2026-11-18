@@ -391,13 +391,27 @@ def _detect_lan_ips() -> list[str]:
 
 
 class _CoopHub:
-    """In-memory per-campaign presence, turn locks, and SSE fanout for LAN co-op play."""
+    """In-memory per-campaign presence, per-channel turn locks, and SSE fanout for LAN co-op play."""
 
     def __init__(self, ttl_s: float = 45.0):
         self.ttl_s = ttl_s
         self.subscribers: dict[str, set[asyncio.Queue]] = {}
         self.presence: dict[str, dict[str, dict[str, Any]]] = {}
-        self.active_turns: dict[str, dict[str, Any]] = {}
+        self.active_turns: dict[tuple[str, str], dict[str, Any]] = {}
+        self.sync_seq: dict[str, int] = {}
+
+    @staticmethod
+    def _norm_chan(channel_id: str | None) -> str:
+        clean = str(channel_id or "main").strip()
+        return clean[:80] if clean else "main"
+
+    def current_seq(self, campaign_id: str) -> int:
+        return int(self.sync_seq.get(campaign_id, 0))
+
+    def bump_seq(self, campaign_id: str) -> int:
+        nxt = int(self.sync_seq.get(campaign_id, 0)) + 1
+        self.sync_seq[campaign_id] = nxt
+        return nxt
 
     def _prune(self, campaign_id: str) -> None:
         cutoff = time.time() - self.ttl_s
@@ -414,13 +428,45 @@ class _CoopHub:
         members.sort(key=lambda m: (not bool(m.get("is_host")), str(m.get("player_name") or "").casefold(), str(m.get("client_id") or "")))
         return [{k: v for k, v in m.items() if k != "ts"} for m in members]
 
+    def active_turn_for(self, campaign_id: str, channel_id: str = "main") -> dict[str, Any] | None:
+        chan = self._norm_chan(channel_id)
+        now = time.time()
+        existing = self.active_turns.get((campaign_id, chan))
+        if existing and now - float(existing.get("started_at", 0.0)) < 180.0:
+            return existing
+        if existing:
+            self.active_turns.pop((campaign_id, chan), None)
+        return None
+
+    def all_active_turns(self, campaign_id: str) -> dict[str, dict[str, Any]]:
+        now = time.time()
+        out: dict[str, dict[str, Any]] = {}
+        stale_keys: list[tuple[str, str]] = []
+        for (cid, chan), info in self.active_turns.items():
+            if cid != campaign_id:
+                continue
+            if now - float(info.get("started_at", 0.0)) < 180.0:
+                out[chan] = info
+            else:
+                stale_keys.append((cid, chan))
+        for k in stale_keys:
+            self.active_turns.pop(k, None)
+        return out
+
     def publish(self, campaign_id: str, event: str, data: dict[str, Any]) -> None:
+        payload_data = dict(data)
+        if event == "sync" and "sync_seq" not in payload_data:
+            payload_data["sync_seq"] = self.bump_seq(campaign_id)
         queues = list(self.subscribers.get(campaign_id) or ())
         for q in queues:
             try:
-                q.put_nowait({"event": event, "data": data})
+                q.put_nowait({"event": event, "data": payload_data})
             except asyncio.QueueFull:
-                pass
+                try:
+                    q.get_nowait()
+                    q.put_nowait({"event": event, "data": payload_data})
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
 
     def update_presence(
         self,
@@ -441,24 +487,57 @@ class _CoopHub:
             "ts": time.time(),
         }
         roster = self.roster(campaign_id)
-        self.publish(campaign_id, "presence", {"campaign_id": campaign_id, "players": roster, "active_turn": self.active_turns.get(campaign_id)})
+        turns = self.all_active_turns(campaign_id)
+        self.publish(
+            campaign_id,
+            "presence",
+            {
+                "campaign_id": campaign_id,
+                "players": roster,
+                "active_turn": turns.get("main") or next(iter(turns.values()), None),
+                "active_turns": turns,
+                "sync_seq": self.current_seq(campaign_id),
+            },
+        )
         return roster
 
-    def acquire_turn(self, campaign_id: str, *, client_id: str, player_name: str) -> dict[str, Any] | None:
-        existing = self.active_turns.get(campaign_id)
-        if existing and time.time() - float(existing.get("started_at", 0.0)) < 180.0:
-            if existing.get("client_id") != client_id:
-                return existing
-        info = {"client_id": client_id, "player_name": player_name or "Player", "started_at": time.time()}
-        self.active_turns[campaign_id] = info
-        self.publish(campaign_id, "turn_started", {"campaign_id": campaign_id, "active_turn": info})
+    def acquire_turn(self, campaign_id: str, *, client_id: str, player_name: str, channel_id: str = "main") -> dict[str, Any] | None:
+        chan = self._norm_chan(channel_id)
+        existing = self.active_turn_for(campaign_id, chan)
+        if existing and existing.get("client_id") != client_id:
+            return existing
+        info = {"client_id": client_id, "player_name": player_name or "Player", "channel_id": chan, "started_at": time.time()}
+        self.active_turns[(campaign_id, chan)] = info
+        turns = self.all_active_turns(campaign_id)
+        self.publish(
+            campaign_id,
+            "turn_started",
+            {
+                "campaign_id": campaign_id,
+                "channel_id": chan,
+                "active_turn": info,
+                "active_turns": turns,
+            },
+        )
         return None
 
-    def release_turn(self, campaign_id: str, client_id: str) -> None:
-        existing = self.active_turns.get(campaign_id)
+    def release_turn(self, campaign_id: str, client_id: str, channel_id: str = "main") -> None:
+        chan = self._norm_chan(channel_id)
+        existing = self.active_turns.get((campaign_id, chan))
         if existing and existing.get("client_id") == client_id:
-            del self.active_turns[campaign_id]
-        self.publish(campaign_id, "turn_finished", {"campaign_id": campaign_id, "active_turn": self.active_turns.get(campaign_id)})
+            del self.active_turns[(campaign_id, chan)]
+        turns = self.all_active_turns(campaign_id)
+        self.publish(
+            campaign_id,
+            "turn_finished",
+            {
+                "campaign_id": campaign_id,
+                "channel_id": chan,
+                "active_turn": turns.get(chan) or next(iter(turns.values()), None),
+                "active_turns": turns,
+                "sync_seq": self.current_seq(campaign_id),
+            },
+        )
 
 
 def make_api(
@@ -733,6 +812,43 @@ def make_api(
         resp.delete_cookie("redgm_token")
         return resp
 
+    @app.post("/v1/auth/me")
+    async def auth_update_me(request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=True, min_role="user")
+        if blocked is not None:
+            return blocked
+        sess = _session(request)
+        cur_uname = str(sess.get("username") or "").strip()
+        if not cur_uname or not sess.get("authenticated") or sess.get("pin_only_mode"):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Sign in with a named account to update username or password.", "request_id": request_id},
+            )
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be an object")
+            res = await asyncio.to_thread(
+                lambda: auth.update_self_account(
+                    cur_uname,
+                    current_password=str(body.get("current_password") or ""),
+                    new_username=body.get("new_username"),
+                    new_password=body.get("new_password"),
+                )
+            )
+            if res["username"].lower() != cur_uname.lower() or res["username"] != cur_uname:
+                affected_camps = await asyncio.to_thread(
+                    lambda: gameplay_service().store.rename_owner_username(cur_uname, res["username"])
+                )
+                for cid in affected_camps:
+                    coop.publish(cid, "sync", {"campaign_id": cid, "kind": "campaign"})
+            resp = JSONResponse(content={**res, "request_id": request_id})
+            resp.set_cookie("redgm_token", res["token"], max_age=res["expires_in"], httponly=True, samesite="lax")
+            return resp
+        except (AuthError, TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
     @app.get("/v1/auth/accounts")
     def auth_list_accounts(request: Request):
         request_id = uuid.uuid4().hex
@@ -869,6 +985,20 @@ def make_api(
                     try:
                         from turnloop import ChatTreeStore
                         ChatTreeStore(svc).sync_active_leaf_revisions(camp_id)
+                    except Exception:
+                        pass
+                if action_name == "campaign_context" and isinstance(res_out.get("result"), dict):
+                    try:
+                        from turnloop import TurnEngine, build_npc_profiles, compute_party_grouping
+                        ctx_res = res_out["result"]
+                        camp_obj = ctx_res.get("campaign") or {}
+                        camp_id_ctx = camp_obj.get("id")
+                        state_obj = camp_obj.get("state") or {}
+                        chars_obj = ctx_res.get("characters") or []
+                        secrets_obj = TurnEngine(svc, None)._get_gm_secrets(camp_id_ctx) if camp_id_ctx else {}
+                        include_hidden = eff_role in {"admin", "open"}
+                        ctx_res["npc_profiles"] = build_npc_profiles(state_obj, secrets_obj, include_hidden=include_hidden)
+                        ctx_res["party_grouping"] = compute_party_grouping(chars_obj, state_obj)
                     except Exception:
                         pass
                 return res_out
@@ -1328,14 +1458,14 @@ def make_api(
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
     @app.get("/v1/chat/tree")
-    def chat_tree(request: Request, campaign_id: str):
+    def chat_tree(request: Request, campaign_id: str, channel_id: str = "main"):
         request_id = uuid.uuid4().hex
         blocked = require_player(request, request_id)
         if blocked is not None:
             return blocked
         from turnloop import ChatTreeStore
         try:
-            tree = ChatTreeStore(gameplay_service()).get_tree(campaign_id)
+            tree = ChatTreeStore(gameplay_service()).get_tree(campaign_id, channel_id=channel_id)
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -1401,14 +1531,14 @@ def make_api(
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
     @app.get("/v1/chat/export")
-    def chat_export(request: Request, campaign_id: str, leaf_id: str | None = None):
+    def chat_export(request: Request, campaign_id: str, leaf_id: str | None = None, channel_id: str = "main"):
         request_id = uuid.uuid4().hex
         blocked = require_player(request, request_id)
         if blocked is not None:
             return blocked
         from turnloop import ChatTreeStore
         try:
-            exported = ChatTreeStore(gameplay_service()).export_branch(campaign_id, leaf_id)
+            exported = ChatTreeStore(gameplay_service()).export_branch(campaign_id, leaf_id, channel_id=channel_id)
             return {**exported, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -1435,6 +1565,7 @@ def make_api(
                 urls.append(u)
         if not urls:
             urls = [f"{scheme}://{host_header}{suffix}"]
+        turns = coop.all_active_turns(campaign_id) if campaign_id else {}
         return {
             "bind_host": server_host,
             "port": server_port,
@@ -1444,7 +1575,9 @@ def make_api(
             "lan_ips": ips,
             "join_urls": urls,
             "roster": coop.roster(campaign_id) if campaign_id else [],
-            "active_turn": coop.active_turns.get(campaign_id) if campaign_id else None,
+            "active_turn": turns.get("main") or next(iter(turns.values()), None),
+            "active_turns": turns,
+            "sync_seq": coop.current_seq(campaign_id) if campaign_id else 0,
             "request_id": request_id,
         }
 
@@ -1472,7 +1605,14 @@ def make_api(
                 character_id=character_id,
                 is_host=is_host,
             )
-            return {"players": roster, "active_turn": coop.active_turns.get(campaign_id), "request_id": request_id}
+            turns = coop.all_active_turns(campaign_id)
+            return {
+                "players": roster,
+                "active_turn": turns.get("main") or next(iter(turns.values()), None),
+                "active_turns": turns,
+                "sync_seq": coop.current_seq(campaign_id),
+                "request_id": request_id,
+            }
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
@@ -1489,27 +1629,46 @@ def make_api(
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
         from starlette.responses import StreamingResponse
-        q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        q: asyncio.Queue = asyncio.Queue(maxsize=1024)
         subs = coop.subscribers.setdefault(campaign_id, set())
         subs.add(q)
 
         async def room_stream():
             try:
-                init_payload = json.dumps({"campaign_id": campaign_id, "players": coop.roster(campaign_id), "active_turn": coop.active_turns.get(campaign_id)}, ensure_ascii=False)
+                turns = coop.all_active_turns(campaign_id)
+                init_payload = json.dumps(
+                    {
+                        "campaign_id": campaign_id,
+                        "players": coop.roster(campaign_id),
+                        "active_turn": turns.get("main") or next(iter(turns.values()), None),
+                        "active_turns": turns,
+                        "sync_seq": coop.current_seq(campaign_id),
+                    },
+                    ensure_ascii=False,
+                )
                 yield f"event: presence\ndata: {init_payload}\n\n"
                 while True:
                     if await request.is_disconnected():
                         break
                     try:
-                        msg = await asyncio.wait_for(q.get(), timeout=20.0)
+                        msg = await asyncio.wait_for(q.get(), timeout=12.0)
                         payload = json.dumps(msg["data"], ensure_ascii=False)
                         yield f"event: {msg['event']}\ndata: {payload}\n\n"
                     except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
+                        ping_payload = json.dumps({"ts": time.time(), "sync_seq": coop.current_seq(campaign_id)})
+                        yield f"event: ping\ndata: {ping_payload}\n\n"
             finally:
                 subs.discard(q)
 
-        return StreamingResponse(room_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            room_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     def _resolve_active_llm(cfg_raw: dict[str, Any] | None = None):
         if llm is not None:
@@ -1564,7 +1723,15 @@ def make_api(
                 if on_finish is not None:
                     on_finish()
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     @app.get("/v1/settings/public")
     def get_public_settings(request: Request):
@@ -1776,13 +1943,130 @@ def make_api(
             raise ValueError("luck_spend must be >= 0")
         return value
 
+    def _relay_coop_turn(
+        events_iter_fn,
+        *,
+        campaign_id: str,
+        channel_id: str,
+        client_id: str,
+        speaker_name: str,
+        speaker_color: str | None = None,
+        speaker_portrait_url: str | None = None,
+        user_text: str = "",
+        overclock: bool = False,
+        truncate_from_id: str | None = None,
+    ):
+        async def _wrapped():
+            delta_buf: list[str] = []
+            last_flush = time.monotonic()
+            meta_base: dict[str, Any] = {
+                "campaign_id": campaign_id,
+                "channel_id": channel_id,
+                "client_id": client_id,
+                "speaker_name": speaker_name,
+                **({"speaker_color": speaker_color} if speaker_color else {}),
+                **({"speaker_portrait_url": speaker_portrait_url} if speaker_portrait_url else {}),
+                "user_text": user_text,
+                "overclock": overclock,
+                **({"truncate_from_id": truncate_from_id} if truncate_from_id else {}),
+            }
+
+            def _flush_deltas():
+                nonlocal last_flush
+                if not delta_buf:
+                    return
+                joined = "".join(delta_buf)
+                delta_buf.clear()
+                last_flush = time.monotonic()
+                coop.publish(
+                    campaign_id,
+                    "peer_stream",
+                    {**meta_base, "event": "text_delta", "data": {"delta": joined}},
+                )
+
+            done_emitted = False
+            try:
+                async for ev in events_iter_fn():
+                    ev_name = ev.get("event")
+                    ev_data = ev.get("data") or {}
+                    if ev_name == "user_message":
+                        coop.publish(
+                            campaign_id,
+                            "peer_user_message",
+                            {
+                                "campaign_id": campaign_id,
+                                "channel_id": channel_id,
+                                "client_id": client_id,
+                                "message": ev_data.get("message"),
+                            },
+                        )
+                        coop.publish(
+                            campaign_id,
+                            "sync",
+                            {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id},
+                        )
+                        continue
+                    if ev_name == "text_delta":
+                        piece = str(ev_data.get("delta") or "")
+                        if piece:
+                            delta_buf.append(piece)
+                            now_m = time.monotonic()
+                            if sum(len(x) for x in delta_buf) >= 24 or (now_m - last_flush) >= 0.045:
+                                _flush_deltas()
+                    elif ev_name in {"rule_citation", "dice_roll", "state_patch", "library_added", "warning"}:
+                        _flush_deltas()
+                        coop.publish(
+                            campaign_id,
+                            "peer_stream",
+                            {**meta_base, "event": ev_name, "data": ev_data},
+                        )
+                    elif ev_name == "turn_done":
+                        _flush_deltas()
+                        done_emitted = True
+                        coop.publish(
+                            campaign_id,
+                            "peer_turn_done",
+                            {
+                                "campaign_id": campaign_id,
+                                "channel_id": channel_id,
+                                "client_id": client_id,
+                                **ev_data,
+                            },
+                        )
+                        coop.publish(
+                            campaign_id,
+                            "sync",
+                            {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id},
+                        )
+                    yield ev
+            finally:
+                if not done_emitted:
+                    _flush_deltas()
+                    coop.publish(
+                        campaign_id,
+                        "peer_turn_done",
+                        {
+                            "campaign_id": campaign_id,
+                            "channel_id": channel_id,
+                            "client_id": client_id,
+                            "aborted": True,
+                        },
+                    )
+                    coop.publish(
+                        campaign_id,
+                        "sync",
+                        {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id},
+                    )
+
+        return _wrapped
+
     @app.post("/v1/chat/turn")
     async def chat_turn(request: Request):
         request_id = uuid.uuid4().hex
         blocked = check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
-        from turnloop import TurnEngine
+        from turnloop import ChatTreeStore, TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("user_text"), str):
@@ -1791,6 +2075,7 @@ def make_api(
             user_text = body["user_text"]
             if not user_text.strip():
                 raise ValueError("user_text must be nonempty")
+            channel_id = ChatTreeStore._norm_channel(body.get("channel_id"))
             luck_spend = _parse_luck_spend(body.get("luck_spend"))
             client_id = str(body.get("client_id") or request.headers.get("x-redgm-client-id") or request_id)
             player_name = str(body.get("player_name") or body.get("speaker_name") or "Player")
@@ -1808,6 +2093,7 @@ def make_api(
             ctx = engine.gameplay.campaign_context(campaign_id)
             chars = ctx.get("characters") or []
             speaker_char_id = body.get("speaker_character_id")
+            speaker_info = engine._resolve_speaker(chars, speaker_char_id, body.get("speaker_name"))
 
             # Enforce character ownership & characterless speaking restriction for non-admin users
             if eff_role == "user" and not is_intro and not sess.get("pin_only_mode"):
@@ -1830,7 +2116,7 @@ def make_api(
             if body.get("parent_id") is not None:
                 engine.tree.get_branch_to(campaign_id, body["parent_id"])
             if gm_mode != "hold_gm":
-                busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name)
+                busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name, channel_id=channel_id)
                 if busy_turn is not None:
                     return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
         except (TypeError, ValueError) as exc:
@@ -1840,10 +2126,10 @@ def make_api(
 
         def finish_turn():
             if gm_mode != "hold_gm":
-                coop.release_turn(campaign_id, client_id)
-            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+                coop.release_turn(campaign_id, client_id, channel_id=channel_id)
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id})
 
-        return _sse_response(
+        relayed = _relay_coop_turn(
             lambda: engine.run_turn(
                 campaign_id,
                 user_text,
@@ -1857,7 +2143,20 @@ def make_api(
                 is_intro=is_intro,
                 gm_mode=gm_mode,
                 coop_player_count=coop_count,
+                channel_id=channel_id,
             ),
+            campaign_id=campaign_id,
+            channel_id=channel_id,
+            client_id=client_id,
+            speaker_name=speaker_info.get("name") or player_name,
+            speaker_color=speaker_info.get("color"),
+            speaker_portrait_url=speaker_info.get("portrait_url"),
+            user_text=user_text,
+            overclock=bool(body.get("overclock", False)),
+            truncate_from_id=str(body["replace_message_id"]).strip() if body.get("replace_message_id") else None,
+        )
+        return _sse_response(
+            relayed,
             request_id,
             on_finish=finish_turn,
         )
@@ -1928,8 +2227,9 @@ def make_api(
                     "wound_modifier": check_res.get("wound_modifier", 0),
                     "success": check_res["success"],
                 }
+                channel_id = ChatTreeStore._norm_channel(body.get("channel_id"))
                 tree_store = ChatTreeStore(svc)
-                cur_tree = tree_store.get_tree(campaign_id)
+                cur_tree = tree_store.get_tree(campaign_id, channel_id=channel_id)
                 revs = tree_store._current_revisions(campaign_id)
                 verdict = "SUCCESS" if check_res["success"] else "FAIL"
                 skill_label = f"{skill} ({stat})" if skill else stat
@@ -1937,6 +2237,7 @@ def make_api(
                 meta: dict[str, Any] = {
                     "speaker_character_id": character_id,
                     "speaker_name": speaker_label,
+                    "channel_id": channel_id,
                     "manual_roll": True,
                     "gm_deferred": True,
                     "defer_reason": "Manual skill roll posted to table",
@@ -1953,9 +2254,10 @@ def make_api(
                     content=msg_text,
                     campaign_revision=revs["campaign_revision"],
                     solo_revision=revs["solo_revision"],
+                    channel_id=channel_id,
                     metadata=meta,
                 )
-                updated_tree = tree_store.sync_active_leaf_revisions(campaign_id)
+                updated_tree = tree_store.sync_active_leaf_revisions(campaign_id, channel_id=channel_id)
                 return {"roll": roll_card, "result": check_res, "message": msg, "tree": updated_tree}
 
             out = await asyncio.to_thread(_do_roll)
@@ -1978,8 +2280,9 @@ def make_api(
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not body["campaign_id"].strip():
                 raise ValueError("campaign_id is required")
             campaign_id = body["campaign_id"].strip()
-            tree = await asyncio.to_thread(lambda: ChatTreeStore(gameplay_service()).sync_active_leaf_revisions(campaign_id))
-            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+            chan = ChatTreeStore._norm_channel(body.get("channel_id"))
+            tree = await asyncio.to_thread(lambda: ChatTreeStore(gameplay_service()).sync_active_leaf_revisions(campaign_id, channel_id=chan))
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat", "channel_id": chan})
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -1990,7 +2293,7 @@ def make_api(
         blocked = check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
-        from turnloop import TurnEngine
+        from turnloop import ChatTreeStore, TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str):
@@ -2005,22 +2308,23 @@ def make_api(
             target = engine.tree.get_message(campaign_id, message_id)
             if target is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
+            target_channel = ChatTreeStore._norm_channel(target.get("channel_id"))
             regen_luck = (
                 _parse_luck_spend(body["luck_spend"])
                 if "luck_spend" in body and body["luck_spend"] is not None
                 else None
             )
-            busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name)
+            busy_turn = coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name, channel_id=target_channel)
             if busy_turn is not None:
                 return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
         def finish_regen():
-            coop.release_turn(campaign_id, client_id)
-            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+            coop.release_turn(campaign_id, client_id, channel_id=target_channel)
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat", "channel_id": target_channel})
 
-        return _sse_response(
+        relayed_regen = _relay_coop_turn(
             lambda: engine.regenerate_turn(
                 campaign_id,
                 message_id,
@@ -2029,6 +2333,17 @@ def make_api(
                 mode=body.get("mode"),
                 guidance=body.get("guidance"),
             ),
+            campaign_id=campaign_id,
+            channel_id=target_channel,
+            client_id=client_id,
+            speaker_name=str((target.get("metadata") or {}).get("speaker_name") or player_name),
+            speaker_color=(target.get("metadata") or {}).get("speaker_color"),
+            speaker_portrait_url=(target.get("metadata") or {}).get("speaker_portrait_url"),
+            user_text=str(target.get("content") or ""),
+            truncate_from_id=message_id if target.get("role") == "assistant" else None,
+        )
+        return _sse_response(
+            relayed_regen,
             request_id,
             on_finish=finish_regen,
         )
@@ -2086,6 +2401,177 @@ def make_api(
             )
             coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})
             return {"campaign_id": campaign_id, "clocks": clocks, "request_id": request_id}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+    @app.post("/v1/campaigns/{campaign_id}/npc-identity")
+    async def campaign_npc_identity(campaign_id: str, request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=True, min_role="admin")
+        if blocked is not None:
+            return blocked
+        sess = _session(request)
+        eff_role = _effective_role(request, sess)
+        from turnloop import TurnEngine, _normalize_campaign_changes, build_npc_profiles
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
+            handle = str(body.get("handle") or "").strip()[:100]
+            if not handle:
+                raise ValueError("handle is required")
+            delete_npc = bool(body.get("delete", False))
+            description = str(body.get("description") or "").strip()[:2000]
+            real_name = str(body.get("real_name") or "").strip()[:100] if isinstance(body.get("real_name"), str) else ""
+            real_name_hidden = bool(body.get("real_name_hidden", True))
+
+            def _apply():
+                svc = gameplay_service()
+                ctx = svc.campaign_context(campaign_id)
+                camp = ctx["campaign"]
+                eng = TurnEngine(svc, None)
+                existing_sec = eng._get_gm_secrets(campaign_id)
+                sec_key = f"__npc_real:{handle}"
+                effective_real_name = real_name or str(existing_sec.get(sec_key) or "").strip()
+                raw_changes: dict[str, Any] = {}
+                if delete_npc:
+                    raw_changes["npcs"] = {handle: None}
+                    raw_changes["npc_identities"] = {handle: None}
+                else:
+                    if description:
+                        raw_changes["npcs"] = {handle: description}
+                    raw_changes["npc_identities"] = {
+                        handle: {
+                            "real_name": effective_real_name,
+                            "real_name_hidden": real_name_hidden,
+                        }
+                    }
+                changes, _ = _normalize_campaign_changes(
+                    raw_changes,
+                    camp["state"],
+                    characters=ctx["characters"],
+                    existing_secrets=existing_sec,
+                )
+                if changes:
+                    svc.execute(
+                        "update_campaign",
+                        {
+                            "campaign_id": campaign_id,
+                            "expected_revision": camp["revision"],
+                            "changes": changes,
+                            "reason": f"Update NPC identity: {handle}",
+                            "operation_id": f"npcid-{uuid.uuid4().hex[:12]}",
+                        },
+                        campaign_id=campaign_id,
+                    )
+                if delete_npc or not real_name_hidden or not effective_real_name:
+                    eng.update_gm_secrets(campaign_id, {sec_key: None})
+                else:
+                    eng.update_gm_secrets(campaign_id, {sec_key: effective_real_name})
+                eng.tree.sync_active_leaf_revisions(campaign_id)
+                fresh_ctx = svc.campaign_context(campaign_id)
+                fresh_sec = eng._get_gm_secrets(campaign_id)
+                profiles = build_npc_profiles(
+                    fresh_ctx["campaign"]["state"],
+                    fresh_sec,
+                    include_hidden=(eff_role in {"admin", "open"}),
+                )
+                return {"campaign": fresh_ctx["campaign"], "npc_profiles": profiles}
+
+            res = await asyncio.to_thread(_apply)
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})
+            return {**res, "request_id": request_id}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+    @app.post("/v1/campaigns/{campaign_id}/party-location")
+    async def campaign_party_location(campaign_id: str, request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=True)
+        if blocked is not None:
+            return blocked
+        sess = _session(request)
+        eff_role = _effective_role(request, sess)
+        uname = str(sess.get("username") or "").strip().lower()
+        from turnloop import ChatTreeStore, _normalize_campaign_changes, _resolve_character, compute_party_grouping
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
+            action = str(body.get("action") or "update").strip().lower()
+            pc_locations = body.get("pc_locations") if isinstance(body.get("pc_locations"), dict) else None
+            location = str(body.get("location") or "").strip()[:160]
+            append_notice = bool(body.get("append_notice", True))
+
+            def _apply():
+                svc = gameplay_service()
+                ctx = svc.campaign_context(campaign_id)
+                camp = ctx["campaign"]
+                chars = ctx["characters"]
+                if eff_role == "user" and not sess.get("pin_only_mode"):
+                    if action == "reunite":
+                        raise PermissionError("Only the GM/Admin can reunite all party members at once.")
+                    if isinstance(pc_locations, dict):
+                        for raw_actor in pc_locations.keys():
+                            matched = _resolve_character(str(raw_actor), chars)
+                            if matched is None:
+                                raise PermissionError(f"Unknown character '{raw_actor}'.")
+                            owner = str((matched.get("detail") or {}).get("owner_username") or "").strip().lower()
+                            if not uname or (owner and owner != uname):
+                                raise PermissionError(f"You can only update your own character's location (not {matched.get('name')}).")
+                before_grouping = compute_party_grouping(chars, camp["state"])
+                raw_changes: dict[str, Any] = {}
+                if action == "reunite":
+                    target_loc = location or str(camp["state"].get("scene") or "").strip() or "Main Scene"
+                    raw_changes["all_together"] = target_loc
+                    if location:
+                        raw_changes["scene"] = target_loc
+                elif pc_locations:
+                    raw_changes["pc_locations"] = pc_locations
+                else:
+                    raise ValueError("Provide pc_locations or action='reunite'")
+                changes, _ = _normalize_campaign_changes(raw_changes, camp["state"], characters=chars)
+                updated_camp = camp
+                if changes:
+                    updated_camp = svc.execute(
+                        "update_campaign",
+                        {
+                            "campaign_id": campaign_id,
+                            "expected_revision": camp["revision"],
+                            "changes": changes,
+                            "reason": "Update party locations / grouping",
+                            "operation_id": f"ploc-{uuid.uuid4().hex[:12]}",
+                        },
+                        campaign_id=campaign_id,
+                    )["result"]
+                after_grouping = compute_party_grouping(chars, updated_camp["state"])
+                tree_store = ChatTreeStore(svc)
+                if append_notice and before_grouping["mode"] != after_grouping["mode"]:
+                    main_tree = tree_store.get_tree(campaign_id, channel_id="main")
+                    revs = tree_store._current_revisions(campaign_id)
+                    if after_grouping["mode"] == "split":
+                        parts = [f"{', '.join(ch['handles'])} -> {ch['location']}" for ch in after_grouping["channels"]]
+                        notice = f"*Party split into separate scene channels: {'; '.join(parts)}.*"
+                    else:
+                        notice = f"*Party reunited at {after_grouping['active_location']} (Main Table).* "
+                    tree_store.append_message(
+                        campaign_id,
+                        parent_id=main_tree.get("active_leaf_id"),
+                        role="system",
+                        content=notice.strip(),
+                        campaign_revision=revs["campaign_revision"],
+                        solo_revision=revs["solo_revision"],
+                        channel_id="main",
+                        metadata={"party_transition": after_grouping["mode"]},
+                    )
+                tree_store.sync_active_leaf_revisions(campaign_id, channel_id="main")
+                return {"campaign": updated_camp, "party_grouping": after_grouping}
+
+            res = await asyncio.to_thread(_apply)
+            coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "all"})
+            return {**res, "request_id": request_id}
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 

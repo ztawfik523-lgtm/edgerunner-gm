@@ -266,12 +266,14 @@ class CampaignStore:
             "handle",
             "real_name",
             "real_name_hidden",
+            "gender",
+            "pronouns",
             "portrait_url",
             "color",
             "owner_username",
         }
         if not profile or set(profile) - allowed_keys:
-            raise ValueError("profile may contain only backstory, lifepath, appearance, roles, handle, real_name, real_name_hidden, portrait_url, color, and owner_username")
+            raise ValueError("profile may contain only backstory, lifepath, appearance, roles, handle, real_name, real_name_hidden, gender, pronouns, portrait_url, color, and owner_username")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("reason must be a nonempty string")
         if not isinstance(operation_id, str) or not operation_id:
@@ -299,7 +301,7 @@ class CampaignStore:
             before = self._record(row)
             updated = dict(before)
             new_detail = dict(before.get("detail") or {})
-            string_detail_keys = {"handle", "real_name", "portrait_url", "color", "owner_username"}
+            string_detail_keys = {"handle", "real_name", "gender", "pronouns", "portrait_url", "color", "owner_username"}
             for key, val in profile.items():
                 if key == "roles":
                     if not isinstance(val, list):
@@ -376,3 +378,37 @@ class CampaignStore:
             conn.execute("INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated
+
+    def rename_owner_username(self, old_username: str, new_username: str) -> list[str]:
+        """Update detail.owner_username on all characters owned by old_username; return affected campaign IDs."""
+        old_clean = (old_username or "").strip().lower()
+        new_clean = (new_username or "").strip()
+        if not old_clean or not new_clean:
+            return []
+        changed_char_ids: set[str] = set()
+        affected_campaigns: list[str] = []
+        with closing(self._connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("SELECT id, detail, revision FROM characters").fetchall()
+            for row in rows:
+                detail = json.loads(row["detail"] or "{}")
+                owner = str(detail.get("owner_username") or "").strip()
+                if owner.lower() == old_clean:
+                    detail["owner_username"] = new_clean
+                    conn.execute(
+                        "UPDATE characters SET detail=?, revision=? WHERE id=?",
+                        (_json(detail), int(row["revision"]) + 1, row["id"]),
+                    )
+                    changed_char_ids.add(str(row["id"]))
+            if changed_char_ids:
+                has_members = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_members'"
+                ).fetchone()
+                if has_members:
+                    placeholders = ",".join("?" for _ in changed_char_ids)
+                    for crow in conn.execute(
+                        f"SELECT DISTINCT campaign_id FROM campaign_members WHERE character_id IN ({placeholders})",
+                        tuple(changed_char_ids),
+                    ).fetchall():
+                        affected_campaigns.append(str(crow["campaign_id"]))
+        return affected_campaigns

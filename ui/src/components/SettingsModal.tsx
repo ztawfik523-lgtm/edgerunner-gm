@@ -15,7 +15,9 @@ import {
   Shield,
   Sliders,
   Trash2,
+  Type,
   Upload,
+  User,
   UserPlus,
   X,
   XCircle,
@@ -31,6 +33,7 @@ import {
   setupInitialAuth,
   testLLMSettings,
   updateAuthAccounts,
+  updateMyAccount,
   uploadCorebookPdf,
 } from "../api";
 import type {
@@ -43,13 +46,29 @@ import type {
   ServerSettings,
 } from "../types";
 
-export type SettingsTab = "connection" | "corebook" | "tuning" | "prompts" | "network" | "access";
+export type SettingsTab =
+  | "connection"
+  | "corebook"
+  | "tuning"
+  | "prompts"
+  | "network"
+  | "access"
+  | "display"
+  | "account";
+
+export type UiTextScale = "standard" | "large" | "xl";
+export type UiFontWeight = "normal" | "semibold" | "bold";
 
 export interface SettingsModalProps {
   open: boolean;
   initialTab?: SettingsTab;
+  isAdmin?: boolean;
   settings: LLMSettings | null;
   authStatus?: AuthStatus | null;
+  uiScale?: UiTextScale;
+  uiWeight?: UiFontWeight;
+  onChangeUiScale?: (scale: UiTextScale) => void;
+  onChangeUiWeight?: (weight: UiFontWeight) => void;
   onClose: () => void;
   onSaved: (updated: LLMSettings) => void;
   onAuthChanged?: () => Promise<void> | void;
@@ -350,15 +369,25 @@ const PROMPT_FIELDS: Array<{
 export function SettingsModal({
   open,
   initialTab,
+  isAdmin = true,
   settings,
   authStatus,
+  uiScale = "standard",
+  uiWeight = "semibold",
+  onChangeUiScale,
+  onChangeUiWeight,
   onClose,
   onSaved,
   onAuthChanged,
   onCorebookIndexed,
   onNotify,
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? "connection");
+  const defaultTab: SettingsTab = isAdmin ? (initialTab ?? "connection") : "display";
+  const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab);
+  const [acctCurrentPassword, setAcctCurrentPassword] = useState("");
+  const [acctNewUsername, setAcctNewUsername] = useState("");
+  const [acctNewPassword, setAcctNewPassword] = useState("");
+  const [acctConfirmPassword, setAcctConfirmPassword] = useState("");
 
   // Connection + Turn & Tuning state
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:11434/v1");
@@ -482,16 +511,27 @@ export function SettingsModal({
   };
 
   useEffect(() => {
-    if (open && initialTab) {
+    if (!open) return;
+    if (!isAdmin) {
+      setActiveTab(initialTab === "account" ? "account" : "display");
+    } else if (initialTab) {
       setActiveTab(initialTab);
     }
-  }, [open, initialTab]);
+  }, [open, initialTab, isAdmin]);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setNotice(null);
     setTestResult(null);
+    setAcctCurrentPassword("");
+    setAcctNewUsername(authStatus?.username ?? "");
+    setAcctNewPassword("");
+    setAcctConfirmPassword("");
+    if (!isAdmin) {
+      setLoadingAll(false);
+      return;
+    }
     if (settings) {
       applyLlmFields(settings);
     }
@@ -911,14 +951,63 @@ export function SettingsModal({
     }
   };
 
-  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = [
-    { id: "connection", label: "Connection", icon: Cpu },
-    { id: "corebook", label: "Corebook PDF", icon: BookOpen },
-    { id: "tuning", label: "Turn & Tuning", icon: Sliders },
-    { id: "prompts", label: "Prompts", icon: FileText },
-    { id: "network", label: "Network", icon: Globe },
-    { id: "access", label: "Access & Auth", icon: Shield },
-  ];
+  const handleUpdateMyAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving) return;
+    setError(null);
+    setNotice(null);
+    if (!acctCurrentPassword) {
+      setError("Enter your current password to confirm changes.");
+      return;
+    }
+    if (acctNewPassword && acctNewPassword !== acctConfirmPassword) {
+      setError("New passwords do not match.");
+      return;
+    }
+    const cleanNewUser = acctNewUsername.trim();
+    const curUser = (authStatus?.username ?? "").trim();
+    const changingName = Boolean(cleanNewUser && cleanNewUser !== curUser);
+    const changingPw = Boolean(acctNewPassword);
+    if (!changingName && !changingPw) {
+      setError("Enter a new username or a new password to update.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateMyAccount({
+        current_password: acctCurrentPassword,
+        ...(changingName ? { new_username: cleanNewUser } : {}),
+        ...(changingPw ? { new_password: acctNewPassword } : {}),
+      });
+      setAcctCurrentPassword("");
+      setAcctNewPassword("");
+      setAcctConfirmPassword("");
+      setAcctNewUsername(updated.username);
+      await onAuthChanged?.();
+      setNotice(`Account updated (${updated.username}).`);
+      onNotify?.(`Updated account settings (${updated.username}).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update account");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = isAdmin
+    ? [
+        { id: "connection", label: "Connection", icon: Cpu },
+        { id: "corebook", label: "Corebook PDF", icon: BookOpen },
+        { id: "tuning", label: "Turn & Tuning", icon: Sliders },
+        { id: "prompts", label: "Prompts", icon: FileText },
+        { id: "network", label: "Network", icon: Globe },
+        { id: "access", label: "Access & Auth", icon: Shield },
+        { id: "display", label: "Display & Font", icon: Type },
+        ...(authStatus?.username ? [{ id: "account" as SettingsTab, label: "My Account", icon: User }] : []),
+      ]
+    : [
+        { id: "display", label: "Display & Font", icon: Type },
+        { id: "account", label: "My Account", icon: User },
+      ];
 
   const isIndexing = corebookStatus?.job?.status === "running";
   const combinedProgress = uploadingPdf
@@ -927,24 +1016,29 @@ export function SettingsModal({
       ? Math.max(25, Math.min(100, 25 + Math.round((corebookStatus?.job?.percent ?? 0) * 0.75)))
       : 0;
 
+  const dialogHeading = isAdmin ? "AI Game Master Connection" : "User Settings";
+  const dialogSubtitle = isAdmin
+    ? "Connect your AI model, upload your Corebook PDF, customize GM behavior & prompts, display readability, and manage players."
+    : "Customize HUD text size & readability, or update your account username and password.";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
-      aria-label="AI Game Master Connection"
+      aria-label={dialogHeading}
     >
       <div className="cyber-cut cyber-panel-glow flex max-h-[92vh] w-full max-w-3xl flex-col border border-cyan-500/30 bg-[#0b1019] shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
           <div>
             <h2
-              data-text="AI Game Master Connection"
+              data-text={dialogHeading}
               className="cyber-glitch-title font-cyber-display text-sm font-bold tracking-wider text-slate-100 uppercase"
             >
-              AI Game Master Connection
+              {dialogHeading}
             </h2>
             <p className="text-xs text-slate-400">
-              Connect your AI model, upload your Corebook PDF, customize GM behavior &amp; prompts, and manage players.
+              {dialogSubtitle}
             </p>
           </div>
           <button
@@ -2632,6 +2726,156 @@ export function SettingsModal({
                     </div>
                   </div>
                 </>
+              )}
+            </div>
+          )}
+
+          {activeTab === "display" && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                    HUD Text Size
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Adjust overall font scale across chat messages, character sheets, and briefings (saved in this browser).
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: "standard", label: "Standard (100%)", desc: "Default compact HUD" },
+                      { id: "large", label: "Large (110%)", desc: "Easier long-session reading" },
+                      { id: "xl", label: "Extra Large (119%)", desc: "Maximum legibility" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onChangeUiScale?.(opt.id)}
+                      className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                        uiScale === opt.id
+                          ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
+                          : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{opt.label}</div>
+                      <div className="text-[11px] text-slate-400">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                    Font Thickness / Boldness
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Increase font weight so thin strokes feel fuller and sharper against dark panels.
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: "normal", label: "Slim (500)", desc: "Lighter HUD strokes" },
+                      { id: "semibold", label: "Crisp (600)", desc: "Recommended default" },
+                      { id: "bold", label: "Heavy (700)", desc: "Maximum stroke thickness" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onChangeUiWeight?.(opt.id)}
+                      className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                        uiWeight === opt.id
+                          ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
+                          : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{opt.label}</div>
+                      <div className="text-[11px] text-slate-400">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "account" && (
+            <div className="space-y-4">
+              {!authStatus?.auth_enabled ? (
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+                  Account authentication is currently off (Open Table Mode). Enable Access &amp; Auth in Admin settings to use named user accounts.
+                </div>
+              ) : !authStatus.username || authStatus.username === "player" && authStatus.pin_only_mode ? (
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+                  You are currently connected as a guest / passcode player. Sign in or register a named account to manage your own username and password.
+                </div>
+              ) : (
+                <form onSubmit={handleUpdateMyAccount} className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                        Account Credentials ({authStatus.username})
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        Change your login username or password. Owned character sheets stay linked to your account automatically.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block space-y-1 text-xs">
+                      <span className="text-slate-300">Username</span>
+                      <input
+                        type="text"
+                        value={acctNewUsername}
+                        onChange={(e) => setAcctNewUsername(e.target.value)}
+                        placeholder={authStatus.username}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block space-y-1 text-xs">
+                      <span className="text-slate-300">Current Password *</span>
+                      <input
+                        type="password"
+                        value={acctCurrentPassword}
+                        onChange={(e) => setAcctCurrentPassword(e.target.value)}
+                        placeholder="Confirm current password"
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block space-y-1 text-xs">
+                      <span className="text-slate-300">New Password (optional)</span>
+                      <input
+                        type="password"
+                        value={acctNewPassword}
+                        onChange={(e) => setAcctNewPassword(e.target.value)}
+                        placeholder="Leave blank to keep current"
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block space-y-1 text-xs">
+                      <span className="text-slate-300">Confirm New Password</span>
+                      <input
+                        type="password"
+                        value={acctConfirmPassword}
+                        onChange={(e) => setAcctConfirmPassword(e.target.value)}
+                        placeholder="Repeat new password"
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="rounded-md bg-cyan-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                    >
+                      {saving ? "Updating..." : "Update Account"}
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
           )}

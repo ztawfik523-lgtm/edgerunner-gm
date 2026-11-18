@@ -314,7 +314,7 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
         detail["real_name_hidden"] = args["real_name_hidden"]
     elif handle and real_name:
         detail["real_name_hidden"] = True
-    for str_key in ("portrait_url", "color", "owner_username"):
+    for str_key in ("gender", "pronouns", "portrait_url", "color", "owner_username"):
         val = args.get(str_key)
         if isinstance(val, str) and val.strip():
             detail[str_key] = val.strip()

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Search, Sparkles, X } from "lucide-react";
 import { searchLibrary } from "../api";
 import type { LibraryEntry } from "../types";
+import { classifyWeaponTiers, getWeaponTierTheme } from "../utils/weaponQuality";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -83,7 +84,10 @@ export function CommandPalette({ open, campaignId, onClose, onSelectEntry }: Com
                 No matching Corebook or homebrew entries found.
               </Command.Empty>
             )}
-            {items.map((entry) => (
+            {items.map((entry) => {
+              const wTier = entry.category === "weapon" ? classifyWeaponTiers(entry) : null;
+              const wTheme = wTier && wTier.primaryTier !== "other" ? getWeaponTierTheme(wTier.primaryTier) : null;
+              return (
               <Command.Item
                 key={entry.id}
                 value={entry.id}
@@ -101,6 +105,11 @@ export function CommandPalette({ open, campaignId, onClose, onSelectEntry }: Com
                       <BookOpen className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
                     )}
                     <span className="truncate font-semibold">{entry.name}</span>
+                    {wTheme && (
+                      <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${wTheme.badgeClass}`}>
+                        {wTheme.label}
+                      </span>
+                    )}
                     <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-300">
                       {entry.category}
                     </span>
@@ -111,7 +120,8 @@ export function CommandPalette({ open, campaignId, onClose, onSelectEntry }: Com
                   {entry.printed_page ? `p.${entry.printed_page}` : entry.source}
                 </div>
               </Command.Item>
-            ))}
+              );
+            })}
           </Command.List>
         </Command>
       </div>

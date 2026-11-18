@@ -1453,6 +1453,236 @@ async def test_coop_gatekeeper_manual_chat_roll_identity_privacy_and_ownership(t
         assert "create or claim a character" in r_no_char.json()["detail"].lower()
 
 
+@pytest.mark.anyio
+async def test_hybrid_intro_primer_and_gender_pronouns(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    char = svc.store.get_character(char_id)
+    updated_char = svc.execute(
+        "update_character_profile",
+        {
+            "character_id": char_id,
+            "expected_revision": char["revision"],
+            "profile": {"gender": "Non-Binary", "pronouns": "they/them"},
+            "reason": "Set gender and pronouns",
+            "operation_id": "set-gp-1",
+        },
+        campaign_id=camp_id,
+    )["result"]
+    assert updated_char["detail"]["gender"] == "Non-Binary"
+    assert updated_char["detail"]["pronouns"] == "they/them"
+
+    llm = ScriptedLLM(
+        mode="two_pass",
+        complete_reply="{}",
+        stream_chunks=["Welcome to Heywood Glen. Talk to Marta or inspect the depot chip."],
+    )
+    engine = TurnEngine(svc, llm)
+    events = [
+        ev
+        async for ev in engine.run_turn(
+            camp_id,
+            "Give me an introductory first message explaining what Cyberpunk RED is, how the rules and stats work, and what roles or characters I can play.",
+            speaker_character_id=char_id,
+            is_intro=True,
+        )
+    ]
+    deltas = "".join(ev["data"]["delta"] for ev in events if ev["event"] == "text_delta")
+    assert "WELCOME TO CYBERPUNK RED" in deltas
+    assert "1d10 + STAT + Skill" in deltas
+    assert "Netrunner" in deltas and "Nomad" in deltas
+    assert "CAMPAIGN TABLE WELCOME" in deltas
+    assert "Welcome to Heywood Glen" in deltas
+
+    done = [ev["data"] for ev in events if ev["event"] == "turn_done"][0]
+    assert done["assistant_message"]["metadata"]["is_intro"] is True
+
+
+@pytest.mark.anyio
+async def test_npc_privacy_user_account_update_and_split_scene_channels(tmp_path: Path):
+    import httpx
+    from auth import AuthManager
+    from redkb import make_api
+
+    db_path = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    camp_path = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+
+    auth = AuthManager(settings_path)
+    auth.setup_initial(admin_username="gm", admin_password="gm-password", user_username="alice", user_password="alice-password")
+    gm_token = auth.authenticate(username="gm", password="gm-password")["token"]
+    alice_token = auth.authenticate(username="alice", password="alice-password")["token"]
+
+    app = make_api(db_path, campaign_path=camp_path, settings_path=settings_path, llm=ScriptedLLM(
+        mode="two_pass",
+        complete_reply=json.dumps({"checks": [], "gm_notes": "Resolve split scene."}),
+        stream_chunks=["Neon flickers over the loading dock."],
+    ))
+    gm_headers = {"Authorization": f"Bearer {gm_token}", "Origin": "http://test"}
+    alice_headers = {"Authorization": f"Bearer {alice_token}", "Origin": "http://test"}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # Create campaign and two PCs (one owned by alice)
+        camp_res = (await client.post("/v1/game", headers=gm_headers, json={
+            "action": "create_campaign",
+            "arguments": {"name": "Split Ops", "operation_id": "c-split-1"},
+        })).json()["result"]
+        camp_id = camp_res["id"]
+
+        c1 = (await client.post("/v1/game", headers=alice_headers, json={
+            "action": "create_character",
+            "arguments": {
+                "name": "Ghostwire",
+                "stats": {"INT": 7, "REF": 6, "DEX": 6, "TECH": 6, "COOL": 6, "WILL": 6, "LUCK": 6, "MOVE": 6, "BODY": 5, "EMP": 6},
+                "skills": {"Interface": 6},
+                "detail": {"handle": "Ghostwire", "gender": "Female", "pronouns": "she/her"},
+                "operation_id": "char-gw-1",
+            },
+        })).json()["result"]
+        c2 = (await client.post("/v1/game", headers=gm_headers, json={
+            "action": "create_character",
+            "arguments": {
+                "name": "Brick",
+                "stats": {"INT": 5, "REF": 7, "DEX": 6, "TECH": 5, "COOL": 6, "WILL": 6, "LUCK": 6, "MOVE": 6, "BODY": 8, "EMP": 5},
+                "skills": {"Handgun": 6},
+                "detail": {"handle": "Brick", "owner_username": "bob"},
+                "operation_id": "char-br-1",
+            },
+        })).json()["result"]
+        for idx, cid in enumerate((c1["id"], c2["id"]), start=1):
+            await client.post("/v1/game", headers=gm_headers, json={
+                "action": "attach_character",
+                "campaign_id": camp_id,
+                "auto_revision": True,
+                "arguments": {
+                    "campaign_id": camp_id,
+                    "character_id": cid,
+                    "expected_revision": 1,
+                    "reason": "Attach PC",
+                    "operation_id": f"att-split-{idx}",
+                },
+            })
+
+        # 1. Self-service account username & password update migrates character ownership
+        me_res = await client.post("/v1/auth/me", headers=alice_headers, json={
+            "current_password": "alice-password",
+            "new_username": "alice_net",
+            "new_password": "new-alice-password",
+        })
+        assert me_res.status_code == 200
+        new_alice_token = me_res.json()["token"]
+        assert me_res.json()["username"] == "alice_net"
+        alice_headers = {"Authorization": f"Bearer {new_alice_token}", "Origin": "http://test"}
+
+        ctx_after_rename = (await client.post("/v1/game", headers=alice_headers, json={
+            "action": "campaign_context",
+            "campaign_id": camp_id,
+            "arguments": {"campaign_id": camp_id},
+        })).json()["result"]
+        gw_after = next(c for c in ctx_after_rename["characters"] if c["id"] == c1["id"])
+        assert gw_after["detail"]["owner_username"] == "alice_net"
+
+        # 2. NPC Handle vs Real Name Privacy: Admin sees hidden real name, normal player does NOT
+        npc_res = await client.post(f"/v1/campaigns/{camp_id}/npc-identity", headers=gm_headers, json={
+            "handle": "Drone-Mother",
+            "description": "Disgraced Zhirafa rigger — Neutral 0",
+            "real_name": "Marta Koval",
+            "real_name_hidden": True,
+        })
+        assert npc_res.status_code == 200
+        assert npc_res.json()["npc_profiles"]["Drone-Mother"]["real_name"] == "Marta Koval"
+
+        ctx_player = (await client.post("/v1/game", headers=alice_headers, json={
+            "action": "campaign_context",
+            "campaign_id": camp_id,
+            "arguments": {"campaign_id": camp_id},
+        })).json()["result"]
+        assert ctx_player["npc_profiles"]["Drone-Mother"]["real_name_hidden"] is True
+        assert "real_name" not in ctx_player["npc_profiles"]["Drone-Mother"]
+
+        # 3. Party Split -> Separate Scene Channels -> Independent Turn + Reunion
+        split_res = await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=gm_headers, json={
+            "pc_locations": {
+                c1["id"]: "Zhirafa Depot Dock",
+                c2["id"]: "La Casita Rooftop",
+            },
+        })
+        assert split_res.status_code == 200
+        grouping = split_res.json()["party_grouping"]
+        assert grouping["mode"] == "split"
+        assert len(grouping["channels"]) == 2
+        gw_chan = grouping["char_channel_map"][c1["id"]]
+        br_chan = grouping["char_channel_map"][c2["id"]]
+        assert gw_chan != br_chan
+
+        turn_res = await client.post("/v1/chat/turn", headers=alice_headers, json={
+            "campaign_id": camp_id,
+            "channel_id": gw_chan,
+            "speaker_character_id": c1["id"],
+            "speaker_name": "Ghostwire",
+            "user_text": "I jack into the dock gate panel.",
+            "gm_mode": "force_gm",
+        })
+        assert turn_res.status_code == 200
+        assert "turn_done" in turn_res.text
+
+        # Split channel has the turn, while Brick's channel stays isolated and Main Table only has the split notice
+        gw_tree = (await client.get("/v1/chat/tree", headers=alice_headers, params={"campaign_id": camp_id, "channel_id": gw_chan})).json()
+        br_tree = (await client.get("/v1/chat/tree", headers=gm_headers, params={"campaign_id": camp_id, "channel_id": br_chan})).json()
+        assert len(gw_tree["active_branch"]) == 2
+        assert len(br_tree["active_branch"]) == 0
+
+        # Reunite back to Main Table
+        reunite_res = await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=gm_headers, json={
+            "action": "reunite",
+            "location": "Safe House",
+        })
+        assert reunite_res.status_code == 200
+        assert reunite_res.json()["party_grouping"]["mode"] == "together"
+        main_tree = (await client.get("/v1/chat/tree", headers=gm_headers, params={"campaign_id": camp_id, "channel_id": "main"})).json()
+        assert any("reunited" in m["content"].lower() for m in main_tree["active_branch"])
+
+        # 4. Security & mid-campaign regressions:
+        # - Non-admin cannot overwrite NPC hidden identities or move another player's PC
+        forb_npc = await client.post(f"/v1/campaigns/{camp_id}/npc-identity", headers=alice_headers, json={
+            "handle": "Drone-Mother",
+            "real_name_hidden": False,
+        })
+        assert forb_npc.status_code == 403
+        forb_loc = await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=alice_headers, json={
+            "pc_locations": {c2["id"]: "Hijacked Location"},
+        })
+        assert forb_loc.status_code == 403
+        # - Mid-campaign hidden NPC identity added after turns still persists in campaign_context
+        mid_npc = await client.post(f"/v1/campaigns/{camp_id}/npc-identity", headers=gm_headers, json={
+            "handle": "Zero-Cool",
+            "description": "Netwatch mole — Neutral 0",
+            "real_name": "Elena Vance",
+            "real_name_hidden": True,
+        })
+        assert mid_npc.status_code == 200
+        adm_ctx = (await client.post("/v1/game", headers=gm_headers, json={
+            "action": "campaign_context",
+            "campaign_id": camp_id,
+            "arguments": {"campaign_id": camp_id},
+        })).json()["result"]
+        assert adm_ctx["npc_profiles"]["Zero-Cool"]["real_name"] == "Elena Vance"
+        usr_ctx = (await client.post("/v1/game", headers=alice_headers, json={
+            "action": "campaign_context",
+            "campaign_id": camp_id,
+            "arguments": {"campaign_id": camp_id},
+        })).json()["result"]
+        assert "real_name" not in usr_ctx["npc_profiles"]["Zero-Cool"]
+        # - Moving both PCs to the same location via pc_locations automatically collapses mode -> together
+        await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=gm_headers, json={
+            "pc_locations": {c1["id"]: "Zone A", c2["id"]: "Zone B"},
+        })
+        same_loc = await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=gm_headers, json={
+            "pc_locations": {c1["id"]: "Afterlife Booth", c2["id"]: "Afterlife Booth"},
+        })
+        assert same_loc.status_code == 200
+        assert same_loc.json()["party_grouping"]["mode"] == "together"
+
+
 
 
 

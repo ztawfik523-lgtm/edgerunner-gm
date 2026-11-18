@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { Clock, Compass, Cpu, ImagePlus, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2 } from "lucide-react";
+import { Clock, Compass, Cpu, Eye, EyeOff, ImagePlus, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2, Users } from "lucide-react";
 import {
   assistCharacterCreation,
   fetchCampaignClocks,
   mutateCampaignClock,
   undoCampaignChange,
   updateCampaignState,
+  updateNpcIdentity,
+  updatePartyLocation,
 } from "../api";
 import type { CampaignContext, CampaignNarrativeState, CampaignRecord, WorldClock } from "../types";
 import { FieldAiActions } from "./FieldAiActions";
@@ -14,6 +16,8 @@ interface CampaignPanelProps {
   context: CampaignContext;
   campaigns?: CampaignRecord[];
   canManageCampaigns?: boolean;
+  isAdmin?: boolean;
+  currentUsername?: string | null;
   activeLeafId?: string | null;
   onSelectCampaign?: (id: string) => void;
   onSetPrimaryCampaign?: (id: string) => Promise<void>;
@@ -39,6 +43,8 @@ export function CampaignPanel({
   context,
   campaigns = [],
   canManageCampaigns = true,
+  isAdmin = true,
+  currentUsername = null,
   activeLeafId,
   onSelectCampaign,
   onSetPrimaryCampaign,
@@ -74,6 +80,9 @@ export function CampaignPanel({
   });
   const [confirmRemove, setConfirmRemove] = useState<{ section: SectionKey; key: string } | null>(null);
   const [confirmDeleteCampaignId, setConfirmDeleteCampaignId] = useState<string | null>(null);
+  const [npcRealNameDraft, setNpcRealNameDraft] = useState("");
+  const [npcRealHiddenDraft, setNpcRealHiddenDraft] = useState(true);
+  const [pcLocDrafts, setPcLocDrafts] = useState<Record<string, string>>({});
   const [aiBusyMode, setAiBusyMode] = useState<"improve" | "regen" | null>(null);
   const [busy, setBusy] = useState(false);
   const aiBusy = aiBusyMode !== null;
@@ -85,7 +94,12 @@ export function CampaignPanel({
       campaign.state.discoveries?.["__banner_url"] ?? campaign.state.discoveries?.["Banner URL"] ?? "",
     );
     setConfirmRemove(null);
-  }, [campaign.id, campaign.revision, campaign.state.scene, campaign.state.summary, campaign.state.discoveries]);
+    const locs: Record<string, string> = {};
+    for (const ch of context.party_grouping?.characters ?? []) {
+      locs[ch.id] = ch.location;
+    }
+    setPcLocDrafts(locs);
+  }, [campaign.id, campaign.revision, campaign.state.scene, campaign.state.summary, campaign.state.discoveries, context.party_grouping]);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,20 +161,78 @@ export function CampaignPanel({
     const key = draftKey[section].trim();
     const val = draftVal[section].trim();
     if (!key || !val || busy) return;
-    const nextMap = { ...campaign.state[section], [key]: val };
     setBusy(true);
     try {
-      await updateCampaignState(
-        campaign.id,
-        campaign.revision,
-        { [section]: nextMap },
-        `Add ${section} entry: ${key}`,
-      );
+      if (section === "npcs" && isAdmin) {
+        await updateNpcIdentity(campaign.id, {
+          handle: key,
+          description: val,
+          real_name: npcRealNameDraft.trim() || undefined,
+          real_name_hidden: npcRealHiddenDraft,
+        });
+        setNpcRealNameDraft("");
+        setNpcRealHiddenDraft(true);
+      } else {
+        const nextMap = { ...campaign.state[section], [key]: val };
+        await updateCampaignState(
+          campaign.id,
+          campaign.revision,
+          { [section]: nextMap },
+          `Add ${section} entry: ${key}`,
+        );
+      }
       setDraftKey((p) => ({ ...p, [section]: "" }));
       setDraftVal((p) => ({ ...p, [section]: "" }));
       await onRefresh();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Failed to add entry");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canEditPcLocation = (chId: string) => {
+    if (isAdmin) return true;
+    const uname = (currentUsername || "").trim().toLowerCase();
+    if (!uname) return false;
+    const ch = context.characters.find((c) => c.id === chId);
+    const owner = String((ch?.detail as Record<string, unknown> | undefined)?.owner_username ?? "")
+      .trim()
+      .toLowerCase();
+    return !owner || owner === uname;
+  };
+
+  const handleSavePartyLocations = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const payloadLocs: Record<string, string> = {};
+      for (const [cid, loc] of Object.entries(pcLocDrafts)) {
+        if (canEditPcLocation(cid)) payloadLocs[cid] = loc;
+      }
+      await updatePartyLocation(campaign.id, { pc_locations: payloadLocs, append_notice: true });
+      await onRefresh();
+      onNotify("Updated party locations & scene grouping.");
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "Failed to update party locations");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReuniteParty = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await updatePartyLocation(campaign.id, {
+        action: "reunite",
+        location: scene.trim() || undefined,
+        append_notice: true,
+      });
+      await onRefresh();
+      onNotify("Reunited party in Main Table.");
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "Failed to reunite party");
     } finally {
       setBusy(false);
     }
@@ -534,6 +606,67 @@ export function CampaignPanel({
         </div>
       </form>
 
+      {/* Party Locations & Split-Scene Grouping */}
+      {context.characters.length >= 2 && (
+        <div className="space-y-2 rounded-lg border border-slate-800 bg-[#101624] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+              <Users className="h-3.5 w-3.5 text-cyan-400" />
+              Party Locations &amp; Grouping
+              <span
+                className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                  context.party_grouping?.mode === "split"
+                    ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
+                    : "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                }`}
+              >
+                {context.party_grouping?.mode === "split" ? "SPLIT" : "TOGETHER"}
+              </span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              {isAdmin && context.party_grouping?.mode === "split" && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleReuniteParty()}
+                  className="rounded border border-emerald-500/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-45"
+                >
+                  Reunite All
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleSavePartyLocations()}
+                className="rounded border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-45"
+              >
+                Update Locations
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {context.characters.map((ch) => {
+              const d = (ch.detail ?? {}) as Record<string, unknown>;
+              const handle = typeof d.handle === "string" && d.handle.trim() ? d.handle.trim() : ch.name;
+              const editable = canEditPcLocation(ch.id);
+              return (
+                <div key={ch.id} className="flex items-center gap-2 text-xs">
+                  <span className="w-28 shrink-0 truncate font-semibold text-cyan-300">{handle}</span>
+                  <input
+                    type="text"
+                    disabled={!editable}
+                    value={pcLocDrafts[ch.id] ?? scene}
+                    onChange={(e) => setPcLocDrafts((p) => ({ ...p, [ch.id]: e.target.value }))}
+                    placeholder="Current location..."
+                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none disabled:opacity-50"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* World Clocks & Heat */}
       <div className="space-y-2 rounded-lg border border-slate-800 bg-[#101624] p-3">
         <div className="flex items-center justify-between">
@@ -674,7 +807,7 @@ export function CampaignPanel({
       <div className="space-y-3">
         {SECTION_LABELS.map(({ key, title, placeholderKey }) => {
           const entries = Object.entries((campaign.state as CampaignNarrativeState)[key] ?? {}).filter(
-            ([k]) => k !== "__banner_url",
+            ([k]) => !k.startsWith("__"),
           );
           return (
             <div key={key} className="rounded-lg border border-slate-800 bg-[#111726] p-3 space-y-2">
@@ -687,13 +820,28 @@ export function CampaignPanel({
                 <div className="space-y-1.5">
                   {entries.map(([k, v]) => {
                     const confirming = confirmRemove?.section === key && confirmRemove?.key === k;
+                    const npcProf = key === "npcs" ? context.npc_profiles?.[k] : undefined;
+                    const npcReal = npcProf?.real_name;
+                    const npcHidden = Boolean(npcProf?.real_name_hidden);
                     return (
                       <div
                         key={k}
                         className="flex items-start justify-between gap-2 rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-1.5 text-xs"
                       >
                         <div>
-                          <span className="font-semibold text-cyan-300">{k}:</span>{" "}
+                          <span className="font-semibold text-cyan-300">{k}</span>
+                          {npcReal && !npcHidden && npcReal !== k && (
+                            <span className="ml-1 text-[10px] text-slate-400">({npcReal})</span>
+                          )}
+                          {npcHidden && isAdmin && (
+                            <span
+                              title={npcReal ? `Real name '${npcReal}' is hidden from players` : "Hidden real name"}
+                              className="ml-1 inline-flex items-center gap-0.5 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 font-mono text-[9px] text-slate-400"
+                            >
+                              <EyeOff className="h-2.5 w-2.5" /> {npcReal ? `Alias (${npcReal})` : "Alias Only"}
+                            </span>
+                          )}
+                          <span className="font-semibold text-cyan-300">:</span>{" "}
                           <span className="text-slate-200">{v}</span>
                         </div>
                         {confirming ? (
@@ -739,30 +887,53 @@ export function CampaignPanel({
                   e.preventDefault();
                   void handleAddEntry(key);
                 }}
-                className="flex gap-1.5 pt-1"
+                className="space-y-1.5 pt-1"
               >
-                <input
-                  type="text"
-                  value={draftKey[key]}
-                  onChange={(e) => setDraftKey((p) => ({ ...p, [key]: e.target.value }))}
-                  placeholder={placeholderKey}
-                  className="w-1/3 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  value={draftVal[key]}
-                  onChange={(e) => setDraftVal((p) => ({ ...p, [key]: e.target.value }))}
-                  placeholder="Details..."
-                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={busy || !draftKey[key].trim() || !draftVal[key].trim()}
-                  aria-label={`Add ${key} entry`}
-                  className="inline-flex items-center rounded bg-slate-800 px-2.5 py-1 text-xs text-cyan-300 hover:bg-slate-700 disabled:opacity-40"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={draftKey[key]}
+                    onChange={(e) => setDraftKey((p) => ({ ...p, [key]: e.target.value }))}
+                    placeholder={key === "npcs" ? "Handle / Alias (e.g. Rogue)" : placeholderKey}
+                    className="w-1/3 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={draftVal[key]}
+                    onChange={(e) => setDraftVal((p) => ({ ...p, [key]: e.target.value }))}
+                    placeholder="Details..."
+                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy || !draftKey[key].trim() || !draftVal[key].trim()}
+                    aria-label={`Add ${key} entry`}
+                    className="inline-flex items-center rounded bg-slate-800 px-2.5 py-1 text-xs text-cyan-300 hover:bg-slate-700 disabled:opacity-40"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {key === "npcs" && isAdmin && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={npcRealNameDraft}
+                      onChange={(e) => setNpcRealNameDraft(e.target.value)}
+                      placeholder="Real / Legal Name (optional)"
+                      className="flex-1 min-w-[140px] rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                    <label className="inline-flex cursor-pointer items-center gap-1 text-[10px] text-amber-300">
+                      <input
+                        type="checkbox"
+                        checked={npcRealHiddenDraft}
+                        onChange={(e) => setNpcRealHiddenDraft(e.target.checked)}
+                        className="accent-amber-400"
+                      />
+                      {npcRealHiddenDraft ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                      <span>{npcRealHiddenDraft ? "Hidden / Secret" : "Public"}</span>
+                    </label>
+                  </div>
+                )}
               </form>
             </div>
           );

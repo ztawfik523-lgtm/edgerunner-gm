@@ -294,17 +294,21 @@ export function TopBar({
             </div>
           )}
 
-          {canAdminSettings && (
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              title={llmSettings?.model ? `Settings (Model: ${llmSettings.model})` : "Settings"}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200"
-            >
-              <Settings className="h-3.5 w-3.5 text-cyan-400" />
-              <span className="font-cyber-hud tracking-wide">Settings</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            title={
+              canAdminSettings
+                ? llmSettings?.model
+                  ? `Settings (Model: ${llmSettings.model})`
+                  : "Settings"
+                : "Display & Account Settings"
+            }
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200"
+          >
+            <Settings className="h-3.5 w-3.5 text-cyan-400" />
+            <span className="font-cyber-hud tracking-wide">Settings</span>
+          </button>
 
           {isTrueAdmin && onToggleViewAsUser && (
             <button

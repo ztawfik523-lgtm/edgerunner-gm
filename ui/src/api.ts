@@ -246,6 +246,28 @@ export async function logoutAuth(): Promise<void> {
   await postJson("/v1/auth/logout", {}).catch(() => undefined);
 }
 
+export async function updateMyAccount(payload: {
+  current_password: string;
+  new_username?: string;
+  new_password?: string;
+}): Promise<{
+  token: string;
+  role: "admin" | "user";
+  username: string;
+  previous_username?: string;
+  expires_in: number;
+}> {
+  const res = await postJson<{
+    token: string;
+    role: "admin" | "user";
+    username: string;
+    previous_username?: string;
+    expires_in: number;
+  }>("/v1/auth/me", payload);
+  if (res.token) setStoredAuthToken(res.token);
+  return res;
+}
+
 export async function fetchAuthAccounts(): Promise<{
   accounts: AuthAccountSummary[];
   allow_guest_users: boolean;
@@ -528,6 +550,8 @@ export async function createRulesPlayerCharacter(
     handle?: string;
     real_name?: string;
     real_name_hidden?: boolean;
+    gender?: string;
+    pronouns?: string;
     portrait_url?: string;
     color?: string;
     owner_username?: string;
@@ -573,6 +597,8 @@ export async function updateCharacterProfile(
     handle?: string | null;
     real_name?: string | null;
     real_name_hidden?: boolean;
+    gender?: string | null;
+    pronouns?: string | null;
     portrait_url?: string | null;
     color?: string | null;
     owner_username?: string | null;
@@ -746,8 +772,10 @@ export async function fetchSkillsCatalog(): Promise<{
   return jsonFetch("/v1/skills");
 }
 
-export async function fetchChatTree(campaignId: string): Promise<ChatTreeResponse> {
-  return jsonFetch<ChatTreeResponse>(`/v1/chat/tree?campaign_id=${encodeURIComponent(campaignId)}`);
+export async function fetchChatTree(campaignId: string, channelId = "main"): Promise<ChatTreeResponse> {
+  const qs = new URLSearchParams({ campaign_id: campaignId });
+  if (channelId && channelId !== "main") qs.set("channel_id", channelId);
+  return jsonFetch<ChatTreeResponse>(`/v1/chat/tree?${qs.toString()}`);
 }
 
 export async function switchChatBranch(campaignId: string, messageId: string): Promise<ChatTreeResponse> {
@@ -784,10 +812,37 @@ export async function updateChatMessage(
 export async function exportChatBranch(
   campaignId: string,
   leafId?: string,
+  channelId = "main",
 ): Promise<{ campaign: CampaignRecord; markdown: string }> {
   const qs = new URLSearchParams({ campaign_id: campaignId });
   if (leafId) qs.set("leaf_id", leafId);
+  if (channelId && channelId !== "main") qs.set("channel_id", channelId);
   return jsonFetch(`/v1/chat/export?${qs.toString()}`);
+}
+
+export async function updateNpcIdentity(
+  campaignId: string,
+  payload: {
+    handle: string;
+    description?: string;
+    real_name?: string;
+    real_name_hidden?: boolean;
+    delete?: boolean;
+  },
+): Promise<{ campaign: CampaignRecord; npc_profiles: Record<string, import("./types").NpcIdentityProfile> }> {
+  return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/npc-identity`, payload);
+}
+
+export async function updatePartyLocation(
+  campaignId: string,
+  payload: {
+    action?: "update" | "reunite";
+    pc_locations?: Record<string, string>;
+    location?: string;
+    append_notice?: boolean;
+  },
+): Promise<{ campaign: CampaignRecord; party_grouping: import("./types").PartyGroupingState }> {
+  return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/party-location`, payload);
 }
 
 export async function fetchNetworkInfo(campaignId?: string): Promise<NetworkInfo> {
@@ -798,19 +853,47 @@ export async function fetchNetworkInfo(campaignId?: string): Promise<NetworkInfo
 export async function sendPresence(
   campaignId: string,
   payload: { player_name: string; character_id?: string | null; is_host?: boolean },
-): Promise<{ players: CoopPlayer[]; active_turn: ActiveTurnInfo | null }> {
+): Promise<{
+  players: CoopPlayer[];
+  active_turn: ActiveTurnInfo | null;
+  active_turns?: Record<string, ActiveTurnInfo>;
+  sync_seq?: number;
+}> {
   return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/presence`, {
     client_id: getClientId(),
     ...payload,
   });
 }
 
+export interface PeerStreamEventPayload {
+  campaign_id: string;
+  channel_id: string;
+  client_id: string;
+  speaker_name?: string;
+  speaker_color?: string;
+  speaker_portrait_url?: string;
+  user_text?: string;
+  overclock?: boolean;
+  truncate_from_id?: string;
+  event: string;
+  data: Record<string, unknown>;
+}
+
 export function subscribeCampaignEvents(
   campaignId: string,
   handlers: {
-    onPresence?: (data: { players: CoopPlayer[]; active_turn: ActiveTurnInfo | null }) => void;
-    onSync?: (kind: string) => void;
-    onTurnLock?: (activeTurn: ActiveTurnInfo | null) => void;
+    onPresence?: (data: {
+      players: CoopPlayer[];
+      active_turn: ActiveTurnInfo | null;
+      active_turns?: Record<string, ActiveTurnInfo>;
+      sync_seq?: number;
+    }) => void;
+    onSync?: (kind: string, meta?: { channel_id?: string; sync_seq?: number }) => void;
+    onTurnLock?: (activeTurn: ActiveTurnInfo | null, activeTurns?: Record<string, ActiveTurnInfo>) => void;
+    onPeerUserMessage?: (data: { campaign_id: string; channel_id: string; client_id: string; message: ChatMessageNode }) => void;
+    onPeerStream?: (data: PeerStreamEventPayload) => void;
+    onPeerTurnDone?: (data: Record<string, unknown>) => void;
+    onPing?: (data: { ts?: number; sync_seq?: number }) => void;
   },
 ): () => void {
   if (typeof EventSource === "undefined") return () => {};
@@ -832,7 +915,10 @@ export function subscribeCampaignEvents(
   es.addEventListener("sync", (ev) => {
     try {
       const parsed = JSON.parse((ev as MessageEvent).data);
-      handlers.onSync?.(String(parsed?.kind ?? "all"));
+      handlers.onSync?.(String(parsed?.kind ?? "all"), {
+        channel_id: typeof parsed?.channel_id === "string" ? parsed.channel_id : undefined,
+        sync_seq: typeof parsed?.sync_seq === "number" ? parsed.sync_seq : undefined,
+      });
     } catch {
       handlers.onSync?.("all");
     }
@@ -840,7 +926,7 @@ export function subscribeCampaignEvents(
   es.addEventListener("turn_started", (ev) => {
     try {
       const parsed = JSON.parse((ev as MessageEvent).data);
-      handlers.onTurnLock?.(parsed?.active_turn ?? null);
+      handlers.onTurnLock?.(parsed?.active_turn ?? null, parsed?.active_turns);
     } catch {
       // ignore
     }
@@ -848,9 +934,41 @@ export function subscribeCampaignEvents(
   es.addEventListener("turn_finished", (ev) => {
     try {
       const parsed = JSON.parse((ev as MessageEvent).data);
-      handlers.onTurnLock?.(parsed?.active_turn ?? null);
+      handlers.onTurnLock?.(parsed?.active_turn ?? null, parsed?.active_turns);
     } catch {
       handlers.onTurnLock?.(null);
+    }
+  });
+  es.addEventListener("peer_user_message", (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data);
+      handlers.onPeerUserMessage?.(parsed);
+    } catch {
+      // ignore
+    }
+  });
+  es.addEventListener("peer_stream", (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data);
+      handlers.onPeerStream?.(parsed);
+    } catch {
+      // ignore
+    }
+  });
+  es.addEventListener("peer_turn_done", (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data);
+      handlers.onPeerTurnDone?.(parsed);
+    } catch {
+      // ignore
+    }
+  });
+  es.addEventListener("ping", (ev) => {
+    try {
+      const parsed = JSON.parse((ev as MessageEvent).data);
+      handlers.onPing?.(parsed);
+    } catch {
+      handlers.onPing?.({});
     }
   });
   return () => es.close();
@@ -986,7 +1104,9 @@ export async function streamChatTurn(
   params: {
     campaign_id: string;
     user_text: string;
+    channel_id?: string;
     parent_id?: string | null;
+    replace_message_id?: string | null;
     branch_from_root?: boolean;
     overclock?: boolean;
     luck_spend?: number;
@@ -1005,6 +1125,7 @@ export async function streamChatTurn(
 export async function postManualChatRoll(params: {
   campaign_id: string;
   character_id: string;
+  channel_id?: string;
   stat: string;
   skill?: string | null;
   dv: number;
@@ -1027,9 +1148,10 @@ export async function postManualChatRoll(params: {
   return postJson("/v1/chat/roll", params);
 }
 
-export async function syncChatRevisions(campaignId: string): Promise<ChatTreeResponse> {
+export async function syncChatRevisions(campaignId: string, channelId = "main"): Promise<ChatTreeResponse> {
   return postJson<ChatTreeResponse>("/v1/chat/sync-revisions", {
     campaign_id: campaignId,
+    channel_id: channelId,
   });
 }
 

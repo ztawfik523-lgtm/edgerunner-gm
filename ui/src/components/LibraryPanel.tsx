@@ -12,6 +12,7 @@ import {
   type LibraryCategory,
   type LibraryEntry,
 } from "../types";
+import { classifyWeaponTiers, getWeaponTierTheme } from "../utils/weaponQuality";
 
 const CATEGORY_DISPLAY_LABELS: Record<string, string> = {
   streetslang: "Streetslang",
@@ -437,7 +438,10 @@ export function LibraryPanel({
               : "No Corebook PDF uploaded yet. You can upload your PDF in Settings → Corebook PDF, or add custom homebrew entries above."}
           </div>
         )}
-        {items.map((entry) => (
+        {items.map((entry) => {
+          const wTier = entry.category === "weapon" ? classifyWeaponTiers(entry) : null;
+          const wTheme = wTier && wTier.primaryTier !== "other" ? getWeaponTierTheme(wTier.primaryTier) : null;
+          return (
           <button
             key={entry.id}
             type="button"
@@ -445,7 +449,9 @@ export function LibraryPanel({
             className={`w-full rounded-lg border px-3 py-2 text-left transition ${
               selectedEntry?.id === entry.id
                 ? "border-cyan-500/60 bg-cyan-950/30"
-                : "border-slate-800 bg-[#111726] hover:border-slate-700"
+                : wTheme
+                  ? wTheme.cardClass
+                  : "border-slate-800 bg-[#111726] hover:border-slate-700"
             }`}
           >
             <div className="flex items-center justify-between gap-2">
@@ -458,6 +464,11 @@ export function LibraryPanel({
                 <span className="truncate text-xs font-semibold text-slate-100">{entry.name}</span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
+                {wTheme && (
+                  <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${wTheme.badgeClass}`}>
+                    {wTheme.label}
+                  </span>
+                )}
                 <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-300">
                   {entry.category}
                 </span>
@@ -472,7 +483,8 @@ export function LibraryPanel({
               <p className="mt-1 line-clamp-1 text-[11px] text-slate-400">{entry.summary}</p>
             )}
           </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
