@@ -128,3 +128,51 @@ def test_enriched_create_and_update_character_profile(tmp_path):
     assert updated["detail"]["backstory"]["established_history"] == "Burned a Militech convoy in 2044."
     assert updated["detail"]["appearance"] == "Mirrorshades and scuffed synthleather."
     assert updated["detail"]["roles"] == [{"role": "Solo", "rank": 4}]
+
+
+def test_delete_character_and_equip_loadout(tmp_path):
+    from memory import CampaignMemory
+
+    store = CampaignStore(tmp_path / "c.sqlite")
+    mem = CampaignMemory(store)
+    camp = mem.create_campaign("Test Run", operation_id="camp-del-1")
+    char = store.create_character(
+        "Kestrel",
+        stats(),
+        skills={"Handgun": 4},
+        inventory={"Heavy Pistol": 1, "Light Armorjack Body (SP 11)": 1, "Light Armorjack Head (SP 11)": 1},
+    )
+    mem.attach_character(camp["id"], char["id"], camp["revision"], "join", "att-del-1")
+
+    equipped = store.update_character_profile(
+        char["id"],
+        expected_revision=char["revision"],
+        profile={
+            "equipped_weapon": "Heavy Pistol",
+            "equipped_armor": {"name": "Light Armorjack Body (SP 11)", "sp": 11},
+            "equipped_head_armor": {"name": "Light Armorjack Head (SP 11)", "sp": 11},
+        },
+        reason="Equip loadout",
+        operation_id="equip-1",
+    )
+    assert equipped["detail"]["equipped_weapon"] == "Heavy Pistol"
+    assert equipped["detail"]["equipped_armor"] == {"name": "Light Armorjack Body (SP 11)", "sp": 11}
+    assert equipped["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head (SP 11)", "sp": 11}
+
+    unequipped = store.update_character_profile(
+        char["id"],
+        expected_revision=equipped["revision"],
+        profile={"equipped_weapon": None, "equipped_armor": None, "equipped_head_armor": None},
+        reason="Unequip all",
+        operation_id="equip-2",
+    )
+    assert "equipped_weapon" not in unequipped["detail"]
+    assert "equipped_armor" not in unequipped["detail"]
+    assert "equipped_head_armor" not in unequipped["detail"]
+
+    deleted = store.delete_character(char["id"])
+    assert deleted == {"deleted": True, "id": char["id"], "name": "Kestrel"}
+    assert store.get_character(char["id"]) is None
+    assert mem.get_campaign(camp["id"])["character_ids"] == []
+    with pytest.raises(ValueError, match="character not found"):
+        store.delete_character(char["id"])

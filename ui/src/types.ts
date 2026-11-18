@@ -217,8 +217,9 @@ export interface LLMSettings {
   history_window?: number;
   compression_threshold?: number;
   citation_limit?: number;
-  gm_style?: "grounded" | "cinematic" | "lethal" | "sandbox";
-  narrator_length?: "concise" | "standard" | "detailed";
+  gm_style?: "grounded" | "cinematic" | "grit_dark" | "spy_thriller" | "full_action" | "lethal" | "noir_mystery" | "sandbox";
+  narrator_length?: "auto" | "concise" | "standard" | "detailed" | "novel";
+  narrator_pacing?: "balanced" | "reactive" | "tactical" | "roleplay" | "slow_burn";
   gm_thinking_mode?: "quality" | "balanced";
   require_character_to_speak?: boolean;
   default_time_step_minutes?: number;
@@ -247,6 +248,7 @@ export interface PublicSettingsResponse {
   mode: "two_pass" | "single_pass_tagged";
   gm_style: string;
   narrator_length: string;
+  narrator_pacing?: string;
   gm_thinking_mode?: "quality" | "balanced";
   require_character_to_speak?: boolean;
   enable_chronicler: boolean;

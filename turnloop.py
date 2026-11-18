@@ -107,8 +107,8 @@ def default_settings_path() -> Path:
     return DEFAULT_SETTINGS_PATH.expanduser()
 
 _DEFAULT_NARRATOR_PERSONA = (
-    "You are the Cyberpunk RED Game Master. Write grounded, street-level Night City fiction "
-    "driven by human friction, distinct character voices, and real consequences."
+    "You are the Cyberpunk RED Game Master. Run responsive, grounded scenes driven by player choices, "
+    "character sheets, and dice outcomes."
 )
 
 _DEFAULT_CREATION_ASSIST_PERSONA = (
@@ -165,30 +165,26 @@ _DEFAULT_MULTIPLAYER_RULES = (
 
 _DEFAULT_NARRATOR_CORE_RULES = (
     "Information Fog-of-War & Earned Intel:\n"
-    "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
-    "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
-    "- Handle vs Real Name Privacy: For both PCs (`Characters`) and NPCs (`NPC Identities`), if `real_name_hidden: true`, NPCs and public terminals only know their street `handle` (never reveal their hidden `real_name` unless uncovered or voluntarily shared in play).\n"
-    "Character voice, naming & grounded realism:\n"
-    "- Keep the tone gritty, everyday, and street-level—transactional, awkward, tense, and worn down—NOT witty action-movie banter, snappy one-liners, or fantastical heroics. People care about rent, cheap food, NCPD heat, and getting home alive.\n"
-    "- Write NPCs as ordinary, flawed people first (tired, defensive, irritated, blunt, hesitant, or quietly worried), each with a distinct rhythm and speech pattern rather than stoic thriller stereotypes.\n"
-    "- Ground emotion in mundane human behavior and subtext (rubbing a sore wrist, counting change, looking past your shoulder) rather than clinical scanner clichés ('pupil dilation', 'micro-servos whining', 'heart rate spike').\n"
-    "- Give NPCs realistic, culturally varied everyday names, surnames, or understated street handles (diverse working-class names rather than cartoon nicknames). NEVER use repetitive stock AI names like Jax, Vex, Kael, Nyx, Vane, Vance, Razor, Keres, Rook, Sable, or Varela.\n"
-    "- Persistent NPC cast & disposition: Keep any NPCs listed in Narrative State -> npcs consistent in role, voice, disposition/trust, and past slights or favors (and honor names already set in Locked Engine Outcomes), but do NOT force off-screen contacts into unrelated scenes just because they are in the list.\n"
-    "- If any clock in Active Clocks reaches full (`filled == segments`), deliver its world consequence naturally in the scene.\n"
-    "- Write full, natural sentences with varied rhythm. Avoid clipped subjectless fragments ('Not a question.', 'Doesn't glance up.', 'Slow. Deliberate.'), heavy em-dash interruptions in every paragraph, and AI tics like 'doesn't flinch', 'voice flat', or 'a pause'.\n"
-    "- Respect Cyberpunk RED's gritty street economy: typical edgerunner gigs pay 500–2,000eb (rare high-risk jobs reach ~5,000eb), never tens or hundreds of thousands of eurobucks.\n"
-    "Strict grounding & formatting rules:\n"
-    "- Never alter or contradict any dice roll total, stat, dice value, pass/fail, critical fumble/success, HP/Humanity/eb change, or rulebook citation listed in the Engine Roll Ledger below. Never offer to spend LUCK retroactively on an already-rolled check—in Cyberpunk RED, LUCK must be committed before rolling.\n"
-    "- NEVER fabricate unapplied numeric HP, Humanity, or eb damage/changes in prose unless an executed patch or Engine Roll Ledger outcome applied them (describe shock/strain qualitatively if HP wasn't reduced), and do NOT print raw stat-formula blocks like '**Roll: ... Dice: [...]**' inside story prose (the UI shows dice cards separately).\n"
-    "- Honor roll pass/fail mechanically: on a FAILURE, the attempted action FAILS—it is denied, jammed, spotted, or misses its mark (at most a partial hint at a steep cost on a narrow miss by 1–2; NEVER grant full lock bypasses, full NET data extraction, or target objective completion when a check failed).\n"
-    "- If the Engine Roll Ledger says `NONE (0 rolls executed)`, NO skill check or attack roll ran this turn—NEVER invent, simulate, or print any dice numbers, d10 result, total, or 'vs DV' pass/fail line in your prose.\n"
-    "- Treat the Characters JSON below as canonical truth for stats, skills, money, inventory, and detail. If a character has `inventory: {}` and `detail: {}`, they own NO confirmed weapons, items, or cyberware—do NOT attribute cyberarms, weapons, or loadouts to them even if earlier chat messages mentioned them.\n"
-    '- Clean Markdown only: write spoken dialogue in normal quotes (e.g. "Step away from the case."), NOT wrapped inside `**...**`, and NEVER nest `**bold**` markers inside already-bolded spans.'
+    "- Keep Player Knowledge (`Narrative State` + observed facts) separate from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). Never reveal unspotted traps, hidden motives, secret employers, or secret clocks.\n"
+    "- Gate sensitive answers behind rolls, leverage, payment, or legwork: if a check failed or no check/leverage unlocked it, have the NPC deflect, lie plausibly, or name a price.\n"
+    "- Handle vs Real Name Privacy: For PCs and NPCs with `real_name_hidden: true`, NPCs and public terminals only know their street `handle` unless revealed in play.\n"
+    "Continuity, Cast & World:\n"
+    "- Continue in media res from the previous beat: do not re-describe an already-established location or weather unless the crew moves or time shifts, and vary how each turn opens.\n"
+    "- Persistent NPC cast & voice: Keep NPCs in `Narrative State -> npcs` and `NPC Identities` consistent in role, disposition, `personality`, and `speech_style`, without forcing off-screen contacts into unrelated scenes.\n"
+    "- Deliver full clock consequences naturally when any clock in `Active Clocks` reaches `filled == segments`.\n"
+    "- Respect Cyberpunk RED's street economy (typical gigs pay 500–2,000eb, rare high-risk jobs ~5,000eb).\n"
+    "Strict Grounding & Formatting:\n"
+    "- Never alter or contradict any dice roll total, stat, pass/fail, critical, HP/Humanity/eb change, or citation in the Engine Roll Ledger. Never offer retroactive LUCK.\n"
+    "- Never fabricate unapplied numeric HP, Humanity, or eb changes in prose, and do not print raw stat-formula blocks (the UI renders dice cards separately).\n"
+    "- On a failed check, the attempted action fails (at most a costly partial hint on a narrow miss); if the ledger says `NONE (0 rolls executed)`, never invent dice numbers or pass/fail lines.\n"
+    "- Treat `Characters` JSON as canonical truth for stats, skills, money, inventory, and detail. Use `equipped_weapon` as the default weapon when a PC attacks without naming one (equipping does not mean drawn in public, and they can use any other weapon in `inventory` by name), and use `equipped_armor` (Body) / `equipped_head_armor` (Head) for worn SP protection.\n"
+    '- Clean Markdown only: write spoken dialogue in normal quotes (e.g. "Step away from the case."), never wrapped in `**...**`, and never nest `**bold**`.'
 )
 
 _DEFAULT_CHRONICLER_CORE_RULES = (
     "- Only record NPCs, locations, clues, or discoveries explicitly observed by the PC in the GM prose.\n"
-    "- Selectively capture up to 1-2 newly introduced major recurring named NPCs, custom locations/nodes, or unique datashards/items in `new_homebrew` ONLY if they are player-observed, recurring, and not already stored; leave `new_homebrew` empty (`[]`) on routine turns.\n"
+    "- Whenever a new named NPC with dialogue or a recurring role appears, save them in `new_homebrew` (`category: \"npc\"` with `stats`: `role`, `disposition`, `personality`, `speech_style`) AND in `state.npcs` + `npc_identities` (`personality`, `speech_style`) if not already stored.\n"
+    "- Also capture newly introduced custom locations/factions or unique datashards/items in `new_homebrew` when recurring/significant; leave `new_homebrew` empty (`[]`) if nothing new appeared.\n"
     "- Never invent unmentioned cyberware/gear or modify character HP/money.\n"
     "- Never copy `gm_secrets` or `secret` clocks into `state_ops`.\n"
     "- If time clearly passed in the narrated prose (e.g. 'twenty minutes later', 'by dawn') and `Solo Engine State` has not yet advanced for it, set `time_elapsed_minutes` accordingly; otherwise 0.\n"
@@ -252,16 +248,30 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
 }
 
 _GM_STYLE_HINTS = {
-    "grounded": "Grounded street realism: keep pay, threat, and reactions gritty, everyday, and consequential.",
-    "cinematic": "Cinematic neon noir: heightened atmosphere and tense dramatic pacing while still respecting dice outcomes.",
-    "lethal": "Lethal combat zone: ruthless tactical opposition, scarce ammo/meds, and unforgiving consequences for mistakes.",
-    "sandbox": "Open Night City sandbox: lean into ambient neighborhood leads, fixer gigs, and player-driven exploration.",
+    "grounded": "Grounded street-level realism: keep pay, threats, and NPC reactions believable and consequential.",
+    "cinematic": "Cinematic framing: heightened dramatic momentum and punchy visual beats while respecting dice outcomes.",
+    "grit_dark": "Gritty and dark: bleak, visceral street survival, moral grayness, and harsh fallout.",
+    "spy_thriller": "Spy thriller & espionage: tradecraft, paranoia, surveillance, double-crosses, and tense leverage.",
+    "full_action": "Full action & adrenaline: fast kinetic momentum, gunfights, chases, and immediate escalation.",
+    "lethal": "Lethal combat zone: ruthless tactical opposition, scarce ammo/meds, and unforgiving consequences.",
+    "noir_mystery": "Hardboiled investigation: clues, alibis, interviews, and slow-burn intrigue.",
+    "sandbox": "Open Night City sandbox: ambient neighborhood leads, fixer gigs, and player-driven exploration.",
 }
 
 _LENGTH_HINTS = {
+    "auto": "Match reply length naturally to the moment: a crisp sentence or two for quick banter or checks, longer when a new scene or major beat earns it.",
     "concise": "Keep replies crisp (1-2 tight paragraphs) so turns play fast.",
-    "standard": "Write focused, vivid scenes (2-4 paragraphs) with breathing room for dialogue.",
-    "detailed": "Write immersive, textured scenes (4-6 paragraphs) when exploring locales or tense confrontations.",
+    "standard": "Write balanced scenes (2-4 paragraphs) with room for dialogue and action.",
+    "detailed": "Write rich, textured scenes (4-6 paragraphs) when exploring locales or tense confrontations.",
+    "novel": "Write expansive, novelistic prose (5+ paragraphs) with unhurried character moments and scene texture.",
+}
+
+_PACING_HINTS = {
+    "balanced": "Balanced pacing: natural mix of dialogue, action, and world reaction.",
+    "reactive": "Fast and reactive: punchy back-and-forth, immediate NPC responses, minimal exposition.",
+    "tactical": "Tactical and crunch-forward: clear distances, cover, threat cues, and mechanical clarity.",
+    "roleplay": "Roleplay and character-heavy: linger on NPC personalities, subtext, relationships, and dialogue.",
+    "slow_burn": "Slow burn and tension: deliberate buildup, lingering suspense, and quiet dread before things pop off.",
 }
 
 
@@ -306,7 +316,7 @@ def _default_llm_dict() -> dict[str, Any]:
         "top_p": 1.0,
         "presence_penalty": 0.0,
         "frequency_penalty": 0.0,
-        "max_tokens": 1200,
+        "max_tokens": 2400,
         "intro_max_tokens": 4096,
         "timeout_s": 60.0,
         "mode": "two_pass",
@@ -320,6 +330,7 @@ def _default_llm_dict() -> dict[str, Any]:
         "citation_limit": 4,
         "gm_style": "grounded",
         "narrator_length": "standard",
+        "narrator_pacing": "balanced",
         "default_time_step_minutes": 0,
         "gm_thinking_mode": "quality",
         "require_character_to_speak": True,
@@ -423,13 +434,18 @@ def _validate_llm_settings(raw: dict[str, Any], existing: dict[str, Any] | None 
     if "gm_style" in raw and raw["gm_style"] is not None:
         style = str(raw["gm_style"]).strip()
         if style not in _GM_STYLE_HINTS:
-            raise ValueError("gm_style must be one of grounded, cinematic, lethal, sandbox")
+            raise ValueError(f"gm_style must be one of {', '.join(_GM_STYLE_HINTS)}")
         base["gm_style"] = style
     if "narrator_length" in raw and raw["narrator_length"] is not None:
         nl = str(raw["narrator_length"]).strip()
         if nl not in _LENGTH_HINTS:
-            raise ValueError("narrator_length must be one of concise, standard, detailed")
+            raise ValueError(f"narrator_length must be one of {', '.join(_LENGTH_HINTS)}")
         base["narrator_length"] = nl
+    if "narrator_pacing" in raw and raw["narrator_pacing"] is not None:
+        np_val = str(raw["narrator_pacing"]).strip()
+        if np_val not in _PACING_HINTS:
+            raise ValueError(f"narrator_pacing must be one of {', '.join(_PACING_HINTS)}")
+        base["narrator_pacing"] = np_val
     if "default_time_step_minutes" in raw and raw["default_time_step_minutes"] is not None:
         dt = int(raw["default_time_step_minutes"])
         if not 0 <= dt <= 1440:
@@ -503,6 +519,7 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "citation_limit": int(settings.get("citation_limit", 4)),
         "gm_style": settings.get("gm_style", "grounded"),
         "narrator_length": settings.get("narrator_length", "standard"),
+        "narrator_pacing": settings.get("narrator_pacing", "balanced"),
         "default_time_step_minutes": int(settings.get("default_time_step_minutes", 0)),
         "gm_thinking_mode": settings.get("gm_thinking_mode", "quality"),
         "require_character_to_speak": bool(settings.get("require_character_to_speak", True)),
@@ -1447,6 +1464,9 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
         "stats": char["stats"],
         "skills": char["skills"],
         "inventory": char.get("inventory") or {},
+        **({"equipped_weapon": d["equipped_weapon"]} if isinstance(d.get("equipped_weapon"), str) and d["equipped_weapon"].strip() else {}),
+        **({"equipped_armor": d["equipped_armor"]} if isinstance(d.get("equipped_armor"), dict) and d["equipped_armor"].get("name") else {}),
+        **({"equipped_head_armor": d["equipped_head_armor"]} if isinstance(d.get("equipped_head_armor"), dict) and d["equipped_head_armor"].get("name") else {}),
         "detail": char.get("detail") or {},
     }
 
@@ -1643,14 +1663,14 @@ def _encode_party_locations_json(mode: str, locations: dict[str, str], channels:
 
 
 def _encode_npc_identities_json(cur_ids: dict[str, dict[str, Any]]) -> str:
-    """Serialize __npc_identities within 2000 chars without ever producing truncated invalid JSON."""
+    """Serialize __npc_identities within 3500 chars without ever producing truncated invalid JSON."""
     clean: dict[str, dict[str, Any]] = dict(cur_ids)
     raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
-    while len(raw) > 2000 and clean:
+    while len(raw) > 3500 and clean:
         first_key = next(iter(clean))
         clean.pop(first_key, None)
         raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
-    return raw if len(raw) <= 2000 else "{}"
+    return raw if len(raw) <= 3500 else "{}"
 
 
 def apply_pc_locations_to_discoveries(
@@ -1714,6 +1734,8 @@ def parse_npc_identities_public(state: dict[str, Any] | None) -> dict[str, dict[
                             "handle": str(v.get("handle") or k).strip(),
                             **({"real_name": str(v["real_name"]).strip()} if isinstance(v.get("real_name"), str) and v["real_name"].strip() else {}),
                             "real_name_hidden": bool(v.get("real_name_hidden", True)),
+                            **({"personality": str(v["personality"]).strip()} if isinstance(v.get("personality"), str) and v["personality"].strip() else {}),
+                            **({"speech_style": str(v["speech_style"]).strip()} if isinstance(v.get("speech_style"), str) and v["speech_style"].strip() else {}),
                         }
                 return out
         except json.JSONDecodeError:
@@ -1830,13 +1852,19 @@ def _normalize_campaign_changes(
             elif isinstance(raw_meta, dict):
                 hidden = bool(raw_meta.get("real_name_hidden", True))
                 rname = str(raw_meta.get("real_name") or "").strip()[:100]
+                prev_entry = cur_ids.get(handle) or {}
                 if not hidden and not rname:
-                    prev_entry = cur_ids.get(handle) or {}
                     sec_val = (existing_secrets or {}).get(f"__npc_real:{handle}") or ""
                     rname = (str(sec_val).strip() or str(prev_entry.get("real_name") or "").strip())[:100]
                 entry: dict[str, Any] = {"handle": handle, "real_name_hidden": hidden}
                 if not hidden and rname:
                     entry["real_name"] = rname
+                pers = str(raw_meta.get("personality") or prev_entry.get("personality") or "").strip()[:140]
+                speech = str(raw_meta.get("speech_style") or prev_entry.get("speech_style") or "").strip()[:140]
+                if pers:
+                    entry["personality"] = pers
+                if speech:
+                    entry["speech_style"] = speech
                 cur_ids[handle] = entry
         base_disc["__npc_identities"] = _encode_npc_identities_json(cur_ids)
         clean["discoveries"] = base_disc
@@ -2481,7 +2509,8 @@ class TurnEngine:
         )
         if state_blob.strip() or user_text.strip():
             ref_names = {sourcecatalog._normalize(m.group(2)) for m in _LIB_REF_RE.finditer(state_blob)}
-            hay_norm = sourcecatalog._normalize(f"{user_text}\n{state.get('scene', '')}\n{state.get('summary', '')}")
+            npc_names_text = " ".join(str(k) for k in (state.get("npcs") or {}).keys())
+            hay_norm = sourcecatalog._normalize(f"{user_text}\n{state.get('scene', '')}\n{state.get('summary', '')}\n{npc_names_text}")
             try:
                 camp_entries = self.library.list_entries(campaign_id)
             except ValueError:
@@ -2496,6 +2525,22 @@ class TurnEngine:
                     if len(citations) >= total_cap:
                         break
         return citations[:total_cap]
+
+    def _saved_campaign_npcs(self, campaign_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Return compact dossiers of saved NPCs in campaign_library so the GM can recall and reuse them."""
+        try:
+            entries = self.library.list_entries(campaign_id, category="npc")
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for e in entries[:limit]:
+            st = e.get("stats") if isinstance(e.get("stats"), dict) else {}
+            item: dict[str, Any] = {"name": e.get("name"), "summary": e.get("summary")}
+            for k in ("role", "disposition", "personality", "speech_style"):
+                if st.get(k):
+                    item[k] = st[k]
+            out.append(item)
+        return out
 
     def _apply_character_update_op(
         self,
@@ -2958,7 +3003,7 @@ class TurnEngine:
             '  "checks": [{"actor": "name", "skill": "Handgun|Interface|Perception|...", "stat": "REF|INT|ROLE|...", "dv": 13, "modifier": 0, "luck": 0, "overclock": false, "reason": "..."}],\n'
             '  "start_time": "22:15",\n'
             '  "time_elapsed_minutes": 0,\n'
-            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "5th & Main, Rain-slicked street", "summary": "...", "npcs": {"NPC Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"NPC Handle": {"real_name": "Optional legal name", "real_name_hidden": true}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "objectives": {"Clear your name": "Active"}, "discoveries": {"Topic": "Observed clue"}}, "reason": "..."}],\n'
+            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "5th & Main, Night Market loading dock", "summary": "...", "npcs": {"NPC Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"NPC Handle": {"real_name": "Optional legal name", "real_name_hidden": true, "personality": "temperament/traits", "speech_style": "cadence/verbal quirks"}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "objectives": {"Clear your name": "Active"}, "discoveries": {"Topic": "Observed clue"}}, "reason": "..."}],\n'
             '  "solo_ops": [{"action": "economy_action|health_action|gear_action|role_action|start_encounter|encounter_action|end_encounter", "subaction": "job_reward|pay_month|hustle|rest|stabilize|quick_fix|treat_injury|buy|sell|equip_weapon|equip_armor|award_ip|solo_allocate|attack|move|reload|next_turn", "actor": "name", "arguments": {...}, "reason": "..."}],\n'
             '  "clock_ops": [{"id": "militech-heat", "name": "Militech Sweep Heat", "delta": 1, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}],\n'
             '  "gm_secrets": {"npc_or_topic": "private GM truth, motive, trap, or null once learned by PC"},\n'
@@ -3147,8 +3192,12 @@ class TurnEngine:
         persona = (self.prompt_settings.get("system_persona") or "").strip() or _DEFAULT_NARRATOR_PERSONA
         style_key = str(self.turn_settings.get("gm_style") or "grounded")
         length_key = str(self.turn_settings.get("narrator_length") or "standard")
+        pacing_key = str(self.turn_settings.get("narrator_pacing") or "balanced")
         style_hint = _GM_STYLE_HINTS.get(style_key, _GM_STYLE_HINTS["grounded"])
         length_hint = _LENGTH_HINTS.get(length_key, _LENGTH_HINTS["standard"])
+        pacing_hint = _PACING_HINTS.get(pacing_key, _PACING_HINTS["balanced"])
+        saved_npcs = self._saved_campaign_npcs(ctx["campaign"]["id"])
+        saved_npcs_line = f"\n- Saved Campaign NPCs (recallable): {json.dumps(saved_npcs)}" if saved_npcs else ""
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
         dialogue_rules = (self.prompt_settings.get("player_dialogue_rules") or "").strip()
         player_narration_rules = (self.prompt_settings.get("player_narration_rules") or "").strip()
@@ -3175,12 +3224,15 @@ class TurnEngine:
         )
         system_prompt = (
             f"{persona}\n"
-            f"Tone & Pacing: {style_hint} {length_hint}"
+            f"Style: {style_hint}\n"
+            f"Length: {length_hint}\n"
+            f"Pacing: {pacing_hint}"
             f"{custom_sections}"
             f"{core_block}"
             f"{flair_line}"
             f"- Narrative State: {json.dumps(state)}\n"
-            f"- NPC Identities (Respect real_name_hidden): {json.dumps(npc_profiles)}\n"
+            f"- NPC Identities (Respect real_name_hidden, personality & speech_style): {json.dumps(npc_profiles)}"
+            f"{saved_npcs_line}\n"
             f"- Party Grouping & Locations: {grouping.get('prompt_summary')}\n"
             f"- Solo Engine State: {json.dumps(solo_summary)}\n"
             f"- Active Clocks (secret clocks are GM eyes only): {json.dumps(clocks)}\n"
@@ -3241,6 +3293,8 @@ class TurnEngine:
         homebrew_note = "" if self.turn_settings.get("allow_ai_homebrew", True) else "- Leave `new_homebrew` empty (`[]`).\n"
         speaker_name = speaker["name"] if speaker and speaker.get("name") else None
         formatted_user = self._format_player_message(user_text, speaker_name)
+        saved_npcs = self._saved_campaign_npcs(ctx["campaign"]["id"])
+        saved_npcs_line = f"Saved Campaign NPCs: {json.dumps(saved_npcs)}\n" if saved_npcs else ""
         system_prompt = (
             "You are the Cyberpunk RED Post-Turn Chronicler. Compare the player turn and the actual narrated GM prose against the current state, "
             "and record ONLY facts, NPCs, clues, scene transitions, or time elapsed that appeared in the narrated prose and are NOT yet captured.\n"
@@ -3248,15 +3302,16 @@ class TurnEngine:
             "Return ONLY a single valid JSON object with no markdown:\n"
             "{\n"
             '  "time_elapsed_minutes": 0,\n'
-            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "...", "npcs": {"Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"Handle": {"real_name": "Optional legal name", "real_name_hidden": true}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "discoveries": {"Topic": "PC-observed clue"}, "objectives": {"Obj": "Active|Completed"}, "unresolved": {"Thread": "..."}}, "reason": "..."}],\n'
+            '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "...", "npcs": {"Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"Handle": {"real_name": "Optional legal name", "real_name_hidden": true, "personality": "temperament/traits", "speech_style": "cadence/verbal quirks"}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "discoveries": {"Topic": "PC-observed clue"}, "objectives": {"Obj": "Active|Completed"}, "unresolved": {"Thread": "..."}}, "reason": "..."}],\n'
             '  "clock_ops": [{"id": "...", "name": "...", "delta": 0, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}],\n'
             '  "gm_secrets": {"secret_key": "unrevealed off-screen motive/consequence or null if revealed in prose"},\n'
-            '  "new_homebrew": [{"name": "...", "category": "npc|location|faction|gear|program|rule|ammo|attachment|vehicle|drug|service|housing|mook|encounter|streetslang|screamsheet", "summary": "1-sentence player-known summary", "description": "concise factual entry", "stats": {...}}]\n'
+            '  "new_homebrew": [{"name": "...", "category": "npc|location|faction|gear|program|rule|ammo|attachment|vehicle|drug|service|housing|mook|encounter|streetslang|screamsheet", "summary": "1-sentence player-known summary", "description": "concise factual entry", "stats": {"role": "...", "disposition": "Neutral (0)", "personality": "...", "speech_style": "..."}}]\n'
             "}\n"
             f"{core_block}"
             f"{homebrew_note}"
             f"Party Grouping & Locations: {grouping.get('prompt_summary')}\n"
             f"NPC Identities: {json.dumps(npc_profiles)}\n"
+            f"{saved_npcs_line}"
             f"Current Narrative State: {json.dumps(state)}\n"
             f"Solo Engine State: {json.dumps(solo_summary)}\n"
             f"Active Clocks: {json.dumps(clocks)}\n"

@@ -1302,7 +1302,7 @@ async def generate_creation_ai_assist(
         full_schema: dict[str, Any] = {
             "name": "Evocative campaign title",
             "summary": "2 concise paragraphs: campaign premise, district mood, central conflict, and stakes",
-            "opening_scene": "1 vivid playable opening scene right before Turn 1: sensory details, where the crew is, and the immediate hook",
+            "opening_scene": "1 playable in-media-res opening moment right before Turn 1: what is actively happening, where the crew is, and the immediate hook",
             "npcs": {"NPC Name (Faction/Role)": "Who they are, motive, and immediate offer or threat"},
             "objectives": {"Objective Title": "What the crew needs to accomplish first"},
             "beat_chart": {

@@ -26,9 +26,11 @@ import {
   Upload,
   UserCheck,
   UserPlus,
+  X,
   Zap,
 } from "lucide-react";
 import {
+  deleteCharacter,
   fetchCharacterHistory,
   gameAction,
   postManualChatRoll,
@@ -71,6 +73,33 @@ interface CharacterPanelProps {
 }
 
 type SheetTab = "skills" | "gear" | "bio" | "log";
+
+type EquipSlot = "weapon" | "armor" | "head_armor";
+
+function inferItemEquipKind(name: string): EquipSlot | null {
+  const lower = name.toLowerCase();
+  const looksArmor =
+    /\b(armor|armorjack|kevlar|leathers|flak|metalgear|bodyweight|subdermal|skinweave|shield)\b|\bsp\s*\d+/i.test(
+      lower,
+    );
+  if (looksArmor) {
+    if (/\b(head|helmet|cowl|visor|cap)\b/i.test(lower)) return "head_armor";
+    return "armor";
+  }
+  const looksWeapon =
+    /\b(pistol|revolver|smg|rifle|shotgun|sniper|launcher|bow|crossbow|katana|sword|blade|knife|machete|bat|axe|club|hammer|chainsaw|dartgun|microwaver|flamethrower|railgun|melee|handgun|weapon)\b/i.test(
+      lower,
+    ) || Boolean(inferWeaponTierFromName(name));
+  if (looksWeapon) return "weapon";
+  return null;
+}
+
+function parseArmorSp(name: string): number | undefined {
+  const m = name.match(/\bSP\s*[:=]?\s*(\d+)\b/i);
+  if (!m) return undefined;
+  const parsed = parseInt(m[1], 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
 
 const STAT_QUICK_GUIDE: Record<StatName, { full: string; desc: string }> = {
   INT: {
@@ -188,6 +217,8 @@ export function CharacterPanel({
   const [itemName, setItemName] = useState("");
   const [itemCount, setItemCount] = useState(1);
   const [confirmRemoveItem, setConfirmRemoveItem] = useState<string | null>(null);
+  const [equipMenuForItem, setEquipMenuForItem] = useState<string | null>(null);
+  const [confirmDeleteChar, setConfirmDeleteChar] = useState(false);
   const [historyRows, setHistoryRows] = useState<
     Array<{ sequence: number; revision: number; reason: string }>
   >([]);
@@ -232,6 +263,8 @@ export function CharacterPanel({
 
   useEffect(() => {
     setConfirmRemoveItem(null);
+    setEquipMenuForItem(null);
+    setConfirmDeleteChar(false);
     setLastRoll(null);
     setEditingBio(false);
   }, [selectedId, campaignId]);
@@ -329,16 +362,94 @@ export function CharacterPanel({
     delete nextInv[name];
     setBusy(true);
     try {
-      await updateCharacterState(
+      const updated = await updateCharacterState(
         campaignId,
         active.id,
         active.revision,
         { inventory: nextInv },
         `Remove ${name}`,
       );
+      const clearProfile: {
+        equipped_weapon?: null;
+        equipped_armor?: null;
+        equipped_head_armor?: null;
+      } = {};
+      if (equippedWeapon === name) clearProfile.equipped_weapon = null;
+      if (equippedArmor?.name === name) clearProfile.equipped_armor = null;
+      if (equippedHeadArmor?.name === name) clearProfile.equipped_head_armor = null;
+      if (Object.keys(clearProfile).length > 0) {
+        await updateCharacterProfile(
+          campaignId,
+          active.id,
+          updated.revision,
+          clearProfile,
+          `Unequip removed ${name}`,
+        );
+      }
       await onRefresh();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Inventory remove failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleEquipItem = async (slot: EquipSlot, name: string | null) => {
+    if (!active || busy) return;
+    setBusy(true);
+    setEquipMenuForItem(null);
+    try {
+      const profilePatch: {
+        equipped_weapon?: string | null;
+        equipped_armor?: { name: string; sp?: number } | null;
+        equipped_head_armor?: { name: string; sp?: number } | null;
+      } = {};
+      if (slot === "weapon") {
+        profilePatch.equipped_weapon = name;
+      } else if (slot === "armor") {
+        if (name) {
+          const sp = parseArmorSp(name);
+          profilePatch.equipped_armor = sp !== undefined ? { name, sp } : { name };
+        } else {
+          profilePatch.equipped_armor = null;
+        }
+      } else {
+        if (name) {
+          const sp = parseArmorSp(name);
+          profilePatch.equipped_head_armor = sp !== undefined ? { name, sp } : { name };
+        } else {
+          profilePatch.equipped_head_armor = null;
+        }
+      }
+      await updateCharacterProfile(
+        campaignId,
+        active.id,
+        active.revision,
+        profilePatch,
+        name ? `Equip ${name}` : `Unequip ${slot}`,
+      );
+      await onRefresh();
+      onNotify(name ? `Equipped ${name}.` : `Unequipped ${slot.replace("_", " ")}.`);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "Failed to update equipped gear");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteCharacter = async () => {
+    if (!active || busy) return;
+    setBusy(true);
+    try {
+      const res = await deleteCharacter(campaignId, active.id);
+      setConfirmDeleteChar(false);
+      if (selectedSpeakerId === active.id) {
+        onSelectSpeakerId?.("");
+      }
+      await onRefresh();
+      onNotify(`Deleted character ${res.name || active.name}.`);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "Failed to delete character");
     } finally {
       setBusy(false);
     }
@@ -687,8 +798,15 @@ export function CharacterPanel({
     ? (detail.fashion as Array<string | { name?: string; style?: string }>)
     : [];
   const injuriesList = Array.isArray(detail.critical_injuries) ? detail.critical_injuries : [];
-  const equippedWeapon = typeof detail.equipped_weapon === "string" ? detail.equipped_weapon : null;
+  const equippedWeapon = typeof detail.equipped_weapon === "string" && detail.equipped_weapon.trim() ? detail.equipped_weapon.trim() : null;
   const equippedArmor = detail.equipped_armor as { name?: string; sp?: number } | undefined;
+  const equippedHeadArmor = detail.equipped_head_armor as { name?: string; sp?: number } | undefined;
+  const canDelete = Boolean(
+    isAdmin ||
+      (ownerUsername &&
+        currentUsername &&
+        ownerUsername.toLowerCase() === currentUsername.toLowerCase()),
+  );
   const backstoryObj =
     detail.backstory && typeof detail.backstory === "object"
       ? (detail.backstory as Record<string, unknown>)
@@ -873,6 +991,43 @@ export function CharacterPanel({
             <Plus className="h-3.5 w-3.5" />
             New
           </button>
+          {confirmDeleteChar ? (
+            <div className="inline-flex items-center gap-1 rounded border border-rose-500/50 bg-rose-950/40 px-2 py-1 text-xs">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleDeleteCharacter()}
+                className="font-semibold text-rose-300 hover:text-rose-200 disabled:opacity-40"
+              >
+                Confirm Delete
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmDeleteChar(false)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || !canDelete}
+              onClick={() => setConfirmDeleteChar(true)}
+              title={
+                canDelete
+                  ? `Delete ${activeHandle}`
+                  : !ownerUsername
+                    ? "Claim this character first to delete it"
+                    : `Owned by ${ownerUsername}. Only its owner or Admin can delete it.`
+              }
+              aria-label={`Delete ${activeHandle}`}
+              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-400 hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1397,7 +1552,7 @@ export function CharacterPanel({
       {/* Tab 2: Gear, Loadout & Cyberware */}
       {sheetTab === "gear" && (
         <div className="space-y-3">
-          {(equippedWeapon || equippedArmor || cyberwareList.length > 0) && (
+          {(equippedWeapon || equippedArmor?.name || equippedHeadArmor?.name || cyberwareList.length > 0) && (
             <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2 text-xs">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Loadout &amp; Cyberware
@@ -1408,17 +1563,62 @@ export function CharacterPanel({
                   const wTheme = wTier ? getWeaponTierTheme(wTier) : null;
                   return (
                     <span
-                      className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
+                      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] ${
                         wTheme ? wTheme.badgeClass : "border-rose-500/40 bg-rose-500/10 text-rose-200"
                       }`}
                     >
-                      Weapon: {equippedWeapon}
+                      <span>Weapon: {equippedWeapon}</span>
+                      {!sheetLocked && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void handleEquipItem("weapon", null)}
+                          aria-label={`Unequip ${equippedWeapon}`}
+                          title="Unequip weapon"
+                          className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
                     </span>
                   );
                 })()}
                 {equippedArmor?.name && (
-                  <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
-                    Armor: {equippedArmor.name} {equippedArmor.sp ? `(SP ${equippedArmor.sp})` : ""}
+                  <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
+                    <span>
+                      Body Armor: {equippedArmor.name} {equippedArmor.sp !== undefined ? `(SP ${equippedArmor.sp})` : ""}
+                    </span>
+                    {!sheetLocked && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleEquipItem("armor", null)}
+                        aria-label={`Unequip ${equippedArmor.name}`}
+                        title="Unequip body armor"
+                        className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                )}
+                {equippedHeadArmor?.name && (
+                  <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
+                    <span>
+                      Head Armor: {equippedHeadArmor.name} {equippedHeadArmor.sp !== undefined ? `(SP ${equippedHeadArmor.sp})` : ""}
+                    </span>
+                    {!sheetLocked && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleEquipItem("head_armor", null)}
+                        aria-label={`Unequip ${equippedHeadArmor.name}`}
+                        title="Unequip head armor"
+                        className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
                   </span>
                 )}
                 {cyberwareList.map((cw, idx) => (
@@ -1507,10 +1707,16 @@ export function CharacterPanel({
                 const confirming = confirmRemoveItem === name;
                 const wTier = inferWeaponTierFromName(name);
                 const wTheme = wTier ? getWeaponTierTheme(wTier) : null;
+                const isEquippedWeapon = equippedWeapon === name;
+                const isEquippedBody = equippedArmor?.name === name;
+                const isEquippedHead = equippedHeadArmor?.name === name;
+                const isEquipped = isEquippedWeapon || isEquippedBody || isEquippedHead;
+                const inferredSlot = inferItemEquipKind(name);
+                const menuOpen = equipMenuForItem === name;
                 return (
                   <div
                     key={name}
-                    className={`flex items-center justify-between rounded border px-2.5 py-1.5 text-xs ${
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded border px-2.5 py-1.5 text-xs ${
                       wTheme ? wTheme.cardClass : "border-slate-800/80 bg-slate-950/60"
                     }`}
                   >
@@ -1519,6 +1725,11 @@ export function CharacterPanel({
                       {wTheme && wTier && (
                         <span className={`rounded px-1 py-0.5 font-mono text-[9px] font-bold ${wTheme.badgeClass}`}>
                           {wTheme.label}
+                        </span>
+                      )}
+                      {isEquipped && (
+                        <span className="rounded border border-emerald-500/40 bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                          {isEquippedWeapon ? "Equipped Weapon" : isEquippedHead ? "Worn Head" : "Worn Body"}
                         </span>
                       )}
                       <span className="font-mono text-slate-400">×{qty}</span>
@@ -1545,15 +1756,86 @@ export function CharacterPanel({
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        disabled={busy || sheetLocked}
-                        onClick={() => setConfirmRemoveItem(name)}
-                        aria-label={`Remove ${name}`}
-                        className="text-slate-500 hover:text-rose-400 disabled:opacity-40"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {!sheetLocked && (
+                          isEquipped ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleEquipItem(
+                                  isEquippedWeapon ? "weapon" : isEquippedHead ? "head_armor" : "armor",
+                                  null,
+                                )
+                              }
+                              className="rounded border border-emerald-500/40 bg-emerald-950/30 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300 hover:border-amber-500/50 hover:text-amber-200 disabled:opacity-40"
+                            >
+                              Unequip
+                            </button>
+                          ) : inferredSlot ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleEquipItem(inferredSlot, name)}
+                              className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
+                            >
+                              Equip
+                            </button>
+                          ) : menuOpen ? (
+                            <div className="inline-flex items-center gap-1 font-mono text-[10px]">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleEquipItem("weapon", name)}
+                                className="rounded border border-rose-500/40 bg-rose-950/30 px-1.5 py-0.5 text-rose-200 hover:border-rose-400"
+                              >
+                                Weapon
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleEquipItem("armor", name)}
+                                className="rounded border border-cyan-500/40 bg-cyan-950/30 px-1.5 py-0.5 text-cyan-200 hover:border-cyan-400"
+                              >
+                                Body
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleEquipItem("head_armor", name)}
+                                className="rounded border border-cyan-500/40 bg-cyan-950/30 px-1.5 py-0.5 text-cyan-200 hover:border-cyan-400"
+                              >
+                                Head
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEquipMenuForItem(null)}
+                                className="text-slate-400 hover:text-slate-200"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setEquipMenuForItem(name)}
+                              className="rounded border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400 hover:border-cyan-500/50 hover:text-cyan-300 disabled:opacity-40"
+                            >
+                              Equip...
+                            </button>
+                          )
+                        )}
+                        <button
+                          type="button"
+                          disabled={busy || sheetLocked}
+                          onClick={() => setConfirmRemoveItem(name)}
+                          aria-label={`Remove ${name}`}
+                          className="text-slate-500 hover:text-rose-400 disabled:opacity-40"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 );

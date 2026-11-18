@@ -202,6 +202,23 @@ class CampaignStore:
                           (character_id, 1, None, _json(record), "character created", operation_id or "create:" + character_id, payload))
         return record
 
+    def delete_character(self, character_id):
+        cid = str(character_id)
+        with closing(self._connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM characters WHERE id=?", (cid,)).fetchone()
+            if row is None:
+                raise ValueError(f"character not found: {character_id}")
+            before = self._record(row)
+            has_members = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_members'"
+            ).fetchone()
+            if has_members:
+                conn.execute("DELETE FROM campaign_members WHERE character_id=?", (cid,))
+            conn.execute("DELETE FROM audit WHERE character_id=?", (cid,))
+            conn.execute("DELETE FROM characters WHERE id=?", (cid,))
+            return {"deleted": True, "id": cid, "name": before["name"]}
+
     def get_character(self, character_id):
         with closing(self._connect()) as conn:
             return self._record(conn.execute("SELECT * FROM characters WHERE id=?", (str(character_id),)).fetchone())
@@ -271,9 +288,16 @@ class CampaignStore:
             "portrait_url",
             "color",
             "owner_username",
+            "equipped_weapon",
+            "equipped_armor",
+            "equipped_head_armor",
         }
         if not profile or set(profile) - allowed_keys:
-            raise ValueError("profile may contain only backstory, lifepath, appearance, roles, handle, real_name, real_name_hidden, gender, pronouns, portrait_url, color, and owner_username")
+            raise ValueError(
+                "profile may contain only backstory, lifepath, appearance, roles, handle, real_name, "
+                "real_name_hidden, gender, pronouns, portrait_url, color, owner_username, "
+                "equipped_weapon, equipped_armor, and equipped_head_armor"
+            )
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("reason must be a nonempty string")
         if not isinstance(operation_id, str) or not operation_id:
@@ -301,7 +325,8 @@ class CampaignStore:
             before = self._record(row)
             updated = dict(before)
             new_detail = dict(before.get("detail") or {})
-            string_detail_keys = {"handle", "real_name", "gender", "pronouns", "portrait_url", "color", "owner_username"}
+            string_detail_keys = {"handle", "real_name", "gender", "pronouns", "portrait_url", "color", "owner_username", "equipped_weapon"}
+            armor_detail_keys = {"equipped_armor", "equipped_head_armor"}
             for key, val in profile.items():
                 if key == "roles":
                     if not isinstance(val, list):
@@ -315,6 +340,19 @@ class CampaignStore:
                     if not isinstance(val, bool):
                         raise ValueError("profile real_name_hidden must be a boolean")
                     new_detail["real_name_hidden"] = val
+                elif key in armor_detail_keys:
+                    if val is None or val == "":
+                        new_detail.pop(key, None)
+                    elif isinstance(val, dict):
+                        armor_name = str(val.get("name") or "").strip()
+                        if not armor_name:
+                            raise ValueError(f"profile {key} name must be a nonempty string")
+                        armor_obj: dict[str, Any] = {"name": armor_name}
+                        if "sp" in val and val["sp"] is not None:
+                            armor_obj["sp"] = _integer(val["sp"], f"profile {key} sp", 0, 100)
+                        new_detail[key] = armor_obj
+                    else:
+                        raise ValueError(f"profile {key} must be an object or null")
                 elif key in string_detail_keys:
                     if val is None or val == "":
                         new_detail.pop(key, None)

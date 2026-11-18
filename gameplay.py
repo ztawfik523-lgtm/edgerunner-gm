@@ -101,6 +101,7 @@ class GameplayService:
             "list_characters": self.store.list_characters,
             "update_character": self.store.update_character,
             "update_character_profile": self.store.update_character_profile,
+            "delete_character": self.store.delete_character,
             "history": self.store.audit_events,
             "undo": self.store.undo_last,
             "roll_dice": self.roll,

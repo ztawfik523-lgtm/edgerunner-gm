@@ -2801,6 +2801,145 @@ describe("Cyberpunk RED GM UI", () => {
     const catalogText = document.body.textContent ?? "";
     expect(catalogText.indexOf("Microwaver (Exotic)")).toBeLessThan(catalogText.indexOf("Dai Lung Streetmaster"));
   });
+
+  it("gates character deletion behind claiming for players and supports equipping weapons and armor", async () => {
+    const campaign = {
+      id: "camp-eq",
+      name: "Night Ops",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "Watson", npcs: {}, discoveries: {}, objectives: {}, summary: "" },
+      character_ids: ["char-eq-1"],
+    };
+    let currentChar = {
+      id: "char-eq-1",
+      name: "Rook",
+      revision: 1,
+      hp: 35,
+      max_hp: 35,
+      humanity: 60,
+      luck_remaining: 6,
+      money: 500,
+      stats: { INT: 6, REF: 6, DEX: 6, TECH: 6, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Handgun: 4 },
+      inventory: { "Heavy Pistol": 1, "Light Armorjack Body (SP 11)": 1 },
+      detail: { handle: "Rook" } as Record<string, unknown>,
+    };
+    const profileUpdates: Array<Record<string, unknown>> = [];
+    let deletedCalled = false;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "/health") {
+        return jsonResponse({ status: "ok", rules_indexed: true, pass_count: 100 });
+      }
+      if (url === "/v1/auth/status") {
+        return jsonResponse({
+          auth_enabled: true,
+          setup_required: false,
+          authenticated: true,
+          role: "user",
+          username: "alice",
+          pin_only_mode: false,
+        });
+      }
+      if (url === "/v1/settings") {
+        return jsonResponse({
+          turn_settings: { require_character_to_speak: true },
+          prompts: {},
+          runtime: { gm_style: "grounded", narrator_length: "standard" },
+        });
+      }
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          skills: { Handgun: { stat: "REF", cost: 1, specializable: false } },
+          roles: {},
+          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
+        });
+      }
+      if (url === "/v1/library") return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: deletedCalled ? [] : [currentChar],
+              npc_profiles: {},
+              party_grouping: { mode: "together", characters: [], channels: [], prompt_summary: "" },
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+        if (body.action === "update_character_profile") {
+          const prof = body.arguments.profile as Record<string, unknown>;
+          profileUpdates.push(prof);
+          currentChar = {
+            ...currentChar,
+            revision: currentChar.revision + 1,
+            detail: { ...currentChar.detail, ...prof },
+          };
+          return jsonResponse({ result: currentChar });
+        }
+        if (body.action === "delete_character") {
+          deletedCalled = true;
+          return jsonResponse({ result: { deleted: true, id: "char-eq-1", name: "Rook" } });
+        }
+        return jsonResponse({ result: {} });
+      }
+      if (url.includes("/chat/tree")) {
+        return jsonResponse({
+          active_leaf_id: null,
+          messages: [],
+          branches: [],
+          channels: [{ id: "main", name: "Main Table", location: "" }],
+        });
+      }
+      if (url.includes("/coop/state")) {
+        return jsonResponse({ players: [], protect_others: false });
+      }
+      return jsonResponse({});
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    // Open Character tab (in mobile/narrow or desktop rail)
+    const delBtn = await screen.findByRole("button", { name: /Delete Rook/i });
+    expect(delBtn).toBeDisabled();
+
+    // Claim sheet -> Delete becomes enabled
+    fireEvent.click(screen.getByRole("button", { name: /Claim Sheet/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Delete Rook/i })).not.toBeDisabled());
+
+    // Switch to Gear tab and equip Heavy Pistol and Light Armorjack Body
+    fireEvent.click(screen.getByRole("button", { name: /Gear \(2\)/i }));
+    const equipButtons = screen.getAllByRole("button", { name: /^Equip$/i });
+    fireEvent.click(equipButtons[0]);
+    await waitFor(() =>
+      expect(profileUpdates.some((p) => p.equipped_weapon === "Heavy Pistol")).toBe(true),
+    );
+
+    const equipBodyBtn = screen.getByRole("button", { name: /^Equip$/i });
+    fireEvent.click(equipBodyBtn);
+    await waitFor(() =>
+      expect(
+        profileUpdates.some(
+          (p) =>
+            typeof p.equipped_armor === "object" &&
+            p.equipped_armor !== null &&
+            (p.equipped_armor as { name?: string }).name === "Light Armorjack Body (SP 11)" &&
+            (p.equipped_armor as { sp?: number }).sp === 11,
+        ),
+      ).toBe(true),
+    );
+
+    // Delete character with confirmation
+    fireEvent.click(screen.getByRole("button", { name: /Delete Rook/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Delete/i }));
+    await waitFor(() => expect(deletedCalled).toBe(true));
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

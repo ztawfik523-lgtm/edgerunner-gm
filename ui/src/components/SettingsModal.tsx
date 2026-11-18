@@ -94,12 +94,134 @@ interface CustomProviderPreset {
   retry_attempts: number;
 }
 
+type GmStyleValue =
+  | "grounded"
+  | "cinematic"
+  | "grit_dark"
+  | "spy_thriller"
+  | "full_action"
+  | "lethal"
+  | "noir_mystery"
+  | "sandbox";
+type NarratorLengthValue = "auto" | "concise" | "standard" | "detailed" | "novel";
+type NarratorPacingValue = "balanced" | "reactive" | "tactical" | "roleplay" | "slow_burn";
+
+const GM_STYLE_OPTIONS: Array<{ value: GmStyleValue; label: string; description: string }> = [
+  {
+    value: "grounded",
+    label: "Grounded Street-Level (Default)",
+    description: "Believable Night City stakes, everyday consequences, and pragmatic NPC reactions.",
+  },
+  {
+    value: "cinematic",
+    label: "Cinematic Action",
+    description: "Heightened dramatic framing and punchy visual beats while still honoring dice outcomes.",
+  },
+  {
+    value: "grit_dark",
+    label: "Gritty & Dark",
+    description: "Bleak, visceral street survival, moral grayness, and harsh fallout from bad choices.",
+  },
+  {
+    value: "spy_thriller",
+    label: "Spy Thriller / Espionage",
+    description: "Tradecraft, paranoia, surveillance, double-crosses, and tense social leverage.",
+  },
+  {
+    value: "full_action",
+    label: "Full Action / Adrenaline",
+    description: "Fast kinetic momentum, gunfights, chases, and immediate escalation.",
+  },
+  {
+    value: "lethal",
+    label: "Lethal / High-Stakes",
+    description: "Ruthless tactical opposition, scarce ammo/meds, and unforgiving mistakes.",
+  },
+  {
+    value: "noir_mystery",
+    label: "Hardboiled Investigation",
+    description: "Clues, alibis, interviews, and slow-burn intrigue.",
+  },
+  {
+    value: "sandbox",
+    label: "Open-Ended Sandbox",
+    description: "Ambient neighborhood leads, fixer gigs, and player-driven exploration.",
+  },
+];
+
+const NARRATOR_LENGTH_OPTIONS: Array<{
+  value: NarratorLengthValue;
+  label: string;
+  description: string;
+  recommendedMinTokens: number;
+}> = [
+  {
+    value: "auto",
+    label: "AI Decides (Dynamic)",
+    description: "Matches length to the moment: 1–2 crisp sentences for banter/checks, longer for big scenes.",
+    recommendedMinTokens: 2048,
+  },
+  {
+    value: "concise",
+    label: "Concise (1–2 paragraphs)",
+    description: "Short, snappy replies ideal for rapid combat or fast back-and-forth.",
+    recommendedMinTokens: 1200,
+  },
+  {
+    value: "standard",
+    label: "Standard (2–4 paragraphs)",
+    description: "Balanced scenes with room for both dialogue and action.",
+    recommendedMinTokens: 1800,
+  },
+  {
+    value: "detailed",
+    label: "Detailed (4–6 paragraphs)",
+    description: "Richer, textured scenes for exploration and tense confrontations.",
+    recommendedMinTokens: 2500,
+  },
+  {
+    value: "novel",
+    label: "Expansive / Novelistic (5+ paragraphs)",
+    description: "Unhurried, multi-beat prose with deep character moments and scene texture.",
+    recommendedMinTokens: 4096,
+  },
+];
+
+const NARRATOR_PACING_OPTIONS: Array<{ value: NarratorPacingValue; label: string; description: string }> = [
+  {
+    value: "balanced",
+    label: "Balanced (Default)",
+    description: "Natural mix of dialogue, physical action, and world reaction.",
+  },
+  {
+    value: "reactive",
+    label: "Fast / Reactive",
+    description: "Punchy back-and-forth, immediate NPC responses, and minimal exposition.",
+  },
+  {
+    value: "tactical",
+    label: "Tactical / Crunch-Forward",
+    description: "Clear distances, cover, threat cues, and mechanical clarity.",
+  },
+  {
+    value: "roleplay",
+    label: "Roleplay & Character-Heavy",
+    description: "Lingers on NPC personalities, subtext, relationships, and dialogue.",
+  },
+  {
+    value: "slow_burn",
+    label: "Slow Burn / Tension",
+    description: "Deliberate buildup, lingering suspense, and quiet dread before things pop off.",
+  },
+];
+
 interface TuningPreset {
   label: string;
   builtin?: boolean;
   gm_thinking_mode: "quality" | "balanced";
-  gm_style: "grounded" | "cinematic" | "lethal" | "sandbox";
-  narrator_length: "concise" | "standard" | "detailed";
+  gm_style: GmStyleValue;
+  narrator_length: NarratorLengthValue;
+  narrator_pacing?: NarratorPacingValue;
   temperature: number;
   max_tokens: number;
   top_p: number;
@@ -119,6 +241,7 @@ const BUILTIN_TUNING_PRESETS: TuningPreset[] = [
     gm_thinking_mode: "quality",
     gm_style: "grounded",
     narrator_length: "detailed",
+    narrator_pacing: "roleplay",
     temperature: 0.75,
     max_tokens: 8192,
     top_p: 0.95,
@@ -135,7 +258,8 @@ const BUILTIN_TUNING_PRESETS: TuningPreset[] = [
     builtin: true,
     gm_thinking_mode: "balanced",
     gm_style: "grounded",
-    narrator_length: "standard",
+    narrator_length: "auto",
+    narrator_pacing: "balanced",
     temperature: 0.7,
     max_tokens: 4096,
     top_p: 0.95,
@@ -153,6 +277,7 @@ const BUILTIN_TUNING_PRESETS: TuningPreset[] = [
     gm_thinking_mode: "quality",
     gm_style: "lethal",
     narrator_length: "concise",
+    narrator_pacing: "tactical",
     temperature: 0.45,
     max_tokens: 4096,
     top_p: 0.9,
@@ -447,8 +572,9 @@ export function SettingsModal({
   const [historyWindow, setHistoryWindow] = useState(14);
   const [compressionThreshold, setCompressionThreshold] = useState(14);
   const [citationLimit, setCitationLimit] = useState(4);
-  const [gmStyle, setGmStyle] = useState<"grounded" | "cinematic" | "lethal" | "sandbox">("grounded");
-  const [narratorLength, setNarratorLength] = useState<"concise" | "standard" | "detailed">("standard");
+  const [gmStyle, setGmStyle] = useState<GmStyleValue>("grounded");
+  const [narratorLength, setNarratorLength] = useState<NarratorLengthValue>("standard");
+  const [narratorPacing, setNarratorPacing] = useState<NarratorPacingValue>("balanced");
   const [gmThinkingMode, setGmThinkingMode] = useState<"quality" | "balanced">("quality");
   const [defaultTimeStep, setDefaultTimeStep] = useState(0);
 
@@ -540,8 +666,9 @@ export function SettingsModal({
     setHistoryWindow(s.history_window ?? 14);
     setCompressionThreshold(s.compression_threshold ?? 14);
     setCitationLimit(s.citation_limit ?? 4);
-    setGmStyle(s.gm_style ?? "grounded");
-    setNarratorLength(s.narrator_length ?? "standard");
+    setGmStyle((s.gm_style as GmStyleValue) ?? "grounded");
+    setNarratorLength((s.narrator_length as NarratorLengthValue) ?? "standard");
+    setNarratorPacing((s.narrator_pacing as NarratorPacingValue) ?? "balanced");
     setGmThinkingMode(s.gm_thinking_mode === "balanced" ? "balanced" : "quality");
     setDefaultTimeStep(s.default_time_step_minutes ?? 0);
   };
@@ -698,6 +825,7 @@ export function SettingsModal({
         citation_limit: citationLimit,
         gm_style: gmStyle,
         narrator_length: narratorLength,
+        narrator_pacing: narratorPacing,
         gm_thinking_mode: gmThinkingMode,
         default_time_step_minutes: defaultTimeStep,
       };
@@ -1655,6 +1783,7 @@ export function SettingsModal({
                               gm_thinking_mode: gmThinkingMode,
                               gm_style: gmStyle,
                               narrator_length: narratorLength,
+                              narrator_pacing: narratorPacing,
                               temperature,
                               max_tokens: maxTokens,
                               top_p: topP,
@@ -1696,6 +1825,7 @@ export function SettingsModal({
                         setGmThinkingMode(p.gm_thinking_mode);
                         setGmStyle(p.gm_style);
                         setNarratorLength(p.narrator_length);
+                        setNarratorPacing(p.narrator_pacing ?? "balanced");
                         setTemperature(p.temperature);
                         setMaxTokens(p.max_tokens);
                         setTopP(p.top_p);
@@ -1723,6 +1853,7 @@ export function SettingsModal({
                           setGmThinkingMode(p.gm_thinking_mode);
                           setGmStyle(p.gm_style);
                           setNarratorLength(p.narrator_length);
+                          setNarratorPacing(p.narrator_pacing ?? "balanced");
                           setTemperature(p.temperature);
                           setMaxTokens(p.max_tokens);
                           setTopP(p.top_p);
@@ -1867,44 +1998,96 @@ export function SettingsModal({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <label
                     className="block"
-                    title="Sets the GM's pacing, lethality, and dramatic emphasis across Night City scenes."
+                    title="Sets the GM's genre tone, lethality, and dramatic emphasis across Night City scenes."
                   >
                     <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help">
                       GM Tone / Style <HelpCircle className="h-3 w-3 text-slate-500" />
                     </span>
                     <select
                       value={gmStyle}
-                      onChange={(e) => setGmStyle(e.target.value as typeof gmStyle)}
+                      onChange={(e) => setGmStyle(e.target.value as GmStyleValue)}
                       className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                     >
-                      <option value="grounded">Grounded Street-Level (Default)</option>
-                      <option value="cinematic">Cinematic Action</option>
-                      <option value="lethal">Lethal / High-Stakes</option>
-                      <option value="sandbox">Open-Ended Sandbox</option>
+                      {GM_STYLE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value} title={opt.description}>
+                          {opt.label}
+                        </option>
+                      ))}
                     </select>
+                    <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                      {GM_STYLE_OPTIONS.find((o) => o.value === gmStyle)?.description}
+                    </p>
                   </label>
 
                   <label
                     className="block"
-                    title="Target paragraph length for each GM reply. Concise is snappy for combat; Detailed gives richer atmosphere."
+                    title="Target reply length. AI Decides adapts length to the moment; longer options require higher Max Tokens."
                   >
                     <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help">
                       Narration Length <HelpCircle className="h-3 w-3 text-slate-500" />
                     </span>
                     <select
                       value={narratorLength}
-                      onChange={(e) => setNarratorLength(e.target.value as typeof narratorLength)}
+                      onChange={(e) => setNarratorLength(e.target.value as NarratorLengthValue)}
                       className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                     >
-                      <option value="concise">Concise (1–2 paragraphs)</option>
-                      <option value="standard">Standard (2–4 paragraphs)</option>
-                      <option value="detailed">Detailed (3–5 paragraphs)</option>
+                      {NARRATOR_LENGTH_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value} title={opt.description}>
+                          {opt.label}
+                        </option>
+                      ))}
                     </select>
+                    <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                      {NARRATOR_LENGTH_OPTIONS.find((o) => o.value === narratorLength)?.description}
+                    </p>
+                  </label>
+
+                  <label
+                    className="block"
+                    title="Controls how scenes flow between dialogue, tactical cues, and suspense."
+                  >
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help">
+                      Narrative Pacing <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </span>
+                    <select
+                      value={narratorPacing}
+                      onChange={(e) => setNarratorPacing(e.target.value as NarratorPacingValue)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    >
+                      {NARRATOR_PACING_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value} title={opt.description}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                      {NARRATOR_PACING_OPTIONS.find((o) => o.value === narratorPacing)?.description}
+                    </p>
                   </label>
                 </div>
+
+                {(() => {
+                  const lenOpt = NARRATOR_LENGTH_OPTIONS.find((o) => o.value === narratorLength);
+                  const minRec = lenOpt?.recommendedMinTokens ?? 1200;
+                  if (maxTokens >= minRec) return null;
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-950/25 px-3 py-1.5 text-[11px] text-amber-200">
+                      <span>
+                        Max Tokens ({maxTokens}) may cut off <strong>{lenOpt?.label}</strong> replies (especially with thinking models). Recommend at least {minRec}.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMaxTokens(minRec)}
+                        className="rounded border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-100 hover:bg-amber-500/25"
+                      >
+                        Set Max Tokens to {minRec}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Group 2: Sampling & Output */}

@@ -931,6 +931,29 @@ def make_api(
                     inner_args["owner_username"] = uname
                 args_payload["arguments"] = inner_args
 
+            if eff_role == "user" and action_name == "delete_character" and not sess.get("pin_only_mode"):
+                target_char_id = args_payload.get("character_id")
+                if isinstance(target_char_id, str) and target_char_id:
+                    existing_char = await asyncio.to_thread(lambda: gameplay_service().store.get_character(target_char_id))
+                    if existing_char:
+                        owner = str((existing_char.get("detail") or {}).get("owner_username") or "").strip()
+                        if not owner:
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": "Claim this character first before deleting it, or ask an Admin to delete it.",
+                                    "request_id": request_id,
+                                },
+                            )
+                        if not uname or owner.lower() != uname.lower():
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": f"Character '{existing_char.get('name')}' belongs to {owner}. Only its owner or Admin can delete it.",
+                                    "request_id": request_id,
+                                },
+                            )
+
             # Enforce character ownership for normal users on character-mutating actions
             char_mutating_actions = {
                 "update_character",
@@ -1795,6 +1818,7 @@ def make_api(
             "mode": llm_cfg["mode"],
             "gm_style": llm_cfg.get("gm_style", "grounded"),
             "narrator_length": llm_cfg.get("narrator_length", "standard"),
+            "narrator_pacing": llm_cfg.get("narrator_pacing", "balanced"),
             "gm_thinking_mode": llm_cfg.get("gm_thinking_mode", "quality"),
             "require_character_to_speak": bool(llm_cfg.get("require_character_to_speak", True)),
             "enable_chronicler": bool(llm_cfg.get("enable_chronicler", True)),

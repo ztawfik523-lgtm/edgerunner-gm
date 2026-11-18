@@ -650,12 +650,12 @@ async def test_narrator_prompt_character_voice_and_temperature_split(tmp_path: P
     narrator_call = [c for c in cap.calls if c[0] == "stream"][0]
     assert planner_call[1] == 0.1
     assert narrator_call[1] is None
-    assert "distinct rhythm" in narrator_call[2]
+    assert "personality" in narrator_call[2] and "speech_style" in narrator_call[2]
     assert "street economy" in narrator_call[2]
     assert "NEVER control, decide, or narrate the player character" in narrator_call[2]
-    assert "do NOT force off-screen contacts into unrelated scenes" in narrator_call[2]
+    assert "without forcing off-screen contacts into unrelated scenes" in narrator_call[2]
     assert "Officer Vane" not in narrator_call[2]
-    assert "do NOT attribute cyberarms, weapons, or loadouts" in narrator_call[2]
+    assert "Treat `Characters` JSON as canonical truth" in narrator_call[2]
 
 
 @pytest.mark.anyio
@@ -1681,6 +1681,95 @@ async def test_npc_privacy_user_account_update_and_split_scene_channels(tmp_path
         })
         assert same_loc.status_code == 200
         assert same_loc.json()["party_grouping"]["mode"] == "together"
+
+
+def test_summarize_character_equipped_and_anti_rain_prompt():
+    from turnloop import DEFAULT_PROMPT_TEMPLATES, _summarize_character
+
+    summary = _summarize_character({
+        "id": "c-eq-1",
+        "name": "Marek",
+        "hp": 35,
+        "max_hp": 35,
+        "humanity": 60,
+        "luck_remaining": 6,
+        "money": 500,
+        "stats": {"BODY": 6, "MOVE": 6},
+        "skills": {"Handgun": 4},
+        "inventory": {"Heavy Pistol": 1, "Light Armorjack Body (SP 11)": 1},
+        "detail": {
+            "equipped_weapon": "Heavy Pistol",
+            "equipped_armor": {"name": "Light Armorjack Body (SP 11)", "sp": 11},
+            "equipped_head_armor": {"name": "Light Armorjack Head (SP 11)", "sp": 11},
+        },
+    })
+    assert summary["equipped_weapon"] == "Heavy Pistol"
+    assert summary["equipped_armor"] == {"name": "Light Armorjack Body (SP 11)", "sp": 11}
+    assert summary["equipped_head_armor"] == {"name": "Light Armorjack Head (SP 11)", "sp": 11}
+    rules = DEFAULT_PROMPT_TEMPLATES["narrator_core_rules"]
+    assert "equipped_weapon" in rules
+    assert "equipped_armor" in rules
+    assert "Continue in media res" in rules
+
+
+def test_expanded_style_length_pacing_and_npc_personality_recall(tmp_path: Path):
+    from turnloop import (
+        _GM_STYLE_HINTS,
+        _LENGTH_HINTS,
+        _PACING_HINTS,
+        _validate_llm_settings,
+        build_npc_profiles,
+    )
+
+    assert "spy_thriller" in _GM_STYLE_HINTS
+    assert "grit_dark" in _GM_STYLE_HINTS
+    assert "full_action" in _GM_STYLE_HINTS
+    assert "auto" in _LENGTH_HINTS
+    assert "novel" in _LENGTH_HINTS
+    assert "slow_burn" in _PACING_HINTS
+
+    validated = _validate_llm_settings({
+        "gm_style": "spy_thriller",
+        "narrator_length": "auto",
+        "narrator_pacing": "slow_burn",
+    })
+    assert validated["gm_style"] == "spy_thriller"
+    assert validated["narrator_length"] == "auto"
+    assert validated["narrator_pacing"] == "slow_burn"
+
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    engine = TurnEngine(svc, None)
+    engine.library.add_entry(
+        camp_id,
+        name="Sadia Kouri",
+        category="npc",
+        summary="Dockside fixer who trades favors for cold-chain manifests.",
+        description="Runs a cramped office above Berth 4.",
+        stats={"role": "Fixer", "disposition": "Wary (-1)", "personality": "guarded, dry humor", "speech_style": "short clipped sentences"},
+        created_by="ai",
+        operation_id="npc-lib-1",
+    )
+    saved = engine._saved_campaign_npcs(camp_id)
+    assert len(saved) == 1
+    assert saved[0]["personality"] == "guarded, dry humor"
+    assert saved[0]["speech_style"] == "short clipped sentences"
+
+    # _collect_citations should recall Sadia Kouri when she is in state.npcs even if not named in user_text
+    cits = engine._collect_citations(camp_id, "I look around the loading bay", {"scene": "Docks", "summary": "", "npcs": {"Sadia Kouri": "Fixer — Wary (-1)"}})
+    assert any(c["name"] == "Sadia Kouri" for c in cits)
+
+    # build_npc_profiles preserves personality and speech_style from __npc_identities
+    state = {
+        "npcs": {"Sadia Kouri": "Fixer — Wary (-1)"},
+        "discoveries": {
+            "__npc_identities": json.dumps({
+                "Sadia Kouri": {"handle": "Sadia Kouri", "real_name_hidden": True, "personality": "guarded", "speech_style": "clipped"}
+            })
+        },
+    }
+    profs = build_npc_profiles(state)
+    assert profs["Sadia Kouri"]["personality"] == "guarded"
+    assert profs["Sadia Kouri"]["speech_style"] == "clipped"
 
 
 

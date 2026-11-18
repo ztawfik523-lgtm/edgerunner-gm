@@ -602,6 +602,9 @@ export async function updateCharacterProfile(
     portrait_url?: string | null;
     color?: string | null;
     owner_username?: string | null;
+    equipped_weapon?: string | null;
+    equipped_armor?: { name: string; sp?: number } | null;
+    equipped_head_armor?: { name: string; sp?: number } | null;
   },
   reason = "Update character bio and lifepath",
 ): Promise<CharacterRecord> {
@@ -614,6 +617,17 @@ export async function updateCharacterProfile(
       reason,
       operation_id: makeOpId("char-prof"),
     },
+    campaignId,
+  );
+}
+
+export async function deleteCharacter(
+  campaignId: string,
+  characterId: string,
+): Promise<{ deleted: boolean; id: string; name: string }> {
+  return gameAction<{ deleted: boolean; id: string; name: string }>(
+    "delete_character",
+    { character_id: characterId },
     campaignId,
   );
 }

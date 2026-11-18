@@ -444,6 +444,134 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
     assert [c["id"] for c in listed_after] == [c2["id"]]
 
 
+def test_delete_character_requires_claim_or_admin(tmp_path, monkeypatch):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+    app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+
+    setup = client.post(
+        "/v1/auth/setup",
+        json={"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
+    )
+    admin_headers = {"X-RedGM-Token": setup.json()["token"]}
+    client.cookies.clear()
+    alice_reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
+    alice_headers = {"X-RedGM-Token": alice_reg.json()["token"]}
+    client.cookies.clear()
+    bob_reg = client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"})
+    bob_headers = {"X-RedGM-Token": bob_reg.json()["token"]}
+
+    camp = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_campaign", "arguments": {"name": "Delete Test", "operation_id": "del-c1"}},
+    ).json()["result"]
+    stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+
+    # Admin creates a character and unclaims it so it is shared/unclaimed
+    unclaimed = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_character", "arguments": {"name": "Unclaimed", "stats": stats, "operation_id": "del-u1"}},
+    ).json()["result"]
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={
+            "action": "attach_character",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {"character_id": unclaimed["id"], "expected_revision": 1, "reason": "join", "operation_id": "del-a1"},
+        },
+    )
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={
+            "action": "update_character_profile",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {
+                "character_id": unclaimed["id"],
+                "expected_revision": 1,
+                "profile": {"owner_username": None},
+                "reason": "make unclaimed",
+                "operation_id": "del-uncl-1",
+            },
+        },
+    )
+
+    # Normal user cannot delete an unclaimed character
+    res_unclaimed = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "delete_character", "campaign_id": camp["id"], "arguments": {"character_id": unclaimed["id"]}},
+    )
+    assert res_unclaimed.status_code == 403
+    assert "Claim this character first" in res_unclaimed.json()["detail"]
+
+    # Alice claims it, then Bob still cannot delete it, but Alice can
+    claim_res = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={
+            "action": "update_character_profile",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {
+                "character_id": unclaimed["id"],
+                "expected_revision": 1,
+                "profile": {"owner_username": "alice"},
+                "reason": "claim",
+                "operation_id": "del-cl1",
+            },
+        },
+    )
+    assert claim_res.status_code == 200
+
+    res_bob = client.post(
+        "/v1/game",
+        headers=bob_headers,
+        json={"action": "delete_character", "campaign_id": camp["id"], "arguments": {"character_id": unclaimed["id"]}},
+    )
+    assert res_bob.status_code == 403
+
+    res_alice = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "delete_character", "campaign_id": camp["id"], "arguments": {"character_id": unclaimed["id"]}},
+    )
+    assert res_alice.status_code == 200
+    assert res_alice.json()["result"]["deleted"] is True
+
+    # Admin can delete an unclaimed character directly
+    unclaimed2 = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_character", "arguments": {"name": "AdminDel", "stats": stats, "operation_id": "del-u2"}},
+    ).json()["result"]
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={
+            "action": "attach_character",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {"character_id": unclaimed2["id"], "expected_revision": 1, "reason": "join", "operation_id": "del-a2"},
+        },
+    )
+    res_admin = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "delete_character", "campaign_id": camp["id"], "arguments": {"character_id": unclaimed2["id"]}},
+    )
+    assert res_admin.status_code == 200
+    assert res_admin.json()["result"]["deleted"] is True
+
+
 def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     import time
     import pymupdf
