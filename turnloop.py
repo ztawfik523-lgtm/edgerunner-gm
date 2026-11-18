@@ -137,10 +137,29 @@ _DEFAULT_PLANNER_CORE_RULES = (
     "- For update_character state_ops, only use changes keys: hp (int), money (int), humanity (int), inventory ({item_name: quantity_int})."
 )
 
-_DEFAULT_NARRATOR_CORE_RULES = (
-    "Player agency & GM role:\n"
+_DEFAULT_PLAYER_MESSAGE_TEMPLATE = "[{speaker}]: {message}"
+
+_DEFAULT_PLAYER_DIALOGUE_RULES = (
+    "- Treat text in \"quotes\" as spoken in-character dialogue that nearby NPCs hear and react to directly.\n"
+    "- Treat unquoted narration or *asterisk actions* as the character's declared physical actions, intent, or positioning.\n"
+    "- Treat ((double parentheses)) or [OOC: ...] as out-of-character table notes for the GM; follow the intent without having NPCs hear it in-world.\n"
+    "- Honor [Rolled ...] tags as player-supplied dice context when relevant, while trusting the Authoritative Dice Roll Ledger for official checks."
+)
+
+_DEFAULT_PLAYER_NARRATION_RULES = (
     "- NEVER control, decide, or narrate the player character's own actions, dialogue, habits (drinking, smoking, leaning), inner thoughts, emotions, or unstated backstory. You run the world, NPCs, external events, and hazards/injuries inflicted ON the character (backed by the rolls/outcomes below)—never puppet what the player decides to do.\n"
+    "- Address the active player character naturally (second person \"you\" in solo/focused moments, or by character name when multiple PCs share a scene) and stop before deciding their reaction.\n"
     "- When the player gives an open prompt, bring an outside situation or NPC to them where they stand and leave their choice and reaction completely open.\n"
+    "- Reflect physical consequences: if the active character's `wound_state` is `serious` or `mortal` (or they carry an injury/armor penalty), reflect the pain, sluggishness, and wound penalty in play without overriding their choices."
+)
+
+_DEFAULT_MULTIPLAYER_RULES = (
+    "- Each turn arrives tagged with its active speaker (`[Character]: ...` and `Active Player / Speaker`). Resolve checks, LUCK, Overclock, and direct NPC replies primarily for that speaker unless they explicitly act together with a teammate.\n"
+    "- Protect teammate agency: NEVER invent dialogue, movement, or decisions for other player characters in the party while resolving one player's turn—leave idle or off-spotlight PCs free to jump in on their own turn.\n"
+    "- Keep party members distinct: honor each PC's separate HP, ammo, cyberware, location, and NPC disposition from `Characters`, and do not merge their inventory or private knowledge unless they are together and share it."
+)
+
+_DEFAULT_NARRATOR_CORE_RULES = (
     "Information Fog-of-War & Earned Intel:\n"
     "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
     "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
@@ -150,7 +169,6 @@ _DEFAULT_NARRATOR_CORE_RULES = (
     "- Ground emotion in mundane human behavior and subtext (rubbing a sore wrist, counting change, looking past your shoulder) rather than clinical scanner clichés ('pupil dilation', 'micro-servos whining', 'heart rate spike').\n"
     "- Give NPCs realistic, culturally varied everyday names, surnames, or understated street handles (diverse working-class names rather than cartoon nicknames). NEVER use repetitive stock AI names like Jax, Vex, Kael, Nyx, Vane, Vance, Razor, Keres, Rook, Sable, or Varela.\n"
     "- Persistent NPC cast & disposition: Keep any NPCs listed in Narrative State -> npcs consistent in role, voice, disposition/trust, and past slights or favors (and honor names already set in Locked Engine Outcomes), but do NOT force off-screen contacts into unrelated scenes just because they are in the list.\n"
-    "- Reflect physical consequences: if a character's `wound_state` is `serious` or `mortal` (or has an injury/armor penalty), reflect the pain, sluggishness, and wound penalty in play.\n"
     "- If any clock in Active Clocks reaches full (`filled == segments`), deliver its world consequence naturally in the scene.\n"
     "- Write full, natural sentences with varied rhythm. Avoid clipped subjectless fragments ('Not a question.', 'Doesn't glance up.', 'Slow. Deliberate.'), heavy em-dash interruptions in every paragraph, and AI tics like 'doesn't flinch', 'voice flat', or 'a pause'.\n"
     "- Respect Cyberpunk RED's gritty street economy: typical edgerunner gigs pay 500–2,000eb (rare high-risk jobs reach ~5,000eb), never tens or hundreds of thousands of eurobucks.\n"
@@ -181,6 +199,10 @@ _DEFAULT_ARCHIVIST_CORE_RULES = (
 DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
     "system_persona": _DEFAULT_NARRATOR_PERSONA,
     "world_rules_prefix": "",
+    "player_message_template": _DEFAULT_PLAYER_MESSAGE_TEMPLATE,
+    "player_dialogue_rules": _DEFAULT_PLAYER_DIALOGUE_RULES,
+    "player_narration_rules": _DEFAULT_PLAYER_NARRATION_RULES,
+    "multiplayer_rules": _DEFAULT_MULTIPLAYER_RULES,
     "planner_extra": "",
     "narrator_extra": "",
     "chronicler_extra": "",
@@ -441,7 +463,7 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 _MAX_PROMPT_CHARS = 16000
-_NON_EMPTY_PROMPT_KEYS = frozenset({"system_persona", "creation_assist_persona"})
+_NON_EMPTY_PROMPT_KEYS = frozenset({"system_persona", "creation_assist_persona", "player_message_template"})
 
 
 def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
@@ -2343,9 +2365,12 @@ class TurnEngine:
         gm_secrets = prep.get("gm_secrets") or {}
         clocks = prep.get("clocks") or []
         solo_summary = self._solo_summary(ctx)
+        speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
+        party_names = [str(c.get("name") or "").strip() for c in ctx["characters"] if str(c.get("name") or "").strip()]
+        party_line = f"Party characters in campaign: {', '.join(party_names)}.\n" if len(party_names) > 1 else ""
         speaker_line = (
-            f"Active player speaker for this turn: {speaker['name']} (character_id={speaker['id']}).\n"
-            if speaker and speaker.get("name")
+            f"Active player speaker for this turn: {speaker_name} (character_id={speaker['id']}).\n"
+            if speaker and speaker_name
             else ""
         )
         guidance_line = (
@@ -2357,12 +2382,18 @@ class TurnEngine:
         style_hint = _GM_STYLE_HINTS.get(style_key, _GM_STYLE_HINTS["grounded"])
         default_step = int(self.turn_settings.get("default_time_step_minutes") or 0)
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
+        dialogue_rules = (self.prompt_settings.get("player_dialogue_rules") or "").strip()
+        multiplayer_rules = (self.prompt_settings.get("multiplayer_rules") or "").strip()
         planner_extra = (self.prompt_settings.get("planner_extra") or "").strip()
         planner_core = (self.prompt_settings.get("planner_core_rules") or "").strip()
         allow_homebrew = bool(self.turn_settings.get("allow_ai_homebrew", True))
         custom_lines = ""
         if world_prefix:
             custom_lines += f"Campaign World / Table Rules:\n{world_prefix}\n"
+        if dialogue_rules:
+            custom_lines += f"Player Dialogue & Action Parsing:\n{dialogue_rules}\n"
+        if multiplayer_rules:
+            custom_lines += f"Multi-Player / Co-op Turn Rules:\n{multiplayer_rules}\n"
         if planner_extra:
             custom_lines += f"Custom Planner Instructions:\n{planner_extra}\n"
         step_note = f"- Default fallback if time passed without another value: {default_step}m.\n" if default_step > 0 else ""
@@ -2387,6 +2418,7 @@ class TurnEngine:
             f"{core_block}"
             f"{step_note}"
             f"{homebrew_note}"
+            f"{party_line}"
             f"{speaker_line}"
             f"{guidance_line}"
             f"Overclock requested by player: {overclock}.\n"
@@ -2403,10 +2435,20 @@ class TurnEngine:
         msgs = [{"role": "system", "content": system_prompt}]
         for item in prep["branch"][-hist_win:]:
             item_speaker = (item.get("metadata") or {}).get("speaker_name")
-            content = f"[{item_speaker}]: {item['content']}" if item["role"] == "user" and item_speaker else item["content"]
+            content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
             msgs.append({"role": item["role"], "content": content})
-        msgs.append({"role": "user", "content": user_text})
+        msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
         return msgs
+
+    def _format_player_message(self, text: str, speaker_name: str | None = None) -> str:
+        clean_text = text.strip() if isinstance(text, str) else ""
+        speaker = speaker_name.strip() if isinstance(speaker_name, str) and speaker_name.strip() else ""
+        if not speaker:
+            return clean_text
+        tpl = (self.prompt_settings.get("player_message_template") or "").strip() or _DEFAULT_PLAYER_MESSAGE_TEMPLATE
+        if "{message}" not in tpl:
+            tpl = f"{tpl} {{message}}".strip()
+        return tpl.replace("{speaker}", speaker).replace("{message}", clean_text)
 
     @staticmethod
     def _format_roll_ledger(executed: dict[str, Any], *, tagged_single_pass: bool = False) -> str:
@@ -2484,9 +2526,16 @@ class TurnEngine:
         gm_secrets = executed.get("gm_secrets", prep.get("gm_secrets") or {})
         clocks = executed.get("clocks", prep.get("clocks") or [])
         solo_summary = self._solo_summary(ctx)
+        speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
+        party_names = [str(c.get("name") or "").strip() for c in narrator_chars if str(c.get("name") or "").strip()]
+        party_line = (
+            f"\n- Party Roster: {', '.join(party_names)}"
+            if len(party_names) > 1
+            else ""
+        )
         speaker_line = (
-            f"\n- Active Player / Speaker: {speaker['name']}"
-            if speaker and speaker.get("name")
+            f"\n- Active Player / Speaker: {speaker_name}"
+            if speaker and speaker_name
             else ""
         )
         guidance_line = (
@@ -2500,12 +2549,21 @@ class TurnEngine:
         style_hint = _GM_STYLE_HINTS.get(style_key, _GM_STYLE_HINTS["grounded"])
         length_hint = _LENGTH_HINTS.get(length_key, _LENGTH_HINTS["standard"])
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
+        dialogue_rules = (self.prompt_settings.get("player_dialogue_rules") or "").strip()
+        player_narration_rules = (self.prompt_settings.get("player_narration_rules") or "").strip()
+        multiplayer_rules = (self.prompt_settings.get("multiplayer_rules") or "").strip()
         narrator_extra = (self.prompt_settings.get("narrator_extra") or "").strip()
         narrator_core = (self.prompt_settings.get("narrator_core_rules") or "").strip()
         enable_highlights = bool(self.turn_settings.get("enable_highlights", True))
         custom_sections = ""
         if world_prefix:
             custom_sections += f"\nTable World Rules:\n{world_prefix}\n"
+        if dialogue_rules:
+            custom_sections += f"\nHow Player Dialogue & Actions Are Sent:\n{dialogue_rules}\n"
+        if player_narration_rules:
+            custom_sections += f"\nPlayer Narration & Agency:\n{player_narration_rules}\n"
+        if multiplayer_rules:
+            custom_sections += f"\nMulti-Player / Co-op Handling:\n{multiplayer_rules}\n"
         if narrator_extra:
             custom_sections += f"\nCustom Narrator Instructions:\n{narrator_extra}\n"
         core_block = f"\n{narrator_core}\n" if narrator_core else "\n"
@@ -2525,6 +2583,7 @@ class TurnEngine:
             f"- Active Clocks (secret clocks are GM eyes only): {json.dumps(clocks)}\n"
             f"- Hidden GM Secrets (GM eyes only—NEVER leak unobservably or give away for free): {json.dumps(gm_secrets)}\n"
             f"- Characters: {json.dumps(narrator_chars)}"
+            f"{party_line}"
             f"{speaker_line}"
             f"{guidance_line}\n"
             f"- Rulebook Library Context: {json.dumps(cards)}\n"
@@ -2540,9 +2599,9 @@ class TurnEngine:
         msgs = [{"role": "system", "content": system_prompt}]
         for item in prep["branch"][-hist_win:]:
             item_speaker = (item.get("metadata") or {}).get("speaker_name")
-            content = f"[{item_speaker}]: {item['content']}" if item["role"] == "user" and item_speaker else item["content"]
+            content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
             msgs.append({"role": item["role"], "content": content})
-        msgs.append({"role": "user", "content": user_text})
+        msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
         return msgs
 
     def _build_chronicler_messages(
@@ -2551,6 +2610,8 @@ class TurnEngine:
         user_text: str,
         narrated_text: str,
         executed: dict[str, Any],
+        *,
+        speaker: dict[str, str] | None = None,
     ) -> list[dict[str, str]]:
         ctx = prep["context"]
         state = ctx["campaign"]["state"]
@@ -2562,6 +2623,8 @@ class TurnEngine:
         extra_block = f"\nCustom Chronicler Instructions:\n{chron_extra}\n" if chron_extra else "\n"
         core_block = f"Rules:\n{chron_core}\n" if chron_core else ""
         homebrew_note = "" if self.turn_settings.get("allow_ai_homebrew", True) else "- Leave `new_homebrew` empty (`[]`).\n"
+        speaker_name = speaker["name"] if speaker and speaker.get("name") else None
+        formatted_user = self._format_player_message(user_text, speaker_name)
         system_prompt = (
             "You are the Cyberpunk RED Post-Turn Chronicler. Compare the player turn and the actual narrated GM prose against the current state, "
             "and record ONLY facts, NPCs, clues, scene transitions, or time elapsed that appeared in the narrated prose and are NOT yet captured.\n"
@@ -2584,7 +2647,7 @@ class TurnEngine:
         )
         return [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Player Action: {user_text}\n\nGM Narration:\n{narrated_text}"},
+            {"role": "user", "content": f"Player Action: {formatted_user}\n\nGM Narration:\n{narrated_text}"},
         ]
 
     def _execute_plan(
@@ -3000,7 +3063,7 @@ class TurnEngine:
                     "gm_secrets": executed["gm_secrets"],
                     "clocks": executed["clocks"],
                 }
-                chron_msgs = self._build_chronicler_messages(chron_prep, user_text, clean_text, executed)
+                chron_msgs = self._build_chronicler_messages(chron_prep, user_text, clean_text, executed, speaker=speaker)
                 chron_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=True)
                 planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
                 raw_chron = await self.llm.complete(chron_msgs, temperature=planner_temp, json_mode=True, **chron_kwargs)
@@ -3120,7 +3183,11 @@ class TurnEngine:
             for e in self.library.list_entries(campaign_id)
         ]
         transcript_lines = [
-            f"[{m['role'].upper()}] {m['content'].strip()}"
+            (
+                f"[{((m.get('metadata') or {}).get('speaker_name') or 'USER').upper()}] {m['content'].strip()}"
+                if m.get("role") == "user"
+                else f"[{m['role'].upper()}] {m['content'].strip()}"
+            )
             for m in branch[-60:]
             if isinstance(m.get("content"), str) and m["content"].strip()
         ]

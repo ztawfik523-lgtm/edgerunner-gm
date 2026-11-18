@@ -473,13 +473,18 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
         json={
             "creation_assist_persona": "CUSTOM CREATOR PERSONA",
             "narrator_core_rules": "CUSTOM CORE RULES",
+            "player_message_template": "<<{speaker}>> {message}",
+            "player_dialogue_rules": "CUSTOM DIALOGUE RULES",
+            "player_narration_rules": "CUSTOM PLAYER NARRATION",
+            "multiplayer_rules": "CUSTOM COOP RULES",
         },
     )
     assert upd_prompts.status_code == 200
     assert upd_prompts.json()["prompts"]["creation_assist_persona"] == "CUSTOM CREATOR PERSONA"
     assert upd_prompts.json()["prompts"]["narrator_core_rules"] == "CUSTOM CORE RULES"
+    assert upd_prompts.json()["prompts"]["player_message_template"] == "<<{speaker}>> {message}"
 
-    # Verify custom narrator_core_rules + enable_highlights=False take effect in TurnEngine
+    # Verify separated prompt fields + enable_highlights=False take effect in TurnEngine
     svc = GameplayService(camp_db, rules_db)
     camp = svc.execute("create_campaign", {"name": "Custom Rules Camp", "operation_id": "crc-1"})["result"]
     llm = RecordingLLM()
@@ -487,9 +492,19 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     import asyncio
 
     async def _run():
-        return [ev async for ev in engine.run_turn(camp["id"], "Look around")]
+        return [ev async for ev in engine.run_turn(camp["id"], "Look around", speaker_name="Vee")]
 
     asyncio.run(_run())
+    planner_sys = llm.complete_calls[0][0]["content"]
+    planner_user = llm.complete_calls[0][-1]["content"]
     narrator_sys = llm.stream_calls[0][0]["content"]
+    narrator_user = llm.stream_calls[0][-1]["content"]
     assert "CUSTOM CORE RULES" in narrator_sys
+    assert "CUSTOM DIALOGUE RULES" in planner_sys
+    assert "CUSTOM DIALOGUE RULES" in narrator_sys
+    assert "CUSTOM PLAYER NARRATION" in narrator_sys
+    assert "CUSTOM COOP RULES" in planner_sys
+    assert "CUSTOM COOP RULES" in narrator_sys
+    assert planner_user == "<<Vee>> Look around"
+    assert narrator_user == "<<Vee>> Look around"
     assert "Visual UI flair" not in narrator_sys

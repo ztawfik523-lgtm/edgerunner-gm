@@ -1986,8 +1986,10 @@ describe("Cyberpunk RED GM UI", () => {
         expect(screen.getAllByText(/Corebook Ready \(2 pages\)/i).length).toBeGreaterThanOrEqual(1);
       });
 
-      // Open Prompts tab and expand Advanced built-in prompts
+      // Open Prompts tab, verify separated sections + Chronicler toggle, and expand Advanced built-in prompts
       fireEvent.click(screen.getByRole("button", { name: /^Prompts$/i }));
+      expect(screen.getByText(/Player Dialogue, Narration & Multi-Player Handling/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Chronicler: ON/i })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Advanced: Full Built-In System Rules/i }));
       expect(await screen.findByDisplayValue("Default Core Rules")).toBeInTheDocument();
     } finally {

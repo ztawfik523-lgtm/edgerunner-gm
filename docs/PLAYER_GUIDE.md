@@ -64,8 +64,13 @@ Open **Settings** (top-right) to tailor the experience to your table:
   - Turn **on/off** long-chat compression reminders.
 
 ### Prompts Tab
-- **Everyday Prompts:** Edit the **GM Voice & Persona**, add **House Rules & Setting Lore**, or add extra instructions for storytelling, rules refereeing, the character/campaign AI generator, note-taking, and summaries.
-- **Advanced Built-In System Rules:** Expand this section at the bottom of the **Prompts** tab if you want to inspect or rewrite the full default instructions (such as NPC naming rules, street economy ranges, agency rules, and pacing guidelines). Click **Revert field** or **Reset All Prompts** anytime to go back to defaults.
+Each turn runs through clearly separated AI stages, each with its own editable prompt block and **Sent to:** badge:
+- **Player Dialogue, Narration & Multi-Player Handling:** Customize how player turns are formatted (`[{speaker}]: {message}`), how quotes vs actions vs `((OOC))` notes are parsed, how the GM narrates your character without puppeting them, and how multiple Co-op players share turns without hijacking idle teammates.
+- **Pass 2 — GM Story Narrator & World:** Edit **GM Voice & Persona**, **House Rules & Setting Lore**, and extra prose notes.
+- **Pass 1 — Rules & Dice Planner:** Add extra rules/dice/clock referee notes.
+- **Pass 3 — Post-Turn Chronicler (Session Note-Taker):** Toggle the Chronicler **ON/OFF** right in this card (or in **Turn & Tuning**) and customize what it logs into Campaign State.
+- **History Compression (Archivist) & Character/Campaign Generator:** Customize long-chat compression notes and the AI Co-Writer used in Character & Campaign Creators.
+- **Advanced Built-In System Rules:** Expand this section at the bottom of the **Prompts** tab if you want to inspect or rewrite the full default instructions (such as NPC naming rules, street economy ranges, Fog-of-War rules, and pacing guidelines). Click **Revert field** or **Reset All Prompts** anytime to go back to defaults.
 
 ---
 

@@ -1,5 +1,6 @@
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
 import {
   AlertTriangle,
   ArrowDown,
@@ -580,19 +581,36 @@ export function ChatPane({
 
   if (!campaignId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#0a0e16]">
-        <div className="cyber-cut max-w-md border border-slate-800 bg-[#101624] p-6">
-          <h2 className="text-lg font-bold text-slate-100">Welcome to Night City</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Create or select a campaign in the top bar to start playing with your AI Game Master.
-          </p>
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#0a0e16]/75">
+        <div className="cyber-cut cyber-panel-glow relative max-w-md overflow-hidden border border-cyan-500/30 bg-[#0e1422] p-6">
+          <img
+            src={cyberHeroBackdrop}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-30"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090d16] via-[#0b101b]/80 to-transparent" />
+          <div className="relative z-10">
+            <div className="mb-2 inline-flex items-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-rose-300">
+              NETLINK // READY
+            </div>
+            <h2
+              data-text="Welcome to Night City"
+              className="cyber-glitch-title font-cyber-display text-lg font-bold tracking-wider text-slate-100 uppercase"
+            >
+              Welcome to Night City
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Create or select a campaign in the top bar to start playing with your AI Game Master.
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-full flex-col bg-[#0a0e16]">
+    <div className="relative flex h-full flex-col bg-[#0a0e16]/75">
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollContainerRef}
@@ -602,24 +620,41 @@ export function ChatPane({
         >
         <div className="mx-auto max-w-3xl space-y-5">
           {visibleMessages.length === 0 && !streaming && (
-            <div className="mt-6 rounded-xl border border-slate-800/90 bg-[#101624] p-6 text-center">
-              <h3 className="text-base font-bold text-slate-100">Ready to Run the Streets</h3>
-              <p className="mt-1.5 text-sm text-slate-400">
-                {characters.length > 0
-                  ? "Describe your character's opening move below. The GM automatically checks the rulebook and rolls authoritative dice."
-                  : "Tip: Create and attach a character in the Character tab on the right so the GM can roll checks against your stats."}
-              </p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                {QUICK_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => setInput(prompt)}
-                    className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
-                  >
-                    {prompt}
-                  </button>
-                ))}
+            <div className="cyber-cut cyber-panel-glow relative mt-6 overflow-hidden border border-cyan-500/30 bg-[#101624] p-6 text-center">
+              <img
+                src={cyberHeroBackdrop}
+                alt=""
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-28"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090d16] via-[#0c111d]/82 to-[#090d16]/70" />
+              <div className="relative z-10">
+                <div className="mb-2 inline-flex items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-cyan-300">
+                  TIME OF THE RED // 2045
+                </div>
+                <h3
+                  data-text="Ready to Run the Streets"
+                  className="cyber-glitch-title font-cyber-display text-base font-bold tracking-wider text-slate-100 uppercase"
+                >
+                  Ready to Run the Streets
+                </h3>
+                <p className="mt-1.5 text-sm text-slate-300">
+                  {characters.length > 0
+                    ? "Describe your character's opening move below. The GM automatically checks the rulebook and rolls authoritative dice."
+                    : "Tip: Create and attach a character in the Character tab on the right so the GM can roll checks against your stats."}
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {QUICK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => setInput(prompt)}
+                      className="rounded-full border border-cyan-500/30 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-200 backdrop-blur-xs transition hover:border-cyan-400 hover:bg-cyan-950/50 hover:text-cyan-200"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -1086,7 +1121,7 @@ export function ChatPane({
       {/* Composer Dock */}
       <form
         onSubmit={handleSubmit}
-        className="border-t border-slate-800/90 bg-[#0d111a] px-4 py-3"
+        className="border-t border-slate-800/90 bg-[#0c101a]/92 px-4 py-3 backdrop-blur-md"
       >
         <div className="mx-auto max-w-3xl space-y-2">
           {lockedByPeer && (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2, Shield, ShieldCheck, UserCheck, UserPlus, X } from "lucide-react";
 import { loginAuth, logoutAuth, registerAuth, setupInitialAuth } from "../api";
+import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
 import type { AuthStatus } from "../types";
 
 interface AuthGateModalProps {
@@ -169,47 +170,79 @@ export function AuthGateModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Cyberpunk RED GM Access"
     >
-      <div className="cyber-cut w-full max-w-md border border-slate-700 bg-[#0d111a] p-5 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-cyan-400" />
-            <div>
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-100">
-                {tab === "setup"
-                  ? "Configure Access Control"
-                  : tab === "signup"
-                    ? "Create Player Account"
-                    : tab === "admin"
-                      ? "Admin Sign-In"
-                      : "User Sign-In"}
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                {tab === "admin"
-                  ? "Full access: AI provider, prompts, network IP/port, and user management."
-                  : tab === "signup"
-                    ? "Register your own player profile to claim a character and join the table."
-                    : tab === "setup"
-                      ? "Create the Admin account so players can sign up or join without admin privileges."
-                      : "Normal tabletop access: campaigns, characters, chat, dice, and rulebook."}
-              </p>
+      <div className="cyber-cut cyber-panel-glow w-full max-w-md overflow-hidden border border-cyan-500/35 bg-[#0b1019] shadow-2xl">
+        {/* Cyberpunk Banner Header */}
+        <div className="relative border-b border-slate-800 px-5 py-4">
+          <img
+            src={cyberHeroBackdrop}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#090d16]/95 via-[#0b1019]/85 to-[#090d16]/90" />
+          <div className="relative z-10 flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-cyan-400" />
+              <div>
+                <div className="mb-1 inline-flex items-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-rose-300">
+                  {tab === "setup"
+                    ? "FIRST-TIME INSTALL // ADMIN SETUP"
+                    : tab === "signup"
+                      ? "NEW EDGERUNNER // REGISTER"
+                      : tab === "admin"
+                        ? "ROOT ACCESS // ADMIN"
+                        : "NIGHT CITY NET // SIGN IN"}
+                </div>
+                <h2
+                  data-text={
+                    tab === "setup"
+                      ? "First-Time Setup — Admin Account"
+                      : tab === "signup"
+                        ? "Create Player Account"
+                        : tab === "admin"
+                          ? "Admin Sign-In"
+                          : "User Sign-In"
+                  }
+                  className="cyber-glitch-title font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100"
+                >
+                  {tab === "setup"
+                    ? "First-Time Setup — Admin Account"
+                    : tab === "signup"
+                      ? "Create Player Account"
+                      : tab === "admin"
+                        ? "Admin Sign-In"
+                        : "User Sign-In"}
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-300">
+                  {tab === "admin"
+                    ? "Full access: AI provider, Corebook PDF, prompts, network IP/port, and user management."
+                    : tab === "signup"
+                      ? "Register your own player profile to claim a character and join the table."
+                      : tab === "setup"
+                        ? "Create the server Admin account first so your AI key, Corebook, and prompts stay protected."
+                        : "Normal tabletop access: campaigns, characters, chat, dice, and rulebook."}
+                </p>
+              </div>
             </div>
+            {!blocking && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          {!blocking && onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
         </div>
+
+        <div className="p-5">
 
         <div className="mb-4 flex gap-1.5 rounded-lg bg-slate-950 p-1">
           {tabs.map((t) => (
@@ -451,6 +484,7 @@ export function AuthGateModal({
             )}
           </form>
         )}
+        </div>
       </div>
     </div>
   );

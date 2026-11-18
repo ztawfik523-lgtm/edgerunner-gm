@@ -118,13 +118,16 @@ export function TopBar({
   };
 
   return (
-    <header className="border-b border-slate-800/90 bg-[#0d111a]">
+    <header className="border-b border-rose-500/25 bg-[#0b0f18]/92 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.45)]">
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 lg:px-4">
         {/* Left: Brand + Campaign Selector */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="cyber-cut-sm flex items-center gap-2 border border-rose-500/40 bg-rose-600/20 px-2.5 py-1">
+          <div className="cyber-cut-sm cyber-brand-badge flex items-center gap-2 border border-rose-500/50 bg-gradient-to-r from-rose-600/25 via-rose-950/35 to-cyan-950/30 px-3 py-1">
             <span className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
-            <span className="font-mono text-[11px] font-bold tracking-wider text-rose-300 uppercase">
+            <span
+              data-text="Cyberpunk RED GM"
+              className="cyber-glitch-title font-cyber-display text-[11px] font-bold tracking-[0.14em] text-rose-200 uppercase"
+            >
               Cyberpunk RED GM
             </span>
           </div>

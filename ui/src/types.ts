@@ -136,6 +136,10 @@ export interface AuthAccountSummary {
 export interface PromptSettings {
   system_persona: string;
   world_rules_prefix: string;
+  player_message_template?: string;
+  player_dialogue_rules?: string;
+  player_narration_rules?: string;
+  multiplayer_rules?: string;
   planner_extra: string;
   narrator_extra: string;
   chronicler_extra: string;

@@ -29,6 +29,7 @@ import {
   updateChatMessage,
 } from "./api";
 import { AuthGateModal } from "./components/AuthGateModal";
+import nightCityBackdrop from "./assets/night-city-backdrop.jpg";
 import { CampaignCreatorModal } from "./components/CampaignCreatorModal";
 import { CampaignPanel } from "./components/CampaignPanel";
 import { CharacterPanel } from "./components/CharacterPanel";
@@ -634,8 +635,8 @@ export function App() {
   };
 
   const dashboardContent = (
-    <div className="flex h-full flex-col bg-[#0c101a]">
-      <div className="flex border-b border-slate-800/90 bg-[#0d111a] px-2 pt-1.5">
+    <div className="flex h-full flex-col bg-[#0c101a]/88 backdrop-blur-[2px]">
+      <div className="flex border-b border-slate-800/90 bg-[#0d111a]/95 px-2 pt-1.5">
         {(
           [
             { id: "character", label: "Character", icon: User },
@@ -747,7 +748,20 @@ export function App() {
   );
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#090c12] text-slate-100">
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[#07090f] text-slate-100">
+      {/* Atmospheric Night City Backdrop */}
+      <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <img
+          src={nightCityBackdrop}
+          alt=""
+          className="h-full w-full object-cover opacity-25 saturate-110"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#07090f]/80 via-[#080b13]/72 to-[#06080d]/92" />
+        <div className="cyber-grid-overlay absolute inset-0 opacity-75" />
+        <div className="cyber-scanlines absolute inset-0 opacity-55" />
+      </div>
+
+      <div className="relative z-10 flex h-full w-full flex-col overflow-hidden">
       <TopBar
         health={health}
         campaigns={campaigns}
@@ -931,6 +945,7 @@ export function App() {
           {toast}
         </button>
       )}
+      </div>
     </div>
   );
 }
