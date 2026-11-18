@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { clearAllDrafts } from "./draftStorage";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -30,6 +31,7 @@ describe("Cyberpunk RED GM UI", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     window.localStorage.clear();
+    clearAllDrafts();
   });
 
   it("loads campaign, character stats, and streams an Overclock turn", async () => {
@@ -259,7 +261,7 @@ describe("Cyberpunk RED GM UI", () => {
     });
 
     // Open AI Connection settings modal
-    fireEvent.click(screen.getByRole("button", { name: /llama3/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
     expect(screen.getByText(/AI Game Master Connection/i)).toBeInTheDocument();
   });
 
@@ -709,7 +711,7 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByText("Save Text")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /llama3/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
     expect(screen.getByRole("dialog", { name: /AI Game Master Connection/i })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: /AI Game Master Connection/i })).not.toBeInTheDocument();
@@ -1057,7 +1059,7 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByText("USER")).toBeInTheDocument();
     });
     // Regular User does not see the Admin AI/Settings button
-    expect(screen.queryByRole("button", { name: /Configure AI|llama3/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Settings$/i })).not.toBeInTheDocument();
 
     // Switch to Admin via TopBar Admin Login button
     fireEvent.click(screen.getByRole("button", { name: /Admin Login/i }));
@@ -1070,7 +1072,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     await waitFor(() => {
       expect(screen.getByText("ADMIN")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /llama3/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Settings$/i })).toBeInTheDocument();
     });
 
     // TopBar 2-mode toggle switches directly between GM Quality and GM Balanced
@@ -1089,7 +1091,7 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.getByRole("button", { name: /^GM Balanced$/i })).toHaveAttribute("aria-pressed", "true");
 
     // Open Admin Control Center -> Prompts & Network tabs
-    fireEvent.click(screen.getByRole("button", { name: /llama3/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /AI Game Master Connection/i })).toBeInTheDocument();
     });
@@ -1422,14 +1424,14 @@ describe("Cyberpunk RED GM UI", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Roll Full Lifepath/i }));
 
-    // AI Generate from Scratch + AI Expand + AI Generate Contacts
-    fireEvent.click(screen.getByRole("button", { name: /AI Generate from Scratch/i }));
+    // Generate from Scratch + Improve/Regen + Generate Contacts
+    fireEvent.click(screen.getByRole("button", { name: /Generate from Scratch/i }));
     await waitFor(() => {
       expect((screen.getByPlaceholderText(/Write a few sentences about your life/i) as HTMLTextAreaElement).value).toContain(
         "Raised in Watson",
       );
     });
-    fireEvent.click(screen.getByRole("button", { name: /AI Generate Contacts/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate Contacts/i }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("Takemura Jin")).toBeInTheDocument();
       expect(screen.getByDisplayValue("Bricks Jr.")).toBeInTheDocument();
@@ -1439,7 +1441,7 @@ describe("Cyberpunk RED GM UI", () => {
       screen.getByPlaceholderText(/Owes 200 eb to Mama Welles/i),
       { target: { value: "Ran recon out of Kabuki; owes Dakota Smith one clean favor." } },
     );
-    fireEvent.click(screen.getByRole("button", { name: /AI Expand \/ Improve Established History/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Improve Established History/i }));
     await waitFor(() => {
       expect((screen.getByPlaceholderText(/Owes 200 eb to Mama Welles/i) as HTMLTextAreaElement).value).toContain(
         "Verified on the Afterlife board.",
@@ -1483,7 +1485,9 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /Create & Attach to Campaign/i }));
 
     await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /Edgerunner Character Sheet Creator/i })).not.toBeInTheDocument();
       expect(screen.getAllByText("Rina Ash").length).toBeGreaterThan(0);
+      expect(screen.getByText("EMP")).toBeInTheDocument();
     });
 
     const createCall = fetchMock.mock.calls.find(
@@ -1995,6 +1999,237 @@ describe("Cyberpunk RED GM UI", () => {
     } finally {
       globalThis.XMLHttpRequest = OriginalXHR;
     }
+  });
+
+  it("supports Introductory First Message, generation telemetry, draft persistence, GM secret spoiler, and lockable campaign AI", async () => {
+    const campaign = {
+      id: "camp-ui-new",
+      name: "Night Market Run",
+      revision: 1,
+      session_number: 1,
+      character_ids: [],
+      state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    let activeBranch: unknown[] = [];
+    const turnBodies: Array<Record<string, unknown>> = [];
+    const assistBodies: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "nvidia/nemotron",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.75,
+          max_tokens: 1200,
+          intro_max_tokens: 4096,
+          timeout_s: 60,
+          mode: "two_pass",
+          gm_thinking_mode: "balanced",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: false,
+          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+          stats: {},
+          methods: [],
+          roles: [],
+          skills: [],
+          cultural_regions: [],
+          lifepath_tables: {},
+          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
+          fashion: [],
+          campaign_presets: {
+            districts: [
+              { name: "Watson Development", threat_rating: "Moderate", summary: "Kabuki.", printed_page: 298 },
+              { name: "Old Combat Zone", threat_rating: "Combat", summary: "Lawless warzone.", printed_page: 300 },
+            ],
+            factions: [
+              { name: "Arasaka", type: "Megacorp", summary: "Corp.", printed_page: 267 },
+              { name: "Maelstrom", type: "Combat Gang", summary: "Boosters.", printed_page: 308 },
+              { name: "Tyger Claws", type: "Combat Gang", summary: "Syndicate.", printed_page: 309 },
+            ],
+            caper_styles: [
+              {
+                id: "heist",
+                name: "Corporate Data / Cargo Heist",
+                printed_page: 395,
+                summary: "Infiltration.",
+                default_beats: { hook: "H", developments: "D", cliffhanger: "C", climax: "X", resolution: "R" },
+              },
+              {
+                id: "street-turf",
+                name: "Street Turf & Night Market Hustle",
+                printed_page: 398,
+                summary: "Turf.",
+                default_beats: { hook: "H2", developments: "D2", cliffhanger: "C2", climax: "X2", resolution: "R2" },
+              },
+            ],
+            screamsheet_hooks: ["HOOK ONE"],
+          },
+        });
+      }
+      if (url === "/v1/creation/ai-assist") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        assistBodies.push(body);
+        if (body.mode === "scratch" && !body.field && !body.campaign?.lock_choices) {
+          return jsonResponse({
+            target: "campaign",
+            mode: "scratch",
+            name: "Combat Zone Courier",
+            district: "Old Combat Zone",
+            caper_style: "Street Turf & Night Market Hustle",
+            factions: ["Maelstrom"],
+            summary: "Auto-picked Combat Zone hustle.",
+            opening_scene: "Neon flickers over rusted barriers.",
+            npcs: { "Rafa (Fixer)": "Brokers clean water." },
+            objectives: { "Deliver Meds": "Cross the perimeter." },
+            beat_chart: { hook: "H", developments: "D", cliffhanger: "C", climax: "X", resolution: "R" },
+            gm_secrets: "Secretly a Militech trap.",
+          });
+        }
+        return jsonResponse({
+          target: "campaign",
+          mode: body.mode,
+          field: body.field,
+          name: "Locked Run",
+          summary: "Locked summary.",
+          opening_scene: "Fresh regenerated scene.",
+          npcs: { "NPC 1": "One", "NPC 2": "Two", "NPC 3": "Three" },
+          objectives: { "Obj 1": "First" },
+          gm_secrets: "Regenerated hidden twist.",
+        });
+      }
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: activeBranch,
+          active_branch: activeBranch,
+          active_leaf_id: activeBranch.length ? "intro-a1" : null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url === "/v1/chat/turn") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        turnBodies.push(body);
+        const userMsg = {
+          id: "intro-u1",
+          campaign_id: campaign.id,
+          parent_id: null,
+          role: "user",
+          content: body.user_text,
+          raw_content: body.user_text,
+          model: "",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: { is_intro: true },
+          is_active: true,
+          created_at: "2026-11-18T00:00:00Z",
+        };
+        const asstMsg = {
+          id: "intro-a1",
+          campaign_id: campaign.id,
+          parent_id: "intro-u1",
+          role: "assistant",
+          content: "Welcome to Cyberpunk RED in 2045.",
+          raw_content: "Welcome to Cyberpunk RED in 2045.",
+          model: "nvidia/nemotron",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: {
+            is_intro: true,
+            generation_stats: { elapsed_seconds: 3.4, tokens_per_second: 42.5, completion_tokens: 145, estimated: false },
+          },
+          is_active: true,
+          created_at: "2026-11-18T00:00:03Z",
+        };
+        activeBranch = [userMsg, asstMsg];
+        return sseResponse([
+          { event: "text_delta", data: { delta: "Welcome to Cyberpunk RED in 2045." } },
+          { event: "turn_done", data: { turn_id: "t-intro", user_message: userMsg, assistant_message: asstMsg } },
+        ]);
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+
+    // Startup screen: no tip, no 4 quick prompts, only Introductory First Message
+    const introBtn = await screen.findByRole("button", { name: /Introductory First Message/i });
+    expect(screen.queryByText(/Tip: Create and attach a character/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Look around the scene and assess threats/i)).not.toBeInTheDocument();
+
+    fireEvent.click(introBtn);
+    await waitFor(() => {
+      expect(screen.getByText(/Welcome to Cyberpunk RED in 2045\./i)).toBeInTheDocument();
+      expect(screen.getByText(/3\.4s · 42\.5 tok\/s/i)).toBeInTheDocument();
+    });
+    expect(turnBodies[0].is_intro).toBe(true);
+
+    // Character Creator: closing preserves typed name across reopen
+    fireEvent.click(screen.getByRole("button", { name: /Open Character Sheet Creator/i }));
+    fireEvent.change(screen.getByPlaceholderText("e.g. Vee Mercer"), { target: { value: "Marek Kovic" } });
+    fireEvent.click(screen.getByRole("button", { name: /Close character creator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Open Character Sheet Creator/i }));
+    expect(screen.getByDisplayValue("Marek Kovic")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Close character creator/i }));
+
+    // Campaign Creator: Auto Generate picks district/style/factions + GM Secrets hidden until Unspoil + Draft persists across close
+    fireEvent.click(screen.getByTitle(/Open Campaign Architect/i));
+    fireEvent.click(screen.getByRole("button", { name: /Generate from Scratch/i }));
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Combat Zone Courier")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/CLASSIFIED \/\/ SPOILER SHIELDED/i)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Secretly a Militech trap.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Unspoil GM Secrets"));
+    expect(screen.getByDisplayValue("Secretly a Militech trap.")).toBeInTheDocument();
+
+    // Per-field Regen works alongside Improve
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate Opening Scene/i }));
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Fresh regenerated scene.")).toBeInTheDocument();
+    });
+
+    // Lock Choices sends lock_choices=true & counts
+    fireEvent.click(screen.getByRole("button", { name: /Lock Choices/i }));
+    fireEvent.change(screen.getByLabelText("Locked starting NPCs count"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Locked starting Objectives count"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /Generate from Scratch/i }));
+    await waitFor(() => {
+      const lastCall = assistBodies[assistBodies.length - 1] as { campaign?: { lock_choices?: boolean; npc_count?: number; objective_count?: number } };
+      expect(lastCall.campaign?.lock_choices).toBe(true);
+      expect(lastCall.campaign?.npc_count).toBe(3);
+      expect(lastCall.campaign?.objective_count).toBe(1);
+    });
+
+    // Closing Campaign Creator preserves draft upon reopen (with GM secrets hidden again)
+    fireEvent.click(screen.getByRole("button", { name: /Close Campaign Creator/i }));
+    fireEvent.click(screen.getByTitle(/Open Campaign Architect/i));
+    expect(screen.getByDisplayValue("Fresh regenerated scene.")).toBeInTheDocument();
+    expect(screen.getByText(/Draft Restored/i)).toBeInTheDocument();
+    expect(screen.getByText(/CLASSIFIED \/\/ SPOILER SHIELDED/i)).toBeInTheDocument();
   });
 });
 

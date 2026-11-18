@@ -1250,6 +1250,54 @@ def test_delete_message_single_and_branch_preserves_active_invariants(tmp_path: 
     assert [m["id"] for m in after_branch_del["active_branch"]] == [u1["id"], a1_alt["id"]]
 
 
+@pytest.mark.anyio
+async def test_intro_turn_uses_dedicated_prompt_token_limit_and_reports_generation_stats(tmp_path: Path):
+    import httpx
+    from turnloop import LLMConfig, OpenAICompatibleLLM
+
+    seen_payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        seen_payloads.append(body)
+        sse = (
+            'data: {"choices":[{"delta":{"content":"Welcome to 2045! "}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"Roll 1d10 + STAT + Skill."}}],"usage":{"prompt_tokens":120,"completion_tokens":40,"total_tokens":160}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=sse.encode("utf-8"), headers={"content-type": "text/event-stream"})
+
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    llm = OpenAICompatibleLLM(
+        LLMConfig(base_url="http://mock.local/v1", model="nemotron", max_tokens=900, mode="two_pass", retry_attempts=0),
+        transport=httpx.MockTransport(handler),
+    )
+    engine = TurnEngine(
+        svc,
+        llm,
+        turn_settings={"intro_max_tokens": 5120, "enable_chronicler": True},
+        prompt_settings={"intro_prompt": "CUSTOM INTRO BRIEFING PROMPT"},
+    )
+
+    events = [ev async for ev in engine.run_turn(camp_id, "Introduce Cyberpunk RED", is_intro=True)]
+    done = events[-1]["data"]
+
+    # Intro turn runs a single stream call (no Planner/Chronicler) with its own prompt & token limit
+    assert len(seen_payloads) == 1
+    assert seen_payloads[0]["max_tokens"] == 5120
+    assert "CUSTOM INTRO BRIEFING PROMPT" in str(seen_payloads[0]["messages"][0]["content"])
+    assert seen_payloads[0]["stream_options"] == {"include_usage": True}
+
+    stats = done["generation_stats"]
+    assert stats["completion_tokens"] == 40
+    assert stats["estimated"] is False
+    assert stats["elapsed_seconds"] > 0
+    assert stats["tokens_per_second"] > 0
+    assert done["assistant_message"]["metadata"]["generation_stats"] == stats
+    assert done["assistant_message"]["metadata"]["is_intro"] is True
+
+
+
 
 
 

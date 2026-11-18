@@ -240,3 +240,87 @@ def test_campaign_ai_assist_and_bootstrap_endpoint(tmp_path: Path):
 
     asyncio.run(run())
 
+
+def test_campaign_ai_assist_auto_and_locked_plus_per_field_regen(tmp_path: Path):
+    import asyncio
+    import json
+    import httpx
+
+    seen_user_payloads: list[dict] = []
+
+    class InspectCampaignLLM:
+        async def complete(self, messages, *, json_mode=False, temperature=None):
+            user_data = json.loads(messages[-1]["content"])
+            seen_user_payloads.append(user_data)
+            if user_data.get("target_field") == "opening_scene":
+                return json.dumps({"opening_scene": "Fresh neon rooftop drop."})
+            if user_data["campaign_seed"].get("lock_choices"):
+                return json.dumps({
+                    "name": "Locked Gig",
+                    "summary": "Locked summary.",
+                    "opening_scene": "Locked scene.",
+                    "npcs": {"A": "1", "B": "2", "C": "3"},
+                    "objectives": {"O1": "Do 1"},
+                    "beat_chart": {"hook": "H", "developments": "D", "cliffhanger": "C", "climax": "X", "resolution": "R"},
+                    "gm_secrets": "Secret",
+                })
+            return json.dumps({
+                "district": "Old Combat Zone",
+                "caper_style": "Street Turf & Night Market Hustle",
+                "factions": ["Maelstrom", "Bozos"],
+                "name": "Zone Scramble",
+                "summary": "Auto-chosen summary.",
+                "opening_scene": "Auto-chosen scene.",
+                "npcs": {"Fixer A": "Contact", "Boss B": "Rival"},
+                "objectives": {"Survive": "Escape the block"},
+                "beat_chart": {"hook": "H", "developments": "D", "cliffhanger": "C", "climax": "X", "resolution": "R"},
+                "gm_secrets": "Hidden sponsor.",
+            })
+
+    async def run():
+        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite", llm=InspectCampaignLLM())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # 1. Unlocked scratch: AI decides district, caper_style, factions
+            r_auto = await client.post("/v1/creation/ai-assist", json={
+                "target": "campaign",
+                "mode": "scratch",
+                "campaign": {"lock_choices": False, "district": "Watson Development", "caper_style": "Corporate Data / Cargo Heist", "factions": ["Arasaka"]},
+                "current": {},
+            })
+            assert r_auto.status_code == 200
+            d_auto = r_auto.json()
+            assert d_auto["district"] == "Old Combat Zone"
+            assert d_auto["caper_style"] == "Street Turf & Night Market Hustle"
+            assert d_auto["factions"] == ["Maelstrom", "Bozos"]
+
+            # 2. Locked scratch: preserves counts and locked options in prompt
+            r_locked = await client.post("/v1/creation/ai-assist", json={
+                "target": "campaign",
+                "mode": "scratch",
+                "campaign": {"lock_choices": True, "district": "Heywood", "caper_style": "Badlands Convoy & Smuggling Run", "factions": ["6th Street"], "npc_count": 3, "objective_count": 1},
+                "current": {},
+            })
+            assert r_locked.status_code == 200
+            d_locked = r_locked.json()
+            assert "district" not in d_locked
+            assert len(d_locked["npcs"]) == 3
+
+            # 3. Per-field scratch regen
+            r_regen = await client.post("/v1/creation/ai-assist", json={
+                "target": "campaign",
+                "mode": "scratch",
+                "field": "opening_scene",
+                "campaign": {"name": "Locked Gig"},
+                "current": {"opening_scene": "Old stale scene"},
+            })
+            assert r_regen.status_code == 200
+            assert r_regen.json()["opening_scene"] == "Fresh neon rooftop drop."
+
+    asyncio.run(run())
+    assert "available_options" in seen_user_payloads[0]
+    assert seen_user_payloads[1]["campaign_seed"]["target_npc_count"] == 3
+    assert seen_user_payloads[1]["campaign_seed"]["target_objective_count"] == 1
+    assert "completely fresh 'opening_scene' from scratch" in seen_user_payloads[2]["instruction"]
+
+

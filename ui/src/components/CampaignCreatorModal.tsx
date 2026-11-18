@@ -1,19 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Clock,
   Compass,
   Dices,
+  Eye,
   EyeOff,
+  Lock,
   MapPin,
   Plus,
+  RotateCcw,
   ShieldAlert,
   Sparkles,
   Target,
   Trash2,
+  Unlock,
   Users,
-  Wand2,
   X,
 } from "lucide-react";
+import nightMarketHero from "../assets/night-market-hero.jpg";
 import {
   assistCharacterCreation,
   bootstrapCampaign,
@@ -21,7 +25,9 @@ import {
   fetchCreationReference,
   type CampaignBootstrapPayload,
 } from "../api";
+import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
 import type { CampaignPresets, CampaignRecord } from "../types";
+import { FieldAiActions } from "./FieldAiActions";
 
 interface CampaignCreatorModalProps {
   open: boolean;
@@ -169,6 +175,31 @@ function pickOne<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+interface CampaignDraftData {
+  name: string;
+  district: string;
+  caperStyle: string;
+  selectedFactions: string[];
+  screamsheetHook: string;
+  summary: string;
+  openingScene: string;
+  beatHook: string;
+  beatDev: string;
+  beatCliff: string;
+  beatClimax: string;
+  beatRes: string;
+  npcPairs: Array<{ key: string; val: string }>;
+  objectivePairs: Array<{ key: string; val: string }>;
+  gmSecrets: string;
+  clockName: string;
+  clockSegments: number;
+  clockNote: string;
+  aiGuidance: string;
+  lockChoices: boolean;
+  targetNpcCount: number;
+  targetObjectiveCount: number;
+}
+
 export function CampaignCreatorModal({
   open,
   editCampaign,
@@ -177,6 +208,8 @@ export function CampaignCreatorModal({
   onUpdated,
   onNotify,
 }: CampaignCreatorModalProps) {
+  const draftKey = editCampaign ? `campaign:edit:${editCampaign.id}` : "campaign:new";
+  const hydratedRef = useRef(false);
   const [presets, setPresets] = useState<CampaignPresets>(FALLBACK_PRESETS);
   const [name, setName] = useState("");
   const [district, setDistrict] = useState("Watson Development");
@@ -193,23 +226,31 @@ export function CampaignCreatorModal({
   const [npcPairs, setNpcPairs] = useState<Array<{ key: string; val: string }>>([]);
   const [objectivePairs, setObjectivePairs] = useState<Array<{ key: string; val: string }>>([]);
   const [gmSecrets, setGmSecrets] = useState("");
+  const [revealGmSecrets, setRevealGmSecrets] = useState(false);
   const [clockName, setClockName] = useState("");
   const [clockSegments, setClockSegments] = useState(4);
   const [clockNote, setClockNote] = useState("");
   const [aiGuidance, setAiGuidance] = useState("");
+  const [lockChoices, setLockChoices] = useState(false);
+  const [targetNpcCount, setTargetNpcCount] = useState(3);
+  const [targetObjectiveCount, setTargetObjectiveCount] = useState(2);
+  const [draftRestored, setDraftRestored] = useState(false);
   const [aiBusyField, setAiBusyField] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (!open) return;
-    if (editCampaign) {
-      setName(editCampaign.name);
-      setSummary(editCampaign.state.summary || "");
-      setOpeningScene(editCampaign.state.scene || "");
-      setNpcPairs(Object.entries(editCampaign.state.npcs ?? {}).map(([key, val]) => ({ key, val })));
-      setObjectivePairs(Object.entries(editCampaign.state.objectives ?? {}).map(([key, val]) => ({ key, val })));
-      const beatStr = editCampaign.state.unresolved?.["Beat Chart"] || "";
+  const applyEditDefaults = (camp: CampaignRecord | null | undefined) => {
+    if (camp) {
+      setName(camp.name);
+      setDistrict("Watson Development");
+      setCaperStyle("Corporate Data / Cargo Heist");
+      setSelectedFactions(["Arasaka", "Tyger Claws"]);
+      setScreamsheetHook("");
+      setSummary(camp.state.summary || "");
+      setOpeningScene(camp.state.scene || "");
+      setNpcPairs(Object.entries(camp.state.npcs ?? {}).map(([key, val]) => ({ key, val })));
+      setObjectivePairs(Object.entries(camp.state.objectives ?? {}).map(([key, val]) => ({ key, val })));
+      const beatStr = camp.state.unresolved?.["Beat Chart"] || "";
       const extractBeat = (label: string) => {
         const re = new RegExp(`(?:^|\\|\\s*)${label}:\\s*([^|]+)`, "i");
         const m = beatStr.match(re);
@@ -222,9 +263,18 @@ export function CampaignCreatorModal({
       setBeatRes(extractBeat("Resolution"));
       setGmSecrets("");
       setClockName("");
+      setClockSegments(4);
       setClockNote("");
+      setAiGuidance("");
+      setLockChoices(false);
+      setTargetNpcCount(3);
+      setTargetObjectiveCount(2);
     } else {
       setName("");
+      setDistrict("Watson Development");
+      setCaperStyle("Corporate Data / Cargo Heist");
+      setSelectedFactions(["Arasaka", "Tyger Claws"]);
+      setScreamsheetHook("");
       setSummary("");
       setOpeningScene("");
       setBeatHook("");
@@ -236,10 +286,125 @@ export function CampaignCreatorModal({
       setObjectivePairs([]);
       setGmSecrets("");
       setClockName("");
+      setClockSegments(4);
       setClockNote("");
+      setAiGuidance("");
+      setLockChoices(false);
+      setTargetNpcCount(3);
+      setTargetObjectiveCount(2);
     }
+  };
+
+  useEffect(() => {
+    if (!open) {
+      hydratedRef.current = false;
+      return;
+    }
+    const existing = loadDraft<CampaignDraftData>(draftKey);
+    if (existing) {
+      setName(existing.name ?? "");
+      setDistrict(existing.district ?? "Watson Development");
+      setCaperStyle(existing.caperStyle ?? "Corporate Data / Cargo Heist");
+      setSelectedFactions(Array.isArray(existing.selectedFactions) ? existing.selectedFactions : ["Arasaka", "Tyger Claws"]);
+      setScreamsheetHook(existing.screamsheetHook ?? "");
+      setSummary(existing.summary ?? "");
+      setOpeningScene(existing.openingScene ?? "");
+      setBeatHook(existing.beatHook ?? "");
+      setBeatDev(existing.beatDev ?? "");
+      setBeatCliff(existing.beatCliff ?? "");
+      setBeatClimax(existing.beatClimax ?? "");
+      setBeatRes(existing.beatRes ?? "");
+      setNpcPairs(Array.isArray(existing.npcPairs) ? existing.npcPairs : []);
+      setObjectivePairs(Array.isArray(existing.objectivePairs) ? existing.objectivePairs : []);
+      setGmSecrets(existing.gmSecrets ?? "");
+      setClockName(existing.clockName ?? "");
+      setClockSegments(typeof existing.clockSegments === "number" ? existing.clockSegments : 4);
+      setClockNote(existing.clockNote ?? "");
+      setAiGuidance(existing.aiGuidance ?? "");
+      setLockChoices(Boolean(existing.lockChoices));
+      setTargetNpcCount(typeof existing.targetNpcCount === "number" ? existing.targetNpcCount : 3);
+      setTargetObjectiveCount(typeof existing.targetObjectiveCount === "number" ? existing.targetObjectiveCount : 2);
+      setDraftRestored(true);
+    } else {
+      applyEditDefaults(editCampaign);
+      setDraftRestored(false);
+    }
+    setRevealGmSecrets(false);
     setError("");
-  }, [open, editCampaign?.id]);
+    hydratedRef.current = true;
+  }, [open, editCampaign?.id, draftKey]);
+
+  useEffect(() => {
+    if (!open || !hydratedRef.current) return;
+    const hasContent = Boolean(
+      name.trim() ||
+        summary.trim() ||
+        openingScene.trim() ||
+        screamsheetHook.trim() ||
+        beatHook.trim() ||
+        beatDev.trim() ||
+        beatCliff.trim() ||
+        beatClimax.trim() ||
+        beatRes.trim() ||
+        npcPairs.length > 0 ||
+        objectivePairs.length > 0 ||
+        gmSecrets.trim() ||
+        clockName.trim() ||
+        aiGuidance.trim() ||
+        lockChoices,
+    );
+    if (!hasContent && !editCampaign) return;
+    saveDraft<CampaignDraftData>(draftKey, {
+      name,
+      district,
+      caperStyle,
+      selectedFactions,
+      screamsheetHook,
+      summary,
+      openingScene,
+      beatHook,
+      beatDev,
+      beatCliff,
+      beatClimax,
+      beatRes,
+      npcPairs,
+      objectivePairs,
+      gmSecrets,
+      clockName,
+      clockSegments,
+      clockNote,
+      aiGuidance,
+      lockChoices,
+      targetNpcCount,
+      targetObjectiveCount,
+    });
+  }, [
+    open,
+    draftKey,
+    editCampaign,
+    name,
+    district,
+    caperStyle,
+    selectedFactions,
+    screamsheetHook,
+    summary,
+    openingScene,
+    beatHook,
+    beatDev,
+    beatCliff,
+    beatClimax,
+    beatRes,
+    npcPairs,
+    objectivePairs,
+    gmSecrets,
+    clockName,
+    clockSegments,
+    clockNote,
+    aiGuidance,
+    lockChoices,
+    targetNpcCount,
+    targetObjectiveCount,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -314,7 +479,7 @@ export function CampaignCreatorModal({
   const handleAiCampaign = async (mode: "scratch" | "expand", field?: string) => {
     if (aiBusy) return;
     setError("");
-    const busyKey = field ? `expand:${field}` : mode;
+    const busyKey = field ? `${mode}:${field}` : mode;
     setAiBusyField(busyKey);
     try {
       const npcsMap = Object.fromEntries(
@@ -335,6 +500,10 @@ export function CampaignCreatorModal({
           caper_style: caperStyle,
           factions: selectedFactions,
           screamsheet_hook: screamsheetHook || undefined,
+          lock_choices: lockChoices,
+          ...(lockChoices
+            ? { npc_count: targetNpcCount, objective_count: targetObjectiveCount }
+            : {}),
         },
         current: {
           name: name.trim() || undefined,
@@ -355,6 +524,27 @@ export function CampaignCreatorModal({
             : undefined,
         },
       });
+      if (!field && mode === "scratch" && !lockChoices) {
+        if (res.district) {
+          const matchedDist = presets.districts.find(
+            (d) => d.name.toLowerCase() === res.district!.toLowerCase(),
+          );
+          if (matchedDist) setDistrict(matchedDist.name);
+        }
+        if (res.caper_style) {
+          const matchedStyle = presets.caper_styles.find(
+            (s) => s.name.toLowerCase() === res.caper_style!.toLowerCase(),
+          );
+          if (matchedStyle) setCaperStyle(matchedStyle.name);
+        }
+        if (Array.isArray(res.factions) && res.factions.length > 0) {
+          const nextFactions = res.factions.slice(0, 4).map((f) => {
+            const matched = presets.factions.find((pf) => pf.name.toLowerCase() === f.toLowerCase());
+            return matched ? matched.name : f;
+          });
+          setSelectedFactions(nextFactions);
+        }
+      }
       if (!field || field === "name") {
         if (res.name && (mode === "scratch" || field === "name" || !name.trim())) setName(res.name);
       }
@@ -380,12 +570,12 @@ export function CampaignCreatorModal({
         setClockNote(res.opening_clock.note || "");
       }
       onNotify(
-        mode === "scratch"
-          ? "AI generated full Night City campaign premise, Beat Chart & GM secrets."
-          : `AI improved ${field ? field.replace(/^beat_/, "").replace(/_/g, " ") : "campaign notes"}.`,
+        !field && mode === "scratch"
+          ? "Generated full Night City campaign premise, Beat Chart & GM secrets."
+          : `${mode === "scratch" ? "Regenerated" : "Improved"} ${field ? field.replace(/^beat_/, "").replace(/_/g, " ") : "campaign notes"}.`,
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "AI campaign assist failed";
+      const msg = err instanceof Error ? err.message : "Campaign assist failed";
       setError(msg);
       onNotify(msg);
     } finally {
@@ -452,6 +642,7 @@ export function CampaignCreatorModal({
         await bootstrapCampaign(targetCampaign.id, payload);
       }
 
+      clearDraft(draftKey);
       if (editCampaign && onUpdated) {
         await onUpdated(targetCampaign.id, targetCampaign.name);
       } else {
@@ -467,67 +658,163 @@ export function CampaignCreatorModal({
     }
   };
 
+  const handleResetDraft = () => {
+    clearDraft(draftKey);
+    applyEditDefaults(editCampaign);
+    setDraftRestored(false);
+    setRevealGmSecrets(false);
+    setError("");
+    onNotify("Campaign draft cleared.");
+  };
+
+  const busyFor = (fieldKey: string): "improve" | "regen" | null =>
+    aiBusyField === `expand:${fieldKey}`
+      ? "improve"
+      : aiBusyField === `scratch:${fieldKey}`
+        ? "regen"
+        : null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Campaign Creator"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
     >
       <form
         onSubmit={handleSubmit}
-        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-700/80 bg-[#0b0f19] shadow-2xl"
+        className="cyber-hud-card flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-[#0b0f19] shadow-2xl"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 bg-[#0e1424] px-5 py-3">
-          <div className="flex items-center gap-2.5">
+        {/* Header with Night Market Hero Strip */}
+        <div className="relative flex items-center justify-between overflow-hidden border-b border-cyan-500/30 bg-[#0e1424] px-5 py-3.5">
+          <img
+            src={nightMarketHero}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0b0f19]/95 via-[#0e1424]/85 to-[#0b0f19]/90" />
+          <div className="relative z-10 flex items-center gap-2.5">
             <Compass className="h-5 w-5 text-cyan-400" />
             <div>
-              <h2 className="text-sm font-bold tracking-wide text-slate-100 uppercase">
-                Corebook Campaign Architect (Night City 2045)
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                Set district threat, active factions, Screamsheet hook, Beat Chart (pp. 395–408), and hidden GM truths.
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-cyber-display text-sm font-bold tracking-wide text-slate-100 uppercase">
+                  Corebook Campaign Architect (Night City 2045)
+                </h2>
+                {draftRestored && (
+                  <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                    Draft Restored
+                  </span>
+                )}
+              </div>
+              <p className="font-cyber-hud text-[11px] text-slate-400">
+                District threat, active gangs &amp; factions, Beat Chart (pp. 395–408), and spoiler-shielded GM truths.
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Campaign Creator"
-            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="relative z-10 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleResetDraft}
+              title="Clear unsaved draft and reset form"
+              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/90 px-2 py-1 text-[11px] text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Campaign Creator"
+              className="rounded-md p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* Quick AI / Scaffold Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3">
-            <div>
-              <div className="text-xs font-bold text-cyan-200">Quick World Builder or AI Co-Architect</div>
-              <p className="text-[11px] text-slate-300">
-                Fill just the Campaign Name for a blank sandbox, or build a full Corebook gig with Beat Chart &amp; GM Secrets.
-              </p>
+          <div className="space-y-2.5 rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-cyber-hud text-xs font-bold tracking-wide text-cyan-200 uppercase">
+                  World Builder &amp; Co-Architect
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  {lockChoices
+                    ? "Locked mode: Generate from Scratch builds around your chosen District, Style, Gangs, and counts."
+                    : "Auto mode: Generate from Scratch picks the District, Style, Gangs, and starting NPC/Objective counts."}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-pressed={lockChoices}
+                  onClick={() => setLockChoices((v) => !v)}
+                  title="Lock District, Caper Style, Gangs, and starting NPC/Objective counts so AI generates around them"
+                  className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 text-[11px] font-semibold transition ${
+                    lockChoices
+                      ? "border-amber-500/70 bg-amber-500/20 text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+                      : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/50 hover:text-amber-200"
+                  }`}
+                >
+                  {lockChoices ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  {lockChoices ? "Choices Locked" : "Lock Choices"}
+                </button>
+                <button
+                  type="button"
+                  onClick={applyPresetScaffold}
+                  className="inline-flex items-center gap-1 rounded border border-slate-600 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:border-cyan-400"
+                >
+                  <Dices className="h-3.5 w-3.5 text-cyan-400" /> Apply Preset Scaffold
+                </button>
+                <button
+                  type="button"
+                  disabled={aiBusy}
+                  onClick={() => void handleAiCampaign("scratch")}
+                  className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
+                >
+                  <Sparkles className="h-3 w-3" /> {aiBusyField === "scratch" ? "Architecting…" : "Generate from Scratch"}
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={applyPresetScaffold}
-                className="inline-flex items-center gap-1 rounded border border-slate-600 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:border-cyan-400"
-              >
-                <Dices className="h-3.5 w-3.5 text-cyan-400" /> Apply Preset Scaffold
-              </button>
-              <button
-                type="button"
-                disabled={aiBusy}
-                onClick={() => void handleAiCampaign("scratch")}
-                className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
-              >
-                <Sparkles className="h-3 w-3" /> {aiBusyField === "scratch" ? "Architecting…" : "AI Generate from Scratch"}
-              </button>
-            </div>
+
+            {lockChoices && (
+              <div className="flex flex-wrap items-center gap-3 border-t border-cyan-500/20 pt-2 text-[11px] text-amber-200">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
+                  Locked Counts:
+                </span>
+                <label className="inline-flex items-center gap-1.5">
+                  <span>Starting NPCs</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    aria-label="Locked starting NPCs count"
+                    value={targetNpcCount}
+                    onChange={(e) => setTargetNpcCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
+                    className="w-14 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-center font-mono text-xs text-slate-100"
+                  />
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <span>Starting Objectives</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    aria-label="Locked starting Objectives count"
+                    value={targetObjectiveCount}
+                    onChange={(e) => setTargetObjectiveCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
+                    className="w-14 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-center font-mono text-xs text-slate-100"
+                  />
+                </label>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -543,15 +830,13 @@ export function CampaignCreatorModal({
                 <label className="block text-xs font-semibold text-slate-200">
                   Campaign Title *
                 </label>
-                <button
-                  type="button"
+                <FieldAiActions
+                  label="Campaign Title"
                   disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("expand", "name")}
-                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Wand2 className="h-2.5 w-2.5" />
-                  {aiBusyField === "expand:name" ? "Improving…" : "AI Improve"}
-                </button>
+                  busyAction={busyFor("name")}
+                  onImprove={() => void handleAiCampaign("expand", "name")}
+                  onRegen={() => void handleAiCampaign("scratch", "name")}
+                />
               </div>
               <input
                 autoFocus
@@ -564,7 +849,7 @@ export function CampaignCreatorModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-200">
-                Optional AI Direction / Theme Prompt
+                Optional Direction / Theme Prompt
               </label>
               <input
                 type="text"
@@ -578,7 +863,7 @@ export function CampaignCreatorModal({
 
           {/* Row 2: District & Caper Style */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+            <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
               <label className="flex items-center justify-between text-xs font-semibold text-slate-200">
                 <span className="inline-flex items-center gap-1.5">
                   <MapPin className="h-3.5 w-3.5 text-rose-400" /> Starting District (pp. 298–317)
@@ -612,9 +897,14 @@ export function CampaignCreatorModal({
               )}
             </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                <Target className="h-3.5 w-3.5 text-cyan-400" /> Campaign / Caper Style (pp. 393–405)
+            <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
+              <label className="flex items-center justify-between gap-1.5 text-xs font-semibold text-slate-200">
+                <span className="inline-flex items-center gap-1.5">
+                  <Target className="h-3.5 w-3.5 text-cyan-400" /> Campaign / Caper Style (pp. 393–405)
+                </span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  {lockChoices ? "Locked" : "Auto on Scratch"}
+                </span>
               </label>
               <select
                 value={caperStyle}
@@ -632,10 +922,10 @@ export function CampaignCreatorModal({
           </div>
 
           {/* Factions & Screamsheet Hook */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-3">
+          <div className={`rounded-lg border p-3 space-y-3 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-semibold text-slate-200">
-                Active Power Players &amp; Factions (up to 4)
+                Active Gangs &amp; Factions (up to 4)
               </span>
               <button
                 type="button"
@@ -681,15 +971,13 @@ export function CampaignCreatorModal({
                 <label className="block text-xs font-semibold text-slate-200">
                   Campaign Premise &amp; Central Conflict
                 </label>
-                <button
-                  type="button"
+                <FieldAiActions
+                  label="Campaign Premise"
                   disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("expand", "summary")}
-                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Wand2 className="h-2.5 w-2.5" />
-                  {aiBusyField === "expand:summary" ? "Improving…" : "AI Expand / Improve"}
-                </button>
+                  busyAction={busyFor("summary")}
+                  onImprove={() => void handleAiCampaign("expand", "summary")}
+                  onRegen={() => void handleAiCampaign("scratch", "summary")}
+                />
               </div>
               <textarea
                 rows={3}
@@ -704,15 +992,13 @@ export function CampaignCreatorModal({
                 <label className="block text-xs font-semibold text-slate-200">
                   Opening Scene (Where Session 1 Drops In)
                 </label>
-                <button
-                  type="button"
+                <FieldAiActions
+                  label="Opening Scene"
                   disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("expand", "opening_scene")}
-                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Wand2 className="h-2.5 w-2.5" />
-                  {aiBusyField === "expand:opening_scene" ? "Improving…" : "AI Expand / Improve"}
-                </button>
+                  busyAction={busyFor("opening_scene")}
+                  onImprove={() => void handleAiCampaign("expand", "opening_scene")}
+                  onRegen={() => void handleAiCampaign("scratch", "opening_scene")}
+                />
               </div>
               <textarea
                 rows={3}
@@ -731,15 +1017,13 @@ export function CampaignCreatorModal({
                 <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
                 Corebook Beat Chart Outline (pp. 395–408 · Optional)
               </div>
-              <button
-                type="button"
+              <FieldAiActions
+                label="Beat Chart"
                 disabled={aiBusy}
-                onClick={() => void handleAiCampaign("expand", "beat_chart")}
-                className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-              >
-                <Wand2 className="h-2.5 w-2.5" />
-                {aiBusyField === "expand:beat_chart" ? "Improving…" : "AI Expand Beats"}
-              </button>
+                busyAction={busyFor("beat_chart")}
+                onImprove={() => void handleAiCampaign("expand", "beat_chart")}
+                onRegen={() => void handleAiCampaign("scratch", "beat_chart")}
+              />
             </div>
             <p className="text-[11px] text-amber-200/80">
               Corebook Beat Chart (pp. 395–408): alternate Action, Investigation, and Character-Interaction beats.
@@ -757,17 +1041,14 @@ export function CampaignCreatorModal({
                     <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                       {label}
                     </label>
-                    <button
-                      type="button"
+                    <FieldAiActions
+                      label={label}
+                      compact
                       disabled={aiBusy}
-                      onClick={() => void handleAiCampaign("expand", fieldKey)}
-                      title={`AI improve ${label}`}
-                      aria-label={`AI improve ${label}`}
-                      className="inline-flex items-center gap-0.5 text-[10px] text-amber-300/90 hover:text-amber-200 disabled:opacity-40"
-                    >
-                      <Wand2 className="h-2.5 w-2.5" />
-                      {aiBusyField === `expand:${fieldKey}` ? "…" : "Improve"}
-                    </button>
+                      busyAction={busyFor(fieldKey)}
+                      onImprove={() => void handleAiCampaign("expand", fieldKey)}
+                      onRegen={() => void handleAiCampaign("scratch", fieldKey)}
+                    />
                   </div>
                   <input
                     type="text"
@@ -789,21 +1070,20 @@ export function CampaignCreatorModal({
                   <Users className="h-3.5 w-3.5 text-cyan-400" /> Starting NPCs ({npcPairs.length})
                 </span>
                 <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
+                  <FieldAiActions
+                    label="Starting NPCs"
+                    compact
                     disabled={aiBusy}
-                    onClick={() => void handleAiCampaign("expand", "npcs")}
-                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                  >
-                    <Wand2 className="h-2.5 w-2.5" />
-                    {aiBusyField === "expand:npcs" ? "Improving…" : "AI Improve"}
-                  </button>
+                    busyAction={busyFor("npcs")}
+                    onImprove={() => void handleAiCampaign("expand", "npcs")}
+                    onRegen={() => void handleAiCampaign("scratch", "npcs")}
+                  />
                   <button
                     type="button"
                     onClick={() => setNpcPairs((p) => [...p, { key: "", val: "" }])}
                     className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-cyan-300"
                   >
-                    <Plus className="h-3 w-3" /> Add NPC
+                    <Plus className="h-3 w-3" /> Add
                   </button>
                 </div>
               </div>
@@ -844,21 +1124,20 @@ export function CampaignCreatorModal({
                   <Target className="h-3.5 w-3.5 text-emerald-400" /> Starting Objectives ({objectivePairs.length})
                 </span>
                 <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
+                  <FieldAiActions
+                    label="Starting Objectives"
+                    compact
                     disabled={aiBusy}
-                    onClick={() => void handleAiCampaign("expand", "objectives")}
-                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                  >
-                    <Wand2 className="h-2.5 w-2.5" />
-                    {aiBusyField === "expand:objectives" ? "Improving…" : "AI Improve"}
-                  </button>
+                    busyAction={busyFor("objectives")}
+                    onImprove={() => void handleAiCampaign("expand", "objectives")}
+                    onRegen={() => void handleAiCampaign("scratch", "objectives")}
+                  />
                   <button
                     type="button"
                     onClick={() => setObjectivePairs((p) => [...p, { key: "", val: "" }])}
                     className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-emerald-300"
                   >
-                    <Plus className="h-3 w-3" /> Add Objective
+                    <Plus className="h-3 w-3" /> Add
                   </button>
                 </div>
               </div>
@@ -894,30 +1173,55 @@ export function CampaignCreatorModal({
             </div>
           </div>
 
-          {/* GM Secrets + Opening World Clock */}
+          {/* GM Secrets (Spoiler-Shielded) + Opening World Clock */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="flex items-center gap-1.5 text-xs font-semibold text-amber-200">
-                  <EyeOff className="h-3.5 w-3.5" /> Hidden GM Secrets (Private to AI GM)
+                  {revealGmSecrets ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                  <span>Hidden GM Secrets</span>
                 </label>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("expand", "gm_secrets")}
-                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Wand2 className="h-2.5 w-2.5" />
-                  {aiBusyField === "expand:gm_secrets" ? "Improving…" : "AI Expand / Improve"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-amber-500/40 bg-slate-950/90 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:border-amber-400">
+                    <input
+                      type="checkbox"
+                      checked={revealGmSecrets}
+                      onChange={(e) => setRevealGmSecrets(e.target.checked)}
+                      aria-label="Unspoil GM Secrets"
+                      className="h-3 w-3 accent-amber-400"
+                    />
+                    <span>Unspoil</span>
+                  </label>
+                  <FieldAiActions
+                    label="GM Secrets"
+                    compact
+                    disabled={aiBusy}
+                    busyAction={busyFor("gm_secrets")}
+                    onImprove={() => void handleAiCampaign("expand", "gm_secrets")}
+                    onRegen={() => void handleAiCampaign("scratch", "gm_secrets")}
+                  />
+                </div>
               </div>
-              <textarea
-                rows={2}
-                value={gmSecrets}
-                onChange={(e) => setGmSecrets(e.target.value)}
-                placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-              />
+              {revealGmSecrets ? (
+                <textarea
+                  rows={2}
+                  value={gmSecrets}
+                  onChange={(e) => setGmSecrets(e.target.value)}
+                  placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
+                  className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center rounded border border-amber-500/30 bg-slate-950/90 px-3 py-4 text-center">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90">
+                    CLASSIFIED // SPOILER SHIELDED
+                  </span>
+                  <span className="mt-1 text-[11px] text-slate-400">
+                    {gmSecrets.trim()
+                      ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
+                      : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
@@ -925,15 +1229,14 @@ export function CampaignCreatorModal({
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
                   <Clock className="h-3.5 w-3.5 text-rose-400" /> Opening World / Heat Clock (Optional)
                 </div>
-                <button
-                  type="button"
+                <FieldAiActions
+                  label="Opening Clock"
+                  compact
                   disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("expand", "opening_clock")}
-                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                >
-                  <Wand2 className="h-2.5 w-2.5" />
-                  {aiBusyField === "expand:opening_clock" ? "Improving…" : "AI Improve"}
-                </button>
+                  busyAction={busyFor("opening_clock")}
+                  onImprove={() => void handleAiCampaign("expand", "opening_clock")}
+                  onRegen={() => void handleAiCampaign("scratch", "opening_clock")}
+                />
               </div>
               <div className="flex gap-2">
                 <input
@@ -966,7 +1269,7 @@ export function CampaignCreatorModal({
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-slate-800 bg-[#0e1424] px-5 py-3">
           <span className="text-[11px] text-slate-400">
-            Creates campaign cleanly and initializes District, Beat Chart, GM Secrets &amp; Opening Clock.
+            Closing preserves your draft automatically until saved or reset.
           </span>
           <div className="flex items-center gap-2">
             <button

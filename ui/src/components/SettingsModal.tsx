@@ -174,6 +174,7 @@ function saveStoredList<T>(key: string, items: T[]): void {
 
 const EMPTY_PROMPTS: PromptSettings = {
   system_persona: "",
+  intro_prompt: "",
   world_rules_prefix: "",
   player_message_template: "",
   player_dialogue_rules: "",
@@ -243,6 +244,14 @@ const PROMPT_FIELDS: Array<{
     label: "GM Voice & Persona",
     hint: "Who your Game Master is and the overall narrative voice of Night City.",
     rows: 3,
+  },
+  {
+    key: "intro_prompt",
+    group: "narrator",
+    sentTo: "Sent to: Introductory First Message",
+    label: "Introductory First Message Prompt",
+    hint: "System prompt used when clicking the Introductory First Message button on the startup screen (explaining Cyberpunk RED, stats, rules, and roles).",
+    rows: 5,
   },
   {
     key: "world_rules_prefix",
@@ -360,6 +369,7 @@ export function SettingsModal({
   const [plannerTemperature, setPlannerTemperature] = useState(0.1);
   const [creationTemperature, setCreationTemperature] = useState(0.85);
   const [maxTokens, setMaxTokens] = useState(1200);
+  const [introMaxTokens, setIntroMaxTokens] = useState(4096);
   const [timeoutS, setTimeoutS] = useState(90);
   const [mode, setMode] = useState<"two_pass" | "single_pass_tagged">("two_pass");
   const [topP, setTopP] = useState(0.95);
@@ -449,6 +459,7 @@ export function SettingsModal({
     setPlannerTemperature(s.planner_temperature ?? 0.1);
     setCreationTemperature(s.creation_temperature ?? 0.85);
     setMaxTokens(s.max_tokens);
+    setIntroMaxTokens(s.intro_max_tokens ?? 4096);
     setTimeoutS(s.timeout_s ?? 90);
     setMode(s.mode);
     setTopP(s.top_p ?? 0.95);
@@ -592,6 +603,7 @@ export function SettingsModal({
         planner_temperature: plannerTemperature,
         creation_temperature: creationTemperature,
         max_tokens: maxTokens,
+        intro_max_tokens: introMaxTokens,
         timeout_s: timeoutS,
         mode,
         top_p: topP,
@@ -1751,23 +1763,43 @@ export function SettingsModal({
                   </div>
                 </div>
 
-                <div>
-                  <label
-                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                    title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models spend thinking tokens out of this budget — 4096–8192 is recommended."
-                  >
-                    Max Output Tokens
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
-                  </label>
-                  <input
-                    type="number"
-                    min={128}
-                    max={65536}
-                    step={1}
-                    value={maxTokens}
-                    onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                      title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models spend thinking tokens out of this budget — 4096–8192 is recommended."
+                    >
+                      Max Output Tokens
+                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </label>
+                    <input
+                      type="number"
+                      min={128}
+                      max={65536}
+                      step={1}
+                      value={maxTokens}
+                      onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                      title="Dedicated output token limit for the Introductory First Message briefing so the full Cyberpunk RED guide never gets cut off."
+                    >
+                      Intro Message Token Limit
+                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                    </label>
+                    <input
+                      type="number"
+                      min={256}
+                      max={65536}
+                      step={1}
+                      value={introMaxTokens}
+                      onChange={(e) => setIntroMaxTokens(parseInt(e.target.value, 10) || 4096)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">

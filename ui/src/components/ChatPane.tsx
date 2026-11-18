@@ -1,6 +1,7 @@
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
+import nightMarketHero from "../assets/night-market-hero.jpg";
 import {
   AlertTriangle,
   ArrowDown,
@@ -8,6 +9,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
   Dices,
   Edit3,
@@ -20,6 +22,7 @@ import {
   Send,
   Sparkles,
   Square,
+  Terminal,
   Trash2,
   User,
   Wand2,
@@ -154,6 +157,7 @@ export interface StreamingTurnState {
   warnings: string[];
   overclock: boolean;
   truncateFromId?: string;
+  startedAt?: number;
 }
 
 interface ChatPaneProps {
@@ -166,6 +170,7 @@ interface ChatPaneProps {
   selfClientId: string;
   onChangeSpeakerId: (charId: string) => void;
   onSend: (text: string, opts: { overclock: boolean; luckSpend: number; speakerCharacterId?: string; speakerName?: string }) => Promise<void>;
+  onSendIntro?: () => Promise<void>;
   onEditUserMessage: (msg: ChatMessageNode, newText: string, overclock: boolean, luckSpend?: number) => Promise<void>;
   onUpdateMessageInPlace: (msg: ChatMessageNode, newText: string) => Promise<void>;
   onDeleteMessage: (msg: ChatMessageNode, scope?: "single" | "branch") => Promise<void>;
@@ -177,13 +182,6 @@ interface ChatPaneProps {
   onInspectEntry: (entry: LibraryEntry) => void;
   onNotify: (msg: string) => void;
 }
-
-const QUICK_PROMPTS = [
-  "Look around the scene and assess threats",
-  "Talk to the local fixer about a job",
-  "Scan the area for cameras or traps",
-  "Check my gear and reload",
-];
 
 const QUICK_DICE_PRESETS = [
   { label: "d10", count: 1, sides: 10 },
@@ -327,6 +325,7 @@ export function ChatPane({
   selfClientId,
   onChangeSpeakerId,
   onSend,
+  onSendIntro,
   onEditUserMessage,
   onUpdateMessageInPlace,
   onDeleteMessage,
@@ -353,7 +352,21 @@ export function ChatPane({
   const [colorBarOpen, setColorBarOpen] = useState(false);
   const [lastQuickRoll, setLastQuickRoll] = useState<string | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [streamElapsedSec, setStreamElapsedSec] = useState<number>(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!streaming?.startedAt) {
+      setStreamElapsedSec(0);
+      return;
+    }
+    const update = () => {
+      setStreamElapsedSec(Math.max(0, (Date.now() - streaming.startedAt!) / 1000));
+    };
+    update();
+    const timer = setInterval(update, 100);
+    return () => clearInterval(timer);
+  }, [streaming?.startedAt]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottomRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -581,27 +594,28 @@ export function ChatPane({
 
   if (!campaignId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#0a0e16]/75">
-        <div className="cyber-cut cyber-panel-glow relative max-w-md overflow-hidden border border-cyan-500/30 bg-[#0e1422] p-6">
+      <div className="flex h-full flex-col items-center justify-center p-6 sm:p-8 text-center bg-[#080b12]/75">
+        <div className="cyber-hud-card cyber-holo-sweep relative w-full max-w-lg overflow-hidden rounded-lg bg-[#0b101b] p-7">
           <img
             src={cyberHeroBackdrop}
             alt=""
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-30"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
           />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090d16] via-[#0b101b]/80 to-transparent" />
-          <div className="relative z-10">
-            <div className="mb-2 inline-flex items-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-rose-300">
-              NETLINK // READY
-            </div>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#070a11] via-[#0a0f1a]/82 to-[#070a11]/65" />
+          <div className="relative z-10 flex flex-col items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 rounded border border-rose-500/45 bg-rose-500/15 px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-rose-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_8px_#fb7185]" />
+              NETLINK // STANDBY
+            </span>
             <h2
               data-text="Welcome to Night City"
-              className="cyber-glitch-title font-cyber-display text-lg font-bold tracking-wider text-slate-100 uppercase"
+              className="cyber-glitch-title font-cyber-display text-xl font-bold tracking-[0.1em] text-slate-100 uppercase"
             >
               Welcome to Night City
             </h2>
-            <p className="mt-2 text-sm text-slate-300">
-              Create or select a campaign in the top bar to start playing with your AI Game Master.
+            <p className="max-w-md font-cyber-hud text-sm leading-relaxed text-slate-300">
+              Create or select a campaign in the top bar to jack into the Time of the Red with your AI Game Master.
             </p>
           </div>
         </div>
@@ -620,41 +634,42 @@ export function ChatPane({
         >
         <div className="mx-auto max-w-3xl space-y-5">
           {visibleMessages.length === 0 && !streaming && (
-            <div className="cyber-cut cyber-panel-glow relative mt-6 overflow-hidden border border-cyan-500/30 bg-[#101624] p-6 text-center">
-              <img
-                src={cyberHeroBackdrop}
-                alt=""
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-28"
-              />
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#090d16] via-[#0c111d]/82 to-[#090d16]/70" />
-              <div className="relative z-10">
-                <div className="mb-2 inline-flex items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-cyan-300">
-                  TIME OF THE RED // 2045
+            <div className="cyber-hud-card cyber-holo-sweep relative mt-6 overflow-hidden rounded-lg bg-[#0b101c]">
+              <div className="relative h-36 w-full overflow-hidden border-b border-cyan-500/25 sm:h-44">
+                <img
+                  src={nightMarketHero}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-full w-full object-cover object-center opacity-70"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0b101c] via-[#0b101c]/55 to-transparent" />
+                <div className="absolute inset-x-0 bottom-3 flex flex-col items-center px-4 text-center">
+                  <span className="mb-1.5 inline-flex items-center gap-1.5 rounded border border-cyan-400/50 bg-slate-950/80 px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-300 backdrop-blur-xs">
+                    TIME OF THE RED // 2045
+                  </span>
+                  <h3
+                    data-text="Ready to Run the Streets"
+                    className="cyber-glitch-title block font-cyber-display text-lg font-bold tracking-[0.1em] text-slate-100 uppercase sm:text-xl"
+                  >
+                    Ready to Run the Streets
+                  </h3>
                 </div>
-                <h3
-                  data-text="Ready to Run the Streets"
-                  className="cyber-glitch-title font-cyber-display text-base font-bold tracking-wider text-slate-100 uppercase"
-                >
-                  Ready to Run the Streets
-                </h3>
-                <p className="mt-1.5 text-sm text-slate-300">
-                  {characters.length > 0
-                    ? "Describe your character's opening move below. The GM automatically checks the rulebook and rolls authoritative dice."
-                    : "Tip: Create and attach a character in the Character tab on the right so the GM can roll checks against your stats."}
+              </div>
+
+              <div className="relative z-10 flex flex-col items-center gap-4 px-6 py-5 text-center">
+                <p className="max-w-lg font-cyber-hud text-sm leading-relaxed text-slate-300">
+                  Jack in for a full Cyberpunk RED orientation — covering Night City 2045, how d10 checks and STATs work, and what Roles you can play — or type your opening move below.
                 </p>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {QUICK_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() => setInput(prompt)}
-                      className="rounded-full border border-cyan-500/30 bg-slate-950/80 px-3 py-1.5 text-xs text-slate-200 backdrop-blur-xs transition hover:border-cyan-400 hover:bg-cyan-950/50 hover:text-cyan-200"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
+
+                <button
+                  type="button"
+                  disabled={busy || lockedByPeer || !onSendIntro}
+                  onClick={() => void onSendIntro?.()}
+                  className="cyber-cta-pulse cyber-cut-sm inline-flex items-center gap-2.5 border border-rose-500/60 bg-gradient-to-r from-rose-600/90 via-rose-600/80 to-cyan-700/80 px-5 py-2.5 font-cyber-hud text-sm font-bold tracking-wider text-white uppercase transition hover:from-rose-500 hover:to-cyan-600 disabled:opacity-45"
+                >
+                  <Terminal className="h-4 w-4 text-cyan-200" />
+                  <span>Introductory First Message</span>
+                </button>
               </div>
             </div>
           )}
@@ -695,6 +710,18 @@ export function ChatPane({
                       {!isUser && msg.model && (
                         <span className="rounded bg-slate-800/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
                           {msg.model}
+                        </span>
+                      )}
+                      {!isUser && msg.metadata?.generation_stats && (
+                        <span
+                          title={`${msg.metadata.generation_stats.completion_tokens ?? "?"} tokens${msg.metadata.generation_stats.estimated ? " (estimated)" : ""} in ${msg.metadata.generation_stats.elapsed_seconds.toFixed(2)}s`}
+                          className="inline-flex items-center gap-1 rounded border border-cyan-500/25 bg-cyan-950/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300"
+                        >
+                          <Clock className="h-2.5 w-2.5" />
+                          <span>
+                            {msg.metadata.generation_stats.elapsed_seconds.toFixed(1)}s ·{" "}
+                            {msg.metadata.generation_stats.tokens_per_second.toFixed(1)} tok/s
+                          </span>
                         </span>
                       )}
                       {msg.metadata?.overclock && (
@@ -1024,12 +1051,23 @@ export function ChatPane({
                 </div>
               )}
 
-              <div className="rounded-xl border border-rose-500/30 bg-[#101624] px-4 py-3 text-slate-100">
-                <div className="mb-2 flex items-center gap-2 text-[11px] text-rose-300">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
-                  <span className="font-mono font-semibold uppercase tracking-wider">
-                    GM Streaming...
-                  </span>
+              <div className="rounded-xl border border-rose-500/35 bg-[#101624] px-4 py-3 text-slate-100 shadow-[0_0_24px_rgba(244,63,94,0.08)]">
+                <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-rose-300">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-end gap-0.5" aria-hidden="true">
+                      <span className="cyber-eq-bar" style={{ animationDelay: "0ms" }} />
+                      <span className="cyber-eq-bar" style={{ animationDelay: "180ms" }} />
+                      <span className="cyber-eq-bar" style={{ animationDelay: "360ms" }} />
+                    </span>
+                    <span className="font-mono font-semibold uppercase tracking-wider">
+                      GM Streaming...
+                    </span>
+                  </div>
+                  {streaming.startedAt && (
+                    <span className="font-mono text-[10px] text-cyan-300">
+                      {streamElapsedSec.toFixed(1)}s
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-3">

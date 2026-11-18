@@ -135,6 +135,7 @@ export interface AuthAccountSummary {
 
 export interface PromptSettings {
   system_persona: string;
+  intro_prompt?: string;
   world_rules_prefix: string;
   player_message_template?: string;
   player_dialogue_rules?: string;
@@ -201,6 +202,7 @@ export interface LLMSettings {
   planner_temperature?: number;
   creation_temperature?: number;
   max_tokens: number;
+  intro_max_tokens?: number;
   timeout_s: number;
   mode: "two_pass" | "single_pass_tagged";
   top_p?: number;
@@ -371,9 +373,18 @@ export interface StatePatchEvent {
   reason: string;
 }
 
+export interface GenerationStats {
+  elapsed_seconds: number;
+  tokens_per_second: number;
+  completion_tokens?: number;
+  estimated?: boolean;
+}
+
 export interface ChatMessageMetadata {
   turn_id?: string;
   mode?: string;
+  is_intro?: boolean;
+  generation_stats?: GenerationStats;
   overclock?: boolean;
   luck_spend?: number;
   speaker_character_id?: string;
@@ -430,6 +441,7 @@ export interface TurnStreamCallbacks {
     turn_id: string;
     user_message: ChatMessageNode;
     assistant_message: ChatMessageNode;
+    generation_stats?: GenerationStats;
     citations: LibraryEntry[];
     rolls: DiceRollResult[];
     state_patches: StatePatchEvent[];
@@ -645,6 +657,9 @@ export interface CreationAiAssistRequest {
     caper_style?: string;
     factions?: string[];
     screamsheet_hook?: string;
+    lock_choices?: boolean;
+    npc_count?: number;
+    objective_count?: number;
   };
   current: {
     name?: string;
@@ -669,6 +684,9 @@ export interface CreationAiAssistResponse {
   mode: "scratch" | "expand";
   field?: string;
   name?: string;
+  district?: string;
+  caper_style?: string;
+  factions?: string[];
   concept?: string;
   summary?: string;
   established_history?: string;

@@ -32,6 +32,7 @@ import { AuthGateModal } from "./components/AuthGateModal";
 import nightCityBackdrop from "./assets/night-city-backdrop.jpg";
 import { CampaignCreatorModal } from "./components/CampaignCreatorModal";
 import { CampaignPanel } from "./components/CampaignPanel";
+import { CharacterCreatorModal } from "./components/CharacterCreatorModal";
 import { CharacterPanel } from "./components/CharacterPanel";
 import { ChatPane, type StreamingTurnState } from "./components/ChatPane";
 import { CommandPalette } from "./components/CommandPalette";
@@ -116,6 +117,8 @@ export function App() {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("connection");
   const [campaignCreatorOpen, setCampaignCreatorOpen] = useState(false);
   const [campaignCreatorEdit, setCampaignCreatorEdit] = useState<CampaignRecord | null>(null);
+  const [characterCreatorOpen, setCharacterCreatorOpen] = useState(false);
+  const [preferredCharacterId, setPreferredCharacterId] = useState<string>("");
   const [coopOpen, setCoopOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<"chat" | "dashboard">("chat");
@@ -440,6 +443,7 @@ export function App() {
       warnings: [],
       overclock,
       truncateFromId,
+      startedAt: Date.now(),
     });
 
     try {
@@ -506,6 +510,23 @@ export function App() {
           luck_spend: opts.luckSpend || undefined,
           speaker_character_id: opts.speakerCharacterId,
           speaker_name: opts.speakerName,
+        },
+        callbacks,
+        signal,
+      ),
+    );
+  };
+
+  const handleSendIntro = async () => {
+    if (!activeCampaignId) return;
+    const introPromptText =
+      "Give me an introductory first message explaining what Cyberpunk RED is, how the rules and stats work, and what roles or characters I can play.";
+    await runStreamedAction(introPromptText, false, undefined, (callbacks, signal) =>
+      streamChatTurn(
+        {
+          campaign_id: activeCampaignId,
+          user_text: introPromptText,
+          is_intro: true,
         },
         callbacks,
         signal,
@@ -671,6 +692,8 @@ export function App() {
             roster={roster}
             selfClientId={selfClientId}
             protectOthers={protectOthers}
+            preferredSelectedId={preferredCharacterId}
+            onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
             onRefresh={refreshActiveCampaign}
             onNotify={notify}
           />
@@ -734,6 +757,7 @@ export function App() {
       selfClientId={selfClientId}
       onChangeSpeakerId={setSpeakerId}
       onSend={handleSendTurn}
+      onSendIntro={handleSendIntro}
       onEditUserMessage={handleEditUserMessage}
       onUpdateMessageInPlace={handleUpdateMessageInPlace}
       onDeleteMessage={handleDeleteMessage}
@@ -872,6 +896,23 @@ export function App() {
         }}
         onNotify={notify}
       />
+
+      {campaignContext && (
+        <CharacterCreatorModal
+          open={characterCreatorOpen}
+          campaignId={campaignContext.campaign.id}
+          campaignRevision={campaignContext.campaign.revision}
+          soloRevision={campaignContext.solo.revision}
+          onClose={() => setCharacterCreatorOpen(false)}
+          onCreated={async (id, charName) => {
+            setPreferredCharacterId(id);
+            await refreshActiveCampaign();
+            setCharacterCreatorOpen(false);
+            notify(`Created ${charName} and attached to campaign.`);
+          }}
+          onNotify={notify}
+        />
+      )}
 
       <CoopModal
         open={coopOpen}

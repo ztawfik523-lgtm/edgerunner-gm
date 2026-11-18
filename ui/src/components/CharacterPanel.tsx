@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import edgerunnerChromeBanner from "../assets/edgerunner-chrome-banner.jpg";
 import {
   Activity,
   Backpack,
@@ -42,6 +43,8 @@ interface CharacterPanelProps {
   roster?: CoopPlayer[];
   selfClientId?: string;
   protectOthers?: boolean;
+  preferredSelectedId?: string;
+  onOpenCreateCharacter?: () => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
 }
@@ -100,6 +103,8 @@ export function CharacterPanel({
   roster = [],
   selfClientId = "",
   protectOthers = false,
+  preferredSelectedId = "",
+  onOpenCreateCharacter,
   onRefresh,
   onNotify,
 }: CharacterPanelProps) {
@@ -144,6 +149,13 @@ export function CharacterPanel({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (preferredSelectedId && characters.some((c) => c.id === preferredSelectedId)) {
+      setSelectedId(preferredSelectedId);
+      setSheetTab("skills");
+    }
+  }, [preferredSelectedId, characters]);
+
+  useEffect(() => {
     if (characters.length === 0) {
       setSelectedId("");
       return;
@@ -159,7 +171,11 @@ export function CharacterPanel({
     setEditingBio(false);
   }, [selectedId, campaignId]);
 
-  const active = characters.find((c) => c.id === selectedId) ?? null;
+  const active =
+    characters.find((c) => c.id === selectedId) ??
+    (preferredSelectedId ? characters.find((c) => c.id === preferredSelectedId) : undefined) ??
+    characters[0] ??
+    null;
 
   useEffect(() => {
     if (sheetTab !== "log" || !active) return;
@@ -408,7 +424,15 @@ export function CharacterPanel({
     }
   };
 
-  const creatorModal = (
+  const openCreator = () => {
+    if (onOpenCreateCharacter) {
+      onOpenCreateCharacter();
+    } else {
+      setCreating(true);
+    }
+  };
+
+  const creatorModal = !onOpenCreateCharacter ? (
     <CharacterCreatorModal
       open={creating}
       campaignId={campaignId}
@@ -424,50 +448,60 @@ export function CharacterPanel({
       }}
       onNotify={onNotify}
     />
-  );
+  ) : null;
 
   if (characters.length === 0) {
     return (
       <div className="space-y-4 p-4">
         {creatorModal}
-        <div className="cyber-cut rounded-xl border border-slate-800 bg-[#101624] p-4 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-100">
+        <div className="cyber-hud-card overflow-hidden rounded-xl bg-[#101624]">
+          <div className="relative h-28 w-full overflow-hidden border-b border-rose-500/30">
+            <img
+              src={edgerunnerChromeBanner}
+              alt=""
+              aria-hidden="true"
+              className="h-full w-full object-cover opacity-75"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#101624] via-[#101624]/45 to-transparent" />
+            <div className="absolute bottom-2.5 left-4 right-4 flex items-center justify-between">
+              <h3 className="font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100">
                 Create Edgerunner Sheet
               </h3>
-              <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                Build a full Cyberpunk RED character sheet with Corebook Roles, hover/click rulebook
-                explanations, official STAT &amp; Skill templates or custom builds, Lifepath history,
-                written backstory, and starting gear.
-              </p>
-            </div>
-            <UserPlus className="h-5 w-5 shrink-0 text-cyan-400" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-            <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-              <div className="font-semibold text-cyan-300">4 Creation Modes</div>
-              <div className="mt-0.5 text-slate-400">
-                Streetrat, Edgerunner, Complete Package (62 STATs / 86 Skills / 2,550 eb), or Freeform.
-              </div>
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-              <div className="font-semibold text-rose-300">Lifepath &amp; Ties</div>
-              <div className="mt-0.5 text-slate-400">
-                Roll or write Culture, Origins, Friends, Enemies, Role Lifepath, and Night City history.
-              </div>
+              <UserPlus className="h-5 w-5 shrink-0 text-cyan-400" />
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-rose-500"
-          >
-            <UserPlus className="h-4 w-4" />
-            Open Character Sheet Creator
-          </button>
+          <div className="p-4 space-y-3">
+            <p className="text-xs leading-relaxed text-slate-300">
+              Build a full Cyberpunk RED character sheet with Corebook Roles, hover/click rulebook
+              explanations, official STAT &amp; Skill templates or custom builds, Lifepath history,
+              written backstory, and starting gear.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                <div className="font-semibold text-cyan-300">4 Creation Modes</div>
+                <div className="mt-0.5 text-slate-400">
+                  Streetrat, Edgerunner, Complete Package (62 STATs / 86 Skills / 2,550 eb), or Freeform.
+                </div>
+              </div>
+              <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
+                <div className="font-semibold text-rose-300">Lifepath &amp; Ties</div>
+                <div className="mt-0.5 text-slate-400">
+                  Roll or write Culture, Origins, Friends, Enemies, Role Lifepath, and Night City history.
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={openCreator}
+              className="cyber-cut-sm inline-flex w-full items-center justify-center gap-2 bg-gradient-to-r from-rose-600 to-rose-500 px-4 py-2.5 font-cyber-hud text-xs font-bold tracking-wider text-white uppercase shadow-[0_0_16px_rgba(244,63,94,0.28)] transition hover:from-rose-500 hover:to-rose-400"
+            >
+              <UserPlus className="h-4 w-4" />
+              Open Character Sheet Creator
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -608,7 +642,7 @@ export function CharacterPanel({
           </button>
           <button
             type="button"
-            onClick={() => setCreating(true)}
+            onClick={openCreator}
             className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-cyan-300 hover:border-cyan-500/60"
           >
             <Plus className="h-3.5 w-3.5" />

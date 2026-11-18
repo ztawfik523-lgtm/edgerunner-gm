@@ -955,6 +955,7 @@ export async function streamChatTurn(
     mode?: "two_pass" | "single_pass_tagged";
     speaker_character_id?: string;
     speaker_name?: string;
+    is_intro?: boolean;
   },
   callbacks: TurnStreamCallbacks,
   signal?: AbortSignal,

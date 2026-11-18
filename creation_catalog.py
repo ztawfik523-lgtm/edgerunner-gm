@@ -1031,6 +1031,7 @@ async def generate_creation_ai_assist(
     camp = payload.get("campaign") if isinstance(payload.get("campaign"), dict) else {}
     current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
     guidance = str(payload.get("guidance") or "").strip()
+    lock_choices = bool(camp.get("lock_choices", payload.get("lock_choices", False)))
 
     role_name = str(char.get("role") or "Edgerunner").strip()
     char_name = str(char.get("name") or "Unnamed Edgerunner").strip()
@@ -1059,13 +1060,18 @@ async def generate_creation_ai_assist(
         from redkb import search_pages
 
         locale_hint = (scratch_seed or {}).get("suggested_locale", "").split()[0] if scratch_seed else ""
+        use_camp_seed_for_lore = target == "campaign" and (mode != "scratch" or lock_choices or field is not None)
         query_terms = (
-            [
-                str(camp.get("district") or ""),
-                *(str(f) for f in (camp.get("factions") or [])[:2]),
-                str(camp.get("caper_style") or ""),
-                locale_hint or "Night City",
-            ]
+            (
+                [
+                    str(camp.get("district") or ""),
+                    *(str(f) for f in (camp.get("factions") or [])[:2]),
+                    str(camp.get("caper_style") or ""),
+                    locale_hint or "Night City",
+                ]
+                if use_camp_seed_for_lore
+                else [guidance[:80], locale_hint or "Night City"]
+            )
             if target == "campaign"
             else [role_name, locale_hint or "Night City", str(lifepath.get("cultural_origin") or "")]
         )
@@ -1178,9 +1184,12 @@ async def generate_creation_ai_assist(
         }
         if scratch_seed:
             user_payload["creative_seed"] = scratch_seed
-            prev_text = " | ".join(str(v)[:140] for v in current_draft.values() if isinstance(v, str) and v.strip())
-            if prev_text:
-                user_payload["avoid_repeating"] = f"Do NOT reuse names, locations, or plot beats from this prior draft: {prev_text[:320]}"
+            if field is not None and isinstance(current_draft.get(field), str) and current_draft[field].strip():
+                user_payload["avoid_repeating"] = f"Write a completely fresh alternative for '{field}'; do NOT repeat or lightly rephrase: {current_draft[field][:260]}"
+            else:
+                prev_text = " | ".join(str(v)[:140] for v in current_draft.values() if isinstance(v, str) and v.strip())
+                if prev_text:
+                    user_payload["avoid_repeating"] = f"Do NOT reuse names, locations, or plot beats from this prior draft: {prev_text[:320]}"
 
     elif target == "contacts":
         full_schema = {
@@ -1235,6 +1244,16 @@ async def generate_creation_ai_assist(
 
     else:
         camp_brief = payload.get("campaign") if isinstance(payload.get("campaign"), dict) else {}
+        presets = build_campaign_presets()
+        available_districts = [str(d["name"]) for d in presets.get("districts", []) if d.get("name")]
+        available_styles = [str(s["name"]) for s in presets.get("caper_styles", []) if s.get("name")]
+        available_factions = [str(f["name"]) for f in presets.get("factions", []) if f.get("name")]
+
+        raw_npc_count = camp_brief.get("npc_count")
+        raw_obj_count = camp_brief.get("objective_count")
+        npc_count = max(1, min(8, int(raw_npc_count))) if isinstance(raw_npc_count, (int, float)) and not isinstance(raw_npc_count, bool) and int(raw_npc_count) > 0 else None
+        obj_count = max(1, min(8, int(raw_obj_count))) if isinstance(raw_obj_count, (int, float)) and not isinstance(raw_obj_count, bool) and int(raw_obj_count) > 0 else None
+
         full_schema: dict[str, Any] = {
             "name": "Evocative campaign title",
             "summary": "2 concise paragraphs: campaign premise, district mood, central conflict, and stakes",
@@ -1266,39 +1285,102 @@ async def generate_creation_ai_assist(
                 beat_key, beat_desc = _BEAT_KEY_TO_FIELD[field]
                 requested_schema = {"beat_chart": {beat_key: beat_desc}}
                 target_label = f"beat_chart.{beat_key}"
+                prev_field_val = (current_draft.get("beats") or {}).get(beat_key, "")
             else:
                 requested_schema = {field: full_schema[field]}
                 target_label = field
+                prev_field_val = current_draft.get(field)
             mode_rule = (
-                f"FOCUS EXCLUSIVELY ON '{target_label}'. Expand, sharpen, and enrich ONLY '{target_label}'—preserving every specific plot thread, NPC, faction, and tone the user supplied while staying consistent with the rest of current_draft and campaign_seed. Return ONLY the requested schema key."
+                f"FOCUS EXCLUSIVELY ON '{target_label}'. Generate a completely fresh '{target_label}' from scratch consistent with the rest of current_draft and campaign_seed, using creative_seed unless user_guidance steers elsewhere. Return ONLY the requested schema key."
+                if mode == "scratch"
+                else f"FOCUS EXCLUSIVELY ON '{target_label}'. Expand, sharpen, and enrich ONLY '{target_label}'—preserving every specific plot thread, NPC, faction, and tone the user supplied while staying consistent with the rest of current_draft and campaign_seed. Return ONLY the requested schema key."
             )
         else:
-            requested_schema = full_schema
-            mode_rule = (
-                "Design a fresh, ready-to-play Cyberpunk RED Night City 2045 campaign starter strictly adhering to Corebook districts, Threat Ratings, Fixer/Corp/Gang lore, and the Corebook Beat Chart structure (Hook -> Developments -> Cliffhangers -> Climax -> Resolution, pp. 395-405). Draw on creative_seed unless user_guidance overrides it."
-                if mode == "scratch"
-                else "The GM/player already wrote campaign notes/ideas. EXPAND, SHARPEN, and STRUCTURE their draft—preserving every specific plot thread, district, NPC, and faction they supplied while fleshing out Corebook-faithful hooks, Beat Chart stages, Fixer patrons, and GM secrets."
-            )
+            prev_field_val = None
+            if mode == "scratch" and not lock_choices:
+                requested_schema = {
+                    "district": "Pick 1 district name from available_options.districts",
+                    "caper_style": "Pick 1 caper style name from available_options.caper_styles",
+                    "factions": ["1 to 4 active gangs, corps, or factions from available_options.factions (or fitting Night City 2045 gangs)"],
+                    **full_schema,
+                }
+                mode_rule = (
+                    "Design a fresh, ready-to-play Cyberpunk RED Night City 2045 campaign starter from scratch. "
+                    "YOU decide the best Starting District (pick from available_options.districts), Campaign/Caper Style (pick from available_options.caper_styles), "
+                    "1-4 active Gangs/Factions (pick from available_options.factions or fitting Night City gangs), and choose an organic number of starting NPCs (2-5) "
+                    "and starting Objectives (2-4) tailored to the premise. Follow the Corebook Beat Chart structure (Hook -> Developments -> Cliffhangers -> Climax -> Resolution, pp. 395-405) "
+                    "and draw on creative_seed unless user_guidance overrides it."
+                )
+            elif mode == "scratch":
+                requested_schema = full_schema
+                count_parts: list[str] = []
+                if npc_count is not None:
+                    count_parts.append(f"Generate EXACTLY {npc_count} entries in 'npcs'.")
+                if obj_count is not None:
+                    count_parts.append(f"Generate EXACTLY {obj_count} entries in 'objectives'.")
+                count_note = " ".join(count_parts)
+                mode_rule = (
+                    "Design a fresh, ready-to-play Cyberpunk RED Night City 2045 campaign starter strictly adhering to Corebook lore and Beat Chart structure (pp. 395-405). "
+                    f"LOCKED CONSTRAINTS: Build the entire campaign AROUND the user's locked campaign_seed (district, caper_style, factions). Do NOT change or ignore those locked choices. {count_note}"
+                ).strip()
+            else:
+                requested_schema = full_schema
+                mode_rule = (
+                    "The GM/player already wrote campaign notes/ideas. EXPAND, SHARPEN, and STRUCTURE their draft—preserving every specific plot thread, district, NPC, and faction they supplied while fleshing out Corebook-faithful hooks, Beat Chart stages, Fixer patrons, and GM secrets."
+                )
+        effective_seed = (
+            {
+                "name": camp_brief.get("name") or "",
+                "lock_choices": lock_choices,
+                **(
+                    {
+                        "district": camp_brief.get("district") or "",
+                        "caper_style": camp_brief.get("caper_style") or "",
+                        "factions": camp_brief.get("factions") or [],
+                        **({"target_npc_count": npc_count} if npc_count is not None else {}),
+                        **({"target_objective_count": obj_count} if obj_count is not None else {}),
+                    }
+                    if (lock_choices or mode != "scratch" or field is not None)
+                    else {"screamsheet_hook": camp_brief.get("screamsheet_hook") or ""}
+                ),
+            }
+        )
         user_payload = {
             "task": "campaign_setup",
             "mode": mode,
             **({"target_field": field} if field else {}),
             "instruction": mode_rule,
             "user_guidance": guidance or "(none)",
-            "campaign_seed": camp_brief,
+            "campaign_seed": effective_seed,
+            **(
+                {
+                    "available_options": {
+                        "districts": available_districts,
+                        "caper_styles": available_styles,
+                        "factions": available_factions,
+                    }
+                }
+                if (mode == "scratch" and field is None and not lock_choices)
+                else {}
+            ),
             "current_draft": current_draft,
             "corebook_context": lore_block,
             "required_json_schema": requested_schema,
         }
         if scratch_seed:
             user_payload["creative_seed"] = scratch_seed
-            prev_camp = " | ".join(
-                str(current_draft.get(k) or "")[:120]
-                for k in ("name", "summary", "opening_scene")
-                if str(current_draft.get(k) or "").strip()
-            )
-            if prev_camp:
-                user_payload["avoid_repeating"] = f"Generate a completely fresh premise, cast, and hook; avoid repeating: {prev_camp[:320]}"
+            if field is not None and prev_field_val:
+                prev_str = json.dumps(prev_field_val, ensure_ascii=False) if isinstance(prev_field_val, (dict, list)) else str(prev_field_val)
+                if prev_str.strip():
+                    user_payload["avoid_repeating"] = f"Generate a completely fresh alternative for '{field}'; avoid repeating: {prev_str[:300]}"
+            else:
+                prev_camp = " | ".join(
+                    str(current_draft.get(k) or "")[:120]
+                    for k in ("name", "summary", "opening_scene")
+                    if str(current_draft.get(k) or "").strip()
+                )
+                if prev_camp:
+                    user_payload["avoid_repeating"] = f"Generate a completely fresh premise, cast, and hook; avoid repeating: {prev_camp[:320]}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -1374,10 +1456,17 @@ async def generate_creation_ai_assist(
             else:
                 out[field] = str(parsed.get(field) or "").strip()
             return out
+        raw_factions = parsed.get("factions") if isinstance(parsed.get("factions"), list) else []
+        factions_out = [str(f).strip() for f in raw_factions if str(f).strip()][:4]
+        district_out = str(parsed.get("district") or "").strip()
+        style_out = str(parsed.get("caper_style") or "").strip()
         return {
             "target": "campaign",
             "mode": mode,
             "name": str(parsed.get("name") or "").strip(),
+            **({"district": district_out} if district_out and not lock_choices else {}),
+            **({"caper_style": style_out} if style_out and not lock_choices else {}),
+            **({"factions": factions_out} if factions_out and not lock_choices else {}),
             "summary": str(parsed.get("summary") or "").strip(),
             "opening_scene": str(parsed.get("opening_scene") or "").strip(),
             "npcs": npcs_out,

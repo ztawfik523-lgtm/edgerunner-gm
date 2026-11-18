@@ -1732,6 +1732,7 @@ def make_api(
                 mode=body.get("mode"),
                 speaker_character_id=body.get("speaker_character_id"),
                 speaker_name=body.get("speaker_name"),
+                is_intro=bool(body.get("is_intro", False)),
             ),
             request_id,
             on_finish=finish_turn,

@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import edgerunnerChromeBanner from "../assets/edgerunner-chrome-banner.jpg";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -15,6 +17,7 @@ import {
   Heart,
   Minus,
   Plus,
+  RotateCcw,
   Search,
   Shield,
   Sparkles,
@@ -30,6 +33,7 @@ import {
   createRulesPlayerCharacter,
   fetchCreationReference,
 } from "../api";
+import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
 import {
   STAT_NAMES,
   type CreationMethodInfo,
@@ -39,6 +43,7 @@ import {
   type CreationSkillInfo,
   type StatName,
 } from "../types";
+import { FieldAiActions } from "./FieldAiActions";
 
 interface CharacterCreatorModalProps {
   open: boolean;
@@ -413,6 +418,275 @@ export function CharacterCreatorModal({
   const [cartItems, setCartItems] = useState<Array<{ name: string; category: string; cost_eb: number; hl?: number; sp?: number; location?: string; install?: string; notes?: string; qty: number }>>([]);
   const [selectedFashion, setSelectedFashion] = useState<Array<{ name: string; cost_eb: number; style: string }>>([]);
   const [freeformMoney, setFreeformMoney] = useState(1500);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  const draftKey = `character:${campaignId}`;
+  const hydratedRef = useRef(false);
+  const prevRoleRef = useRef<string | null>(null);
+  const skipNextRoleResetRef = useRef(false);
+
+  const resetCharacterDefaults = () => {
+    setStep("identity");
+    setName("");
+    setPronouns("");
+    setAge("");
+    setConceptTagline("");
+    setMethod(refData && !refData.rules_indexed ? "freeform" : "streetrat");
+    setSelectedRole("Solo");
+    setTechMakerRanks({
+      "Field Expertise": 2,
+      "Upgrade Expertise": 2,
+      "Fabrication Expertise": 2,
+      "Invention Expertise": 2,
+    });
+    setMedtechAlloc({ Surgery: 2, Pharmaceuticals: 1, "Cryosystem Operation": 1 });
+    setMedtechRecipes(["Speedheal"]);
+    setFixerCulture("Night City Street");
+    setFixerLanguage("Spanish");
+    setNomadVehicles(["Compact Groundcar", "Superbike", "Smuggling Compartment", "Armored Chassis"]);
+    setExecTeamName("Kaito Reyes");
+    setExecTeamRole("Covert Operative / Driver");
+    setStreetratRoll(1);
+    setEdgerunnerRolls([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    setCustomStats({ ...FALLBACK_STATS });
+    setEdgerunnerSkills(roleInfo && Object.keys(roleInfo.skills).length === 20 ? { ...roleInfo.skills } : {});
+    setCustomSkills({ ...BASIC_SKILL_DEFAULTS, Handgun: 6, Perception: 6 });
+    setSpecializations({
+      "Play Instrument": "Electric Guitar",
+      Science: "Biology",
+      "Martial Arts": "Karate",
+    });
+    setCulturalRegion("North American");
+    setCulturalLanguage("Spanish");
+    setPersonality("Stable and serious");
+    setClothingStyle("Urban Flash (Flashy, Technological, Streetwear)");
+    setHairstyle("Short and spiked");
+    setAffectation("Mirrorshades");
+    setValueMost("Your word");
+    setFeelingsAboutPeople("People are untrustworthy. Don't depend on anyone.");
+    setValuedPerson("A friend");
+    setValuedPossession("A weapon");
+    setFamilyBackground("Edgerunners (Always moving based on parents' latest gig)");
+    setChildhoodEnv("Ran on The Street, with no adult supervision");
+    setFamilyCrisis("Your family lost everything through betrayal.");
+    setLifeGoal("Get off The Street no matter what it takes.");
+    setRoleLifepath({});
+    setFriends([]);
+    setEnemies([]);
+    setLoveAffairs([]);
+    setBackstorySummary("");
+    setEstablishedHistory("");
+    setAppearanceNotes("");
+    setAiBioGuidance("");
+    setAiContactsGuidance("");
+    setWeaponChoices({});
+    setOutfitChoice("");
+    setCyberwareChoice("");
+    setCyberwareChoice2("");
+    setCartItems([]);
+    setSelectedFashion([]);
+    setFreeformMoney(1500);
+    setDraftRestored(false);
+    prevRoleRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!open) {
+      hydratedRef.current = false;
+      return;
+    }
+    const saved = loadDraft<Record<string, unknown>>(draftKey);
+    if (saved) {
+      skipNextRoleResetRef.current = true;
+      if (typeof saved.step === "string") setStep(saved.step as CreatorStep);
+      if (typeof saved.name === "string") setName(saved.name);
+      if (typeof saved.pronouns === "string") setPronouns(saved.pronouns);
+      if (typeof saved.age === "string") setAge(saved.age);
+      if (typeof saved.conceptTagline === "string") setConceptTagline(saved.conceptTagline);
+      if (typeof saved.method === "string") setMethod(saved.method as typeof method);
+      if (typeof saved.selectedRole === "string") {
+        setSelectedRole(saved.selectedRole);
+        prevRoleRef.current = saved.selectedRole;
+      }
+      if (saved.techMakerRanks && typeof saved.techMakerRanks === "object") setTechMakerRanks(saved.techMakerRanks as Record<string, number>);
+      if (saved.medtechAlloc && typeof saved.medtechAlloc === "object") setMedtechAlloc(saved.medtechAlloc as Record<string, number>);
+      if (Array.isArray(saved.medtechRecipes)) setMedtechRecipes(saved.medtechRecipes as string[]);
+      if (typeof saved.fixerCulture === "string") setFixerCulture(saved.fixerCulture);
+      if (typeof saved.fixerLanguage === "string") setFixerLanguage(saved.fixerLanguage);
+      if (Array.isArray(saved.nomadVehicles)) setNomadVehicles(saved.nomadVehicles as string[]);
+      if (typeof saved.execTeamName === "string") setExecTeamName(saved.execTeamName);
+      if (typeof saved.execTeamRole === "string") setExecTeamRole(saved.execTeamRole);
+      if (typeof saved.streetratRoll === "number") setStreetratRoll(saved.streetratRoll);
+      if (Array.isArray(saved.edgerunnerRolls)) setEdgerunnerRolls(saved.edgerunnerRolls as number[]);
+      if (saved.customStats && typeof saved.customStats === "object") setCustomStats(saved.customStats as Record<StatName, number>);
+      if (saved.edgerunnerSkills && typeof saved.edgerunnerSkills === "object") setEdgerunnerSkills(saved.edgerunnerSkills as Record<string, number>);
+      if (saved.customSkills && typeof saved.customSkills === "object") setCustomSkills(saved.customSkills as Record<string, number>);
+      if (saved.specializations && typeof saved.specializations === "object") setSpecializations(saved.specializations as Record<string, string>);
+      if (typeof saved.culturalRegion === "string") setCulturalRegion(saved.culturalRegion);
+      if (typeof saved.culturalLanguage === "string") setCulturalLanguage(saved.culturalLanguage);
+      if (typeof saved.personality === "string") setPersonality(saved.personality);
+      if (typeof saved.clothingStyle === "string") setClothingStyle(saved.clothingStyle);
+      if (typeof saved.hairstyle === "string") setHairstyle(saved.hairstyle);
+      if (typeof saved.affectation === "string") setAffectation(saved.affectation);
+      if (typeof saved.valueMost === "string") setValueMost(saved.valueMost);
+      if (typeof saved.feelingsAboutPeople === "string") setFeelingsAboutPeople(saved.feelingsAboutPeople);
+      if (typeof saved.valuedPerson === "string") setValuedPerson(saved.valuedPerson);
+      if (typeof saved.valuedPossession === "string") setValuedPossession(saved.valuedPossession);
+      if (typeof saved.familyBackground === "string") setFamilyBackground(saved.familyBackground);
+      if (typeof saved.childhoodEnv === "string") setChildhoodEnv(saved.childhoodEnv);
+      if (typeof saved.familyCrisis === "string") setFamilyCrisis(saved.familyCrisis);
+      if (typeof saved.lifeGoal === "string") setLifeGoal(saved.lifeGoal);
+      if (saved.roleLifepath && typeof saved.roleLifepath === "object") setRoleLifepath(saved.roleLifepath as Record<string, string>);
+      if (Array.isArray(saved.friends)) setFriends(saved.friends as FriendEntry[]);
+      if (Array.isArray(saved.enemies)) setEnemies(saved.enemies as EnemyEntry[]);
+      if (Array.isArray(saved.loveAffairs)) setLoveAffairs(saved.loveAffairs as LoveEntry[]);
+      if (typeof saved.backstorySummary === "string") setBackstorySummary(saved.backstorySummary);
+      if (typeof saved.establishedHistory === "string") setEstablishedHistory(saved.establishedHistory);
+      if (typeof saved.appearanceNotes === "string") setAppearanceNotes(saved.appearanceNotes);
+      if (typeof saved.aiBioGuidance === "string") setAiBioGuidance(saved.aiBioGuidance);
+      if (typeof saved.aiContactsGuidance === "string") setAiContactsGuidance(saved.aiContactsGuidance);
+      if (saved.weaponChoices && typeof saved.weaponChoices === "object") setWeaponChoices(saved.weaponChoices as Record<string, string>);
+      if (typeof saved.outfitChoice === "string") setOutfitChoice(saved.outfitChoice);
+      if (typeof saved.cyberwareChoice === "string") setCyberwareChoice(saved.cyberwareChoice);
+      if (typeof saved.cyberwareChoice2 === "string") setCyberwareChoice2(saved.cyberwareChoice2);
+      if (Array.isArray(saved.cartItems)) setCartItems(saved.cartItems as typeof cartItems);
+      if (Array.isArray(saved.selectedFashion)) setSelectedFashion(saved.selectedFashion as typeof selectedFashion);
+      if (typeof saved.freeformMoney === "number") setFreeformMoney(saved.freeformMoney);
+      setDraftRestored(true);
+    } else {
+      setDraftRestored(false);
+    }
+    hydratedRef.current = true;
+  }, [open, draftKey]);
+
+  useEffect(() => {
+    if (!open || !hydratedRef.current) return;
+    const hasContent = Boolean(
+      name.trim() ||
+        pronouns.trim() ||
+        age.trim() ||
+        conceptTagline.trim() ||
+        backstorySummary.trim() ||
+        establishedHistory.trim() ||
+        appearanceNotes.trim() ||
+        friends.length > 0 ||
+        enemies.length > 0 ||
+        loveAffairs.length > 0 ||
+        cartItems.length > 0 ||
+        selectedFashion.length > 0 ||
+        selectedRole !== "Solo" ||
+        method !== "streetrat" ||
+        step !== "identity",
+    );
+    if (!hasContent) return;
+    saveDraft(draftKey, {
+      step,
+      name,
+      pronouns,
+      age,
+      conceptTagline,
+      method,
+      selectedRole,
+      techMakerRanks,
+      medtechAlloc,
+      medtechRecipes,
+      fixerCulture,
+      fixerLanguage,
+      nomadVehicles,
+      execTeamName,
+      execTeamRole,
+      streetratRoll,
+      edgerunnerRolls,
+      customStats,
+      edgerunnerSkills,
+      customSkills,
+      specializations,
+      culturalRegion,
+      culturalLanguage,
+      personality,
+      clothingStyle,
+      hairstyle,
+      affectation,
+      valueMost,
+      feelingsAboutPeople,
+      valuedPerson,
+      valuedPossession,
+      familyBackground,
+      childhoodEnv,
+      familyCrisis,
+      lifeGoal,
+      roleLifepath,
+      friends,
+      enemies,
+      loveAffairs,
+      backstorySummary,
+      establishedHistory,
+      appearanceNotes,
+      aiBioGuidance,
+      aiContactsGuidance,
+      weaponChoices,
+      outfitChoice,
+      cyberwareChoice,
+      cyberwareChoice2,
+      cartItems,
+      selectedFashion,
+      freeformMoney,
+    });
+  }, [
+    open,
+    draftKey,
+    step,
+    name,
+    pronouns,
+    age,
+    conceptTagline,
+    method,
+    selectedRole,
+    techMakerRanks,
+    medtechAlloc,
+    medtechRecipes,
+    fixerCulture,
+    fixerLanguage,
+    nomadVehicles,
+    execTeamName,
+    execTeamRole,
+    streetratRoll,
+    edgerunnerRolls,
+    customStats,
+    edgerunnerSkills,
+    customSkills,
+    specializations,
+    culturalRegion,
+    culturalLanguage,
+    personality,
+    clothingStyle,
+    hairstyle,
+    affectation,
+    valueMost,
+    feelingsAboutPeople,
+    valuedPerson,
+    valuedPossession,
+    familyBackground,
+    childhoodEnv,
+    familyCrisis,
+    lifeGoal,
+    roleLifepath,
+    friends,
+    enemies,
+    loveAffairs,
+    backstorySummary,
+    establishedHistory,
+    appearanceNotes,
+    aiBioGuidance,
+    aiContactsGuidance,
+    weaponChoices,
+    outfitChoice,
+    cyberwareChoice,
+    cyberwareChoice2,
+    cartItems,
+    selectedFashion,
+    freeformMoney,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -450,31 +724,49 @@ export function CharacterCreatorModal({
     return map;
   }, [refData]);
 
-  // Initialize Role-dependent defaults cleanly when Role changes
+  // Initialize Role-dependent defaults cleanly when Role changes (preserving restored drafts)
   useEffect(() => {
     if (!roleInfo) return;
-    if (Object.keys(roleInfo.skills).length === 20) {
-      setEdgerunnerSkills({ ...roleInfo.skills });
+    const roleChanged = prevRoleRef.current !== null && prevRoleRef.current !== selectedRole;
+    prevRoleRef.current = selectedRole;
+    if (skipNextRoleResetRef.current && !roleChanged) {
+      skipNextRoleResetRef.current = false;
+      return;
     }
-    if (method === "complete_package") {
-      setCustomStats(buildSmart62Stats(roleInfo.key_stats));
-      setCustomSkills(defaultCompleteSkills(roleInfo));
-    }
-    const nextWep: Record<string, string> = {};
-    roleInfo.starting_weapons.forEach((w, idx) => {
-      if (w.type === "choice" && w.options?.length) {
-        nextWep[w.label || `choice-${idx}`] = w.options[0];
+    if (roleChanged || Object.keys(edgerunnerSkills).length === 0) {
+      if (Object.keys(roleInfo.skills).length === 20) {
+        setEdgerunnerSkills({ ...roleInfo.skills });
       }
-    });
-    setWeaponChoices(nextWep);
-    setOutfitChoice(roleInfo.outfit_choice?.options[0] ?? "");
-    setCyberwareChoice(roleInfo.cyberware_choice?.options[0]?.name ?? "");
-    setCyberwareChoice2(roleInfo.cyberware_choice_2?.options[0]?.name ?? "");
-    const nextRoleLp: Record<string, string> = {};
-    for (const f of roleInfo.role_lifepath) {
-      nextRoleLp[f.key] = f.options[0] ?? "";
+      if (method === "complete_package") {
+        setCustomStats(buildSmart62Stats(roleInfo.key_stats));
+        setCustomSkills(defaultCompleteSkills(roleInfo));
+      }
     }
-    setRoleLifepath(nextRoleLp);
+    if (roleChanged || Object.keys(weaponChoices).length === 0) {
+      const nextWep: Record<string, string> = {};
+      roleInfo.starting_weapons.forEach((w, idx) => {
+        if (w.type === "choice" && w.options?.length) {
+          nextWep[w.label || `choice-${idx}`] = w.options[0];
+        }
+      });
+      setWeaponChoices(nextWep);
+    }
+    if (roleChanged || !outfitChoice) {
+      setOutfitChoice(roleInfo.outfit_choice?.options[0] ?? "");
+    }
+    if (roleChanged || !cyberwareChoice) {
+      setCyberwareChoice(roleInfo.cyberware_choice?.options[0]?.name ?? "");
+    }
+    if (roleChanged || !cyberwareChoice2) {
+      setCyberwareChoice2(roleInfo.cyberware_choice_2?.options[0]?.name ?? "");
+    }
+    if (roleChanged || Object.keys(roleLifepath).length === 0) {
+      const nextRoleLp: Record<string, string> = {};
+      for (const f of roleInfo.role_lifepath) {
+        nextRoleLp[f.key] = f.options[0] ?? "";
+      }
+      setRoleLifepath(nextRoleLp);
+    }
   }, [selectedRole, roleInfo?.name]);
 
   // Compute active STAT block
@@ -1000,7 +1292,7 @@ export function CharacterCreatorModal({
   const handleAiAssist = async (target: "bio" | "contacts", assistMode: "scratch" | "expand", field?: string) => {
     if (aiBusy) return;
     setAiError("");
-    setAiBusyKey(`${target}:${field ?? assistMode}`);
+    setAiBusyKey(`${target}:${assistMode}:${field ?? "all"}`);
     try {
       const res = await assistCharacterCreation({
         target,
@@ -1202,7 +1494,9 @@ export function CharacterCreatorModal({
         createdId = created.id;
       }
 
+      clearDraft(draftKey);
       await onCreated(createdId, name.trim());
+      resetCharacterDefaults();
       onClose();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Failed to create character");
@@ -1444,7 +1738,14 @@ export function CharacterCreatorModal({
 
   const currentStepIdx = STEPS.findIndex((s) => s.id === step);
 
-  return (
+  const busyFor = (target: "bio" | "contacts", field: string): "improve" | "regen" | null =>
+    aiBusyKey === `${target}:expand:${field}`
+      ? "improve"
+      : aiBusyKey === `${target}:scratch:${field}`
+        ? "regen"
+        : null;
+
+  const modalNode = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2 sm:p-4 backdrop-blur-sm"
       onKeyDown={(e) => {
@@ -1455,26 +1756,53 @@ export function CharacterCreatorModal({
         role="dialog"
         aria-modal="true"
         aria-label="Edgerunner Character Sheet Creator"
-        className="flex h-[90vh] max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-700/80 bg-[#0b101b] text-slate-100 shadow-2xl"
+        className="cyber-hud-card flex h-[92vh] max-h-[95vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl bg-[#0b101b] text-slate-100 shadow-2xl"
       >
-        {/* Top Modal Header */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-[#0f1625] px-4 py-3">
-          <div className="flex items-center gap-3 min-w-0">
+        {/* Top Modal Header with Cyber Chrome Banner */}
+        <div className="relative flex flex-wrap items-center justify-between gap-2 overflow-hidden border-b border-rose-500/30 bg-[#0f1625] px-4 py-3">
+          <img
+            src={edgerunnerChromeBanner}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0b101b]/95 via-[#0f1625]/85 to-[#0b101b]/92" />
+          <div className="relative z-10 flex items-center gap-3 min-w-0">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/15 text-rose-300">
               <UserPlus className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-bold uppercase tracking-wider text-slate-100">
-                Edgerunner Character Sheet Creator
-              </h2>
-              <p className="truncate text-[11px] text-slate-400">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100">
+                  Edgerunner Character Sheet Creator
+                </h2>
+                {draftRestored && (
+                  <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                    Draft Restored
+                  </span>
+                )}
+              </div>
+              <p className="truncate font-cyber-hud text-[11px] text-slate-400">
                 {name.trim() || "Unnamed Punk"} · {selectedRole} (R4) · {methodsList.find((m) => m.id === method)?.name ?? method}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="relative z-10 flex items-center gap-2">
             {loadingRef && <span className="text-[11px] text-cyan-400">Loading Corebook data…</span>}
+            <button
+              type="button"
+              onClick={() => {
+                clearDraft(draftKey);
+                resetCharacterDefaults();
+                onNotify("Character draft cleared.");
+              }}
+              title="Clear unsaved draft and reset form"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/90 px-2 py-1 text-[11px] text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -1562,15 +1890,13 @@ export function CharacterCreatorModal({
                     <label className="block text-xs font-semibold text-slate-300">
                       One-Line Concept (optional)
                     </label>
-                    <button
-                      type="button"
+                    <FieldAiActions
+                      label="Concept"
                       disabled={aiBusy}
-                      onClick={() => void handleAiAssist("bio", "expand", "concept")}
-                      className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                    >
-                      <Wand2 className="h-2.5 w-2.5" />
-                      {aiBusyKey === "bio:concept" ? "Improving…" : "AI Improve"}
-                    </button>
+                      busyAction={busyFor("bio", "concept")}
+                      onImprove={() => void handleAiAssist("bio", "expand", "concept")}
+                      onRegen={() => void handleAiAssist("bio", "scratch", "concept")}
+                    />
                   </div>
                   <input
                     type="text"
@@ -2360,7 +2686,7 @@ export function CharacterCreatorModal({
                       className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
                     >
                       <Sparkles className="h-3 w-3" />
-                      {aiBusyKey === "bio:scratch" ? "Generating…" : "AI Generate from Scratch"}
+                      {aiBusyKey === "bio:scratch:all" ? "Generating…" : "Generate from Scratch"}
                     </button>
                   </div>
                   {aiError && (
@@ -2370,7 +2696,7 @@ export function CharacterCreatorModal({
                   )}
                   <div>
                     <label className="mb-1 block text-[11px] font-medium text-slate-400">
-                      Optional AI Prompt / Direction (AI stays strictly faithful to your Role, STATs, Skills, Gear &amp; Corebook)
+                      Optional Prompt / Direction (stays faithful to your Role, STATs, Skills, Gear &amp; Corebook)
                     </label>
                     <input
                       type="text"
@@ -2385,16 +2711,13 @@ export function CharacterCreatorModal({
                       <label className="block text-xs font-medium text-slate-300">
                         One-Line Concept
                       </label>
-                      <button
-                        type="button"
+                      <FieldAiActions
+                        label="Concept"
                         disabled={aiBusy}
-                        onClick={() => void handleAiAssist("bio", "expand", "concept")}
-                        aria-label="AI Expand / Improve Concept"
-                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                      >
-                        <Wand2 className="h-2.5 w-2.5" />
-                        {aiBusyKey === "bio:concept" ? "Improving…" : "AI Expand / Improve"}
-                      </button>
+                        busyAction={busyFor("bio", "concept")}
+                        onImprove={() => void handleAiAssist("bio", "expand", "concept")}
+                        onRegen={() => void handleAiAssist("bio", "scratch", "concept")}
+                      />
                     </div>
                     <input
                       type="text"
@@ -2409,16 +2732,13 @@ export function CharacterCreatorModal({
                       <label className="block text-xs font-medium text-slate-300">
                         Character Backstory (Where do you come from? What shaped you?)
                       </label>
-                      <button
-                        type="button"
+                      <FieldAiActions
+                        label="Backstory"
                         disabled={aiBusy}
-                        onClick={() => void handleAiAssist("bio", "expand", "summary")}
-                        aria-label="AI Expand / Improve Backstory"
-                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                      >
-                        <Wand2 className="h-2.5 w-2.5" />
-                        {aiBusyKey === "bio:summary" ? "Improving…" : "AI Expand / Improve"}
-                      </button>
+                        busyAction={busyFor("bio", "summary")}
+                        onImprove={() => void handleAiAssist("bio", "expand", "summary")}
+                        onRegen={() => void handleAiAssist("bio", "scratch", "summary")}
+                      />
                     </div>
                     <textarea
                       rows={3}
@@ -2433,16 +2753,13 @@ export function CharacterCreatorModal({
                       <label className="block text-xs font-medium text-slate-300">
                         Already-Established Night City History (Past gigs, crew ties, favors owed, local turf)
                       </label>
-                      <button
-                        type="button"
+                      <FieldAiActions
+                        label="Established History"
                         disabled={aiBusy}
-                        onClick={() => void handleAiAssist("bio", "expand", "established_history")}
-                        aria-label="AI Expand / Improve Established History"
-                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                      >
-                        <Wand2 className="h-2.5 w-2.5" />
-                        {aiBusyKey === "bio:established_history" ? "Improving…" : "AI Expand / Improve"}
-                      </button>
+                        busyAction={busyFor("bio", "established_history")}
+                        onImprove={() => void handleAiAssist("bio", "expand", "established_history")}
+                        onRegen={() => void handleAiAssist("bio", "scratch", "established_history")}
+                      />
                     </div>
                     <textarea
                       rows={2}
@@ -2457,16 +2774,13 @@ export function CharacterCreatorModal({
                       <label className="block text-xs font-medium text-slate-300">
                         Signature Look &amp; Mannerisms
                       </label>
-                      <button
-                        type="button"
+                      <FieldAiActions
+                        label="Signature Look"
                         disabled={aiBusy}
-                        onClick={() => void handleAiAssist("bio", "expand", "appearance")}
-                        aria-label="AI Expand / Improve Signature Look"
-                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                      >
-                        <Wand2 className="h-2.5 w-2.5" />
-                        {aiBusyKey === "bio:appearance" ? "Improving…" : "AI Expand / Improve"}
-                      </button>
+                        busyAction={busyFor("bio", "appearance")}
+                        onImprove={() => void handleAiAssist("bio", "expand", "appearance")}
+                        onRegen={() => void handleAiAssist("bio", "scratch", "appearance")}
+                      />
                     </div>
                     <input
                       type="text"
@@ -2644,7 +2958,7 @@ export function CharacterCreatorModal({
                         className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
                       >
                         <Sparkles className="h-3 w-3" />
-                        {aiBusyKey === "contacts:scratch" ? "Writing…" : "AI Generate Contacts"}
+                        {aiBusyKey === "contacts:scratch:all" ? "Writing…" : "Generate Contacts"}
                       </button>
                       <button
                         type="button"
@@ -2716,15 +3030,13 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-emerald-300">Friends ({friends.length})</span>
-                        <button
-                          type="button"
+                        <FieldAiActions
+                          label="Friends"
                           disabled={aiBusy}
-                          onClick={() => void handleAiAssist("contacts", "expand", "friends")}
-                          className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                        >
-                          <Wand2 className="h-2.5 w-2.5" />
-                          {aiBusyKey === "contacts:friends" ? "Improving…" : "AI Expand / Improve Friends"}
-                        </button>
+                          busyAction={busyFor("contacts", "friends")}
+                          onImprove={() => void handleAiAssist("contacts", "expand", "friends")}
+                          onRegen={() => void handleAiAssist("contacts", "scratch", "friends")}
+                        />
                       </div>
                       {friends.map((fr, idx) => (
                         <div key={idx} className="grid grid-cols-1 gap-2 rounded border border-emerald-500/30 bg-emerald-950/15 p-2.5 sm:grid-cols-12">
@@ -2765,15 +3077,13 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-rose-300">Enemies ({enemies.length})</span>
-                        <button
-                          type="button"
+                        <FieldAiActions
+                          label="Enemies"
                           disabled={aiBusy}
-                          onClick={() => void handleAiAssist("contacts", "expand", "enemies")}
-                          className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                        >
-                          <Wand2 className="h-2.5 w-2.5" />
-                          {aiBusyKey === "contacts:enemies" ? "Improving…" : "AI Expand / Improve Enemies"}
-                        </button>
+                          busyAction={busyFor("contacts", "enemies")}
+                          onImprove={() => void handleAiAssist("contacts", "expand", "enemies")}
+                          onRegen={() => void handleAiAssist("contacts", "scratch", "enemies")}
+                        />
                       </div>
                       {enemies.map((en, idx) => (
                         <div key={idx} className="space-y-1.5 rounded border border-rose-500/30 bg-rose-950/15 p-2.5 text-xs">
@@ -2844,15 +3154,13 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-violet-300">Past Romances ({loveAffairs.length})</span>
-                        <button
-                          type="button"
+                        <FieldAiActions
+                          label="Romances"
                           disabled={aiBusy}
-                          onClick={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs")}
-                          className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                        >
-                          <Wand2 className="h-2.5 w-2.5" />
-                          {aiBusyKey === "contacts:tragic_love_affairs" ? "Improving…" : "AI Expand / Improve Romances"}
-                        </button>
+                          busyAction={busyFor("contacts", "tragic_love_affairs")}
+                          onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs")}
+                          onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs")}
+                        />
                       </div>
                       {loveAffairs.map((lv, idx) => (
                         <div key={idx} className="flex flex-wrap items-center gap-2 rounded border border-violet-500/30 bg-violet-950/15 p-2.5 text-xs">
@@ -3825,4 +4133,6 @@ export function CharacterCreatorModal({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modalNode, document.body) : modalNode;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BookOpen, FileText, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import netrunArchiveBanner from "../assets/netrun-archive-banner.jpg";
 import {
   addHomebrewEntry,
   deleteHomebrewEntry,
@@ -163,6 +164,27 @@ export function LibraryPanel({
 
   return (
     <div className="flex h-full flex-col p-4 space-y-3">
+      <div className="relative overflow-hidden rounded-lg border border-cyan-500/30 bg-[#0d1220] px-3 py-2">
+        <img
+          src={netrunArchiveBanner}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0a0f1c]/92 via-[#0b1120]/75 to-transparent" />
+        <div className="relative z-10 flex items-center justify-between gap-2">
+          <div>
+            <div className="font-cyber-display text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-300">
+              NET Archive // Corebook &amp; Homebrew
+            </div>
+            <div className="font-cyber-hud text-[11px] text-slate-400">
+              {rulesIndexed ? "Corebook index online · Instant lookup" : "Homebrew & local dossier mode"}
+            </div>
+          </div>
+          <BookOpen className="h-4 w-4 shrink-0 text-rose-400" />
+        </div>
+      </div>
+
       <div className="flex items-center justify-between gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clock, Compass, Cpu, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2, Wand2 } from "lucide-react";
+import { Clock, Compass, Cpu, MapPin, Minus, Plus, RotateCcw, Save, Sparkles, Star, Swords, Trash2 } from "lucide-react";
 import {
   assistCharacterCreation,
   fetchCampaignClocks,
@@ -8,6 +8,7 @@ import {
   updateCampaignState,
 } from "../api";
 import type { CampaignContext, CampaignNarrativeState, CampaignRecord, WorldClock } from "../types";
+import { FieldAiActions } from "./FieldAiActions";
 
 interface CampaignPanelProps {
   context: CampaignContext;
@@ -70,8 +71,9 @@ export function CampaignPanel({
   });
   const [confirmRemove, setConfirmRemove] = useState<{ section: SectionKey; key: string } | null>(null);
   const [confirmDeleteCampaignId, setConfirmDeleteCampaignId] = useState<string | null>(null);
-  const [aiBusy, setAiBusy] = useState(false);
+  const [aiBusyMode, setAiBusyMode] = useState<"improve" | "regen" | null>(null);
   const [busy, setBusy] = useState(false);
+  const aiBusy = aiBusyMode !== null;
 
   useEffect(() => {
     setScene(campaign.state.scene);
@@ -195,13 +197,13 @@ export function CampaignPanel({
     }
   };
 
-  const handleAiExpandNotes = async () => {
+  const handleAiNotes = async (assistMode: "expand" | "scratch") => {
     if (aiBusy || busy) return;
-    setAiBusy(true);
+    setAiBusyMode(assistMode === "scratch" ? "regen" : "improve");
     try {
       const res = await assistCharacterCreation({
         target: "campaign",
-        mode: summary.trim() || scene.trim() ? "expand" : "scratch",
+        mode: assistMode,
         campaign: { name: campaign.name },
         current: {
           summary: summary.trim() || undefined,
@@ -212,11 +214,11 @@ export function CampaignPanel({
       });
       if (res.opening_scene) setScene(res.opening_scene);
       if (res.summary) setSummary(res.summary);
-      onNotify("AI updated Scene & Summary drafts — click Save Scene & Summary to keep.");
+      onNotify("Updated Scene & Summary drafts — click Save Scene & Summary to keep.");
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : "AI narrative assist failed");
+      onNotify(err instanceof Error ? err.message : "Narrative assist failed");
     } finally {
-      setAiBusy(false);
+      setAiBusyMode(null);
     }
   };
 
@@ -449,7 +451,7 @@ export function CampaignPanel({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="submit"
             disabled={busy}
@@ -458,15 +460,13 @@ export function CampaignPanel({
             <Save className="h-3.5 w-3.5" />
             Save Scene & Summary
           </button>
-          <button
-            type="button"
+          <FieldAiActions
+            label="Scene & Summary"
             disabled={busy || aiBusy}
-            onClick={() => void handleAiExpandNotes()}
-            className="inline-flex items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
-          >
-            <Wand2 className="h-3.5 w-3.5" />
-            {aiBusy ? "Generating..." : "AI Expand / Draft"}
-          </button>
+            busyAction={aiBusyMode}
+            onImprove={() => void handleAiNotes("expand")}
+            onRegen={() => void handleAiNotes("scratch")}
+          />
         </div>
       </form>
 

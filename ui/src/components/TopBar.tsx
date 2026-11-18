@@ -2,12 +2,12 @@ import { useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
-  Cpu,
   Download,
   Globe,
   LogOut,
   Plus,
   Search,
+  Settings,
   Shield,
   Sparkles,
   UserCheck,
@@ -291,12 +291,11 @@ export function TopBar({
             <button
               type="button"
               onClick={onOpenSettings}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200 hover:border-cyan-500/60"
+              title={llmSettings?.model ? `Settings (Model: ${llmSettings.model})` : "Settings"}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200"
             >
-              <Cpu className="h-3.5 w-3.5 text-cyan-400" />
-              <span className="max-w-[120px] truncate font-mono">
-                {llmSettings?.model ?? "Configure AI"}
-              </span>
+              <Settings className="h-3.5 w-3.5 text-cyan-400" />
+              <span className="font-cyber-hud tracking-wide">Settings</span>
             </button>
           )}
 

@@ -15,6 +15,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import time
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
 import uuid
@@ -196,8 +197,19 @@ _DEFAULT_ARCHIVIST_CORE_RULES = (
     "3. Preserve established names, eddies/gear facts, and unresolved obligations accurately."
 )
 
+_DEFAULT_INTRO_PROMPT = (
+    "You are the Cyberpunk RED Game Master welcoming a player to Night City (2045, Time of the Red). "
+    "Write a clear, complete, atmospheric introductory briefing covering:\n"
+    "1. **What Cyberpunk RED Is**: Night City in 2045 after the 4th Corporate War — scavenging, Night Markets, Fixers, megacorps, street survival, and 'Style Over Substance'.\n"
+    "2. **How the Game Works**: The core check formula (**1d10 + STAT + Skill** vs **Difficulty Value (DV)**), **Critical Success** (natural 10 explodes — roll again & add), **Critical Failure / Fumble** (natural 1 subtracts a second d10), **LUCK** (commit points before rolling for +1 each), **Overclock** (spend 2 Humanity for +2 on a check), **HP & Wound States** (Seriously Wounded below half HP gives -2; Mortally Wounded triggers Death Saves), and **Humanity / Cyberware** (every -10 Humanity lowers EMP by 1).\n"
+    "3. **What the 10 STATs Do**: Briefly explain INT, REF, DEX, TECH, COOL, WILL, LUCK, MOVE, BODY, and EMP so a new player knows what each number means.\n"
+    "4. **What You Can Play (Roles & Starting Out)**: Briefly introduce the 10 Iconic Roles (Solo, Netrunner, Tech, Medtech, Media, Exec, Lawman, Fixer, Nomad, Rockerboy), tell them how to create/attach an Edgerunner in the Character tab on the right, and invite them into the current campaign's opening situation.\n"
+    "Use crisp Markdown headings and bullet lists. Tailor your closing hook to the active campaign context if one is set up."
+)
+
 DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
     "system_persona": _DEFAULT_NARRATOR_PERSONA,
+    "intro_prompt": _DEFAULT_INTRO_PROMPT,
     "world_rules_prefix": "",
     "player_message_template": _DEFAULT_PLAYER_MESSAGE_TEMPLATE,
     "player_dialogue_rules": _DEFAULT_PLAYER_DIALOGUE_RULES,
@@ -271,6 +283,7 @@ def _default_llm_dict() -> dict[str, Any]:
         "presence_penalty": 0.0,
         "frequency_penalty": 0.0,
         "max_tokens": 1200,
+        "intro_max_tokens": 4096,
         "timeout_s": 60.0,
         "mode": "two_pass",
         "enable_chronicler": True,
@@ -339,6 +352,11 @@ def _validate_llm_settings(raw: dict[str, Any], existing: dict[str, Any] | None 
         if not 64 <= mt <= 65536:
             raise ValueError("max_tokens must be between 64 and 65536")
         base["max_tokens"] = mt
+    if "intro_max_tokens" in raw and raw["intro_max_tokens"] is not None:
+        imt = int(raw["intro_max_tokens"])
+        if not 256 <= imt <= 65536:
+            raise ValueError("intro_max_tokens must be between 256 and 65536")
+        base["intro_max_tokens"] = imt
     if "timeout_s" in raw and raw["timeout_s"] is not None:
         ts = float(raw["timeout_s"])
         if not 5.0 <= ts <= 600.0:
@@ -445,6 +463,7 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "presence_penalty": settings.get("presence_penalty", 0.0),
         "frequency_penalty": settings.get("frequency_penalty", 0.0),
         "max_tokens": settings["max_tokens"],
+        "intro_max_tokens": int(settings.get("intro_max_tokens", 4096)),
         "timeout_s": settings["timeout_s"],
         "mode": settings["mode"],
         "enable_chronicler": bool(settings.get("enable_chronicler", True)),
@@ -463,7 +482,7 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 _MAX_PROMPT_CHARS = 16000
-_NON_EMPTY_PROMPT_KEYS = frozenset({"system_persona", "creation_assist_persona", "player_message_template"})
+_NON_EMPTY_PROMPT_KEYS = frozenset({"system_persona", "intro_prompt", "creation_assist_persona", "player_message_template"})
 
 
 def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
@@ -628,6 +647,7 @@ class OpenAICompatibleLLM:
     def __init__(self, config: LLMConfig | None = None, *, transport: httpx.AsyncBaseTransport | None = None):
         self.config = config or LLMConfig()
         self.transport = transport
+        self.last_usage: dict[str, int] | None = None
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -671,6 +691,7 @@ class OpenAICompatibleLLM:
         json_mode: bool = False,
         enable_thinking: bool | None = None,
     ) -> str:
+        self.last_usage = None
         effective_max = self.config.max_tokens if max_tokens is None else max_tokens
         if json_mode and max_tokens is None:
             # Reasoning models count thinking tokens against max_tokens; give structured JSON passes headroom.
@@ -701,6 +722,13 @@ class OpenAICompatibleLLM:
                 resp.raise_for_status()
                 data = resp.json()
                 break
+        usage = data.get("usage")
+        if isinstance(usage, dict):
+            self.last_usage = {
+                k: int(v)
+                for k, v in usage.items()
+                if k in {"prompt_tokens", "completion_tokens", "total_tokens"} and isinstance(v, (int, float))
+            }
         choices = data.get("choices") or []
         if not choices:
             return ""
@@ -715,12 +743,14 @@ class OpenAICompatibleLLM:
         max_tokens: int | None = None,
         enable_thinking: bool | None = None,
     ) -> AsyncIterator[str]:
+        self.last_usage = None
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
             "temperature": self.config.temperature if temperature is None else temperature,
             "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
             **self._sampling_extras(),
         }
         if enable_thinking is False:
@@ -732,8 +762,13 @@ class OpenAICompatibleLLM:
                 stripped_kwargs = False
                 while True:
                     async with client.stream("POST", self._endpoint(), headers=self._headers(), json=payload) as resp:
-                        if resp.status_code == 400 and "chat_template_kwargs" in payload and not stripped_kwargs:
+                        if (
+                            resp.status_code == 400
+                            and ("chat_template_kwargs" in payload or "stream_options" in payload)
+                            and not stripped_kwargs
+                        ):
                             payload.pop("chat_template_kwargs", None)
+                            payload.pop("stream_options", None)
                             stripped_kwargs = True
                             continue
                         if resp.status_code in {429, 503} and attempt < max_attempts - 1:
@@ -750,6 +785,13 @@ class OpenAICompatibleLLM:
                                 chunk = json.loads(body)
                             except json.JSONDecodeError:
                                 continue
+                            chunk_usage = chunk.get("usage")
+                            if isinstance(chunk_usage, dict):
+                                self.last_usage = {
+                                    k: int(v)
+                                    for k, v in chunk_usage.items()
+                                    if k in {"prompt_tokens", "completion_tokens", "total_tokens"} and isinstance(v, (int, float))
+                                }
                             choices = chunk.get("choices") or []
                             if not choices:
                                 continue
@@ -1394,14 +1436,18 @@ class TurnEngine:
         self._ensure_private_tables()
 
     @staticmethod
-    def _supports_enable_thinking(fn: Any) -> bool:
+    def _supports_kwarg(fn: Any, kwarg: str) -> bool:
         try:
             sig = inspect.signature(fn)
         except (TypeError, ValueError):
             return False
-        return "enable_thinking" in sig.parameters or any(
+        return kwarg in sig.parameters or any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
+
+    @classmethod
+    def _supports_enable_thinking(cls, fn: Any) -> bool:
+        return cls._supports_kwarg(fn, "enable_thinking")
 
     def _thinking_kwargs_for_pass(self, fn: Any, *, disable_in_balanced: bool) -> dict[str, Any]:
         if not disable_in_balanced:
@@ -2440,6 +2486,41 @@ class TurnEngine:
         msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
         return msgs
 
+    def _build_intro_messages(
+        self,
+        prep: dict[str, Any],
+        user_text: str,
+        *,
+        speaker: dict[str, str] | None = None,
+        guidance: str | None = None,
+    ) -> list[dict[str, str]]:
+        ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
+        camp = ctx["campaign"]
+        state = camp["state"]
+        chars = [_summarize_character(c) for c in ctx["characters"]]
+        intro_prompt = (self.prompt_settings.get("intro_prompt") or "").strip() or _DEFAULT_INTRO_PROMPT
+        world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
+        extra_world = f"\nTable World Rules:\n{world_prefix}\n" if world_prefix else ""
+        guidance_line = (
+            f"\nDirector Regeneration Note: {guidance.strip()}\n"
+            if isinstance(guidance, str) and guidance.strip()
+            else ""
+        )
+        system_prompt = (
+            f"{intro_prompt}\n"
+            f"{extra_world}"
+            f"{guidance_line}"
+            f"Active Campaign: {camp.get('name', 'Night City Run')} (Session {camp.get('session_number', 1)})\n"
+            f"Campaign Scene: {state.get('scene') or '(not yet set)'}\n"
+            f"Campaign Summary: {state.get('summary') or '(not yet set)'}\n"
+            f"Party Characters Attached: {json.dumps(chars)}"
+        )
+        speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": self._format_player_message(user_text, speaker_name)},
+        ]
+
     def _format_player_message(self, text: str, speaker_name: str | None = None) -> str:
         clean_text = text.strip() if isinstance(text, str) else ""
         speaker = speaker_name.strip() if isinstance(speaker_name, str) and speaker_name.strip() else ""
@@ -2603,6 +2684,41 @@ class TurnEngine:
             msgs.append({"role": item["role"], "content": content})
         msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
         return msgs
+
+    def _build_intro_messages(
+        self,
+        prep: dict[str, Any],
+        user_text: str,
+        *,
+        speaker: dict[str, str] | None = None,
+        guidance: str | None = None,
+    ) -> list[dict[str, str]]:
+        ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
+        camp = ctx["campaign"]
+        state = camp["state"]
+        chars = [_summarize_character(c) for c in ctx["characters"]]
+        intro_prompt = (self.prompt_settings.get("intro_prompt") or "").strip() or _DEFAULT_INTRO_PROMPT
+        world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
+        extra_world = f"\nTable World Rules:\n{world_prefix}\n" if world_prefix else ""
+        guidance_line = (
+            f"\nDirector Regeneration Note: {guidance.strip()}\n"
+            if isinstance(guidance, str) and guidance.strip()
+            else ""
+        )
+        system_prompt = (
+            f"{intro_prompt}\n"
+            f"{extra_world}"
+            f"{guidance_line}"
+            f"Active Campaign: {camp.get('name', 'Night City Run')} (Session {camp.get('session_number', 1)})\n"
+            f"Campaign Scene: {state.get('scene') or '(not yet set)'}\n"
+            f"Campaign Summary: {state.get('summary') or '(not yet set)'}\n"
+            f"Party Characters Attached: {json.dumps(chars)}"
+        )
+        speaker_name = speaker["name"] if speaker and speaker.get("name") else ""
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": self._format_player_message(user_text, speaker_name)},
+        ]
 
     def _build_chronicler_messages(
         self,
@@ -2964,13 +3080,49 @@ class TurnEngine:
         active_mode: str,
         speaker: dict[str, str] | None = None,
         guidance: str | None = None,
+        is_intro: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
+        turn_started_at = time.perf_counter()
+        total_completion_tokens = 0
+        usage_observed = False
+        stream_elapsed_s = 0.0
+
+        def _collect_usage() -> None:
+            nonlocal total_completion_tokens, usage_observed
+            u = getattr(self.llm, "last_usage", None)
+            if isinstance(u, dict) and isinstance(u.get("completion_tokens"), (int, float)):
+                total_completion_tokens += int(u["completion_tokens"])
+                usage_observed = True
+
         user_text = user_msg["content"]
         default_actor = speaker.get("id") or speaker.get("name") if speaker else None
         yield {"event": "rule_citation", "data": {"entries": prep["citations"], "dice_pool": prep["dice_pool"]}}
 
         raw_chunks: list[str] = []
-        if active_mode == "two_pass":
+        if is_intro:
+            executed: dict[str, Any] = {
+                "rolls": [],
+                "patches": [],
+                "library_added": [],
+                "warnings": [],
+                "gm_secrets": prep.get("gm_secrets") or {},
+                "clocks": prep.get("clocks") or [],
+                "outcomes": {},
+            }
+            intro_msgs = self._build_intro_messages(prep, user_text, speaker=speaker, guidance=guidance)
+            intro_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
+            intro_max_tokens = max(256, int(self.turn_settings.get("intro_max_tokens") or 4096))
+            if self._supports_kwarg(self.llm.stream, "max_tokens"):
+                intro_kwargs["max_tokens"] = intro_max_tokens
+            stream_t0 = time.perf_counter()
+            async for delta in self.llm.stream(intro_msgs, **intro_kwargs):
+                raw_chunks.append(delta)
+                yield {"event": "text_delta", "data": {"delta": delta}}
+            stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
+            _collect_usage()
+            raw_text = "".join(raw_chunks)
+            clean_text = strip_gm_tags(raw_text)
+        elif active_mode == "two_pass":
             planner_msgs = self._build_planner_messages(
                 prep,
                 user_text,
@@ -2981,6 +3133,7 @@ class TurnEngine:
             )
             planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
             raw_plan = await self.llm.complete(planner_msgs, temperature=planner_temp, json_mode=True)
+            _collect_usage()
             plan = extract_gm_plan(raw_plan)
             executed = self._execute_plan(
                 campaign_id,
@@ -3006,9 +3159,12 @@ class TurnEngine:
                 prep, user_text, executed, tagged_single_pass=False, speaker=speaker, guidance=guidance
             )
             narrator_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
+            stream_t0 = time.perf_counter()
             async for delta in self.llm.stream(narrator_msgs, **narrator_kwargs):
                 raw_chunks.append(delta)
                 yield {"event": "text_delta", "data": {"delta": delta}}
+            stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
+            _collect_usage()
             raw_text = "".join(raw_chunks)
             clean_text = strip_gm_tags(raw_text)
         else:
@@ -3017,6 +3173,7 @@ class TurnEngine:
                 prep, user_text, empty_exec, tagged_single_pass=True, speaker=speaker, guidance=guidance
             )
             emitted_len = 0
+            stream_t0 = time.perf_counter()
             async for delta in self.llm.stream(msgs):
                 raw_chunks.append(delta)
                 joined = "".join(raw_chunks)
@@ -3025,6 +3182,8 @@ class TurnEngine:
                     new_piece = safe[emitted_len:]
                     emitted_len = len(safe)
                     yield {"event": "text_delta", "data": {"delta": new_piece}}
+            stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
+            _collect_usage()
             raw_text = "".join(raw_chunks)
             plan = extract_gm_plan(raw_text)
             executed = self._execute_plan(
@@ -3050,7 +3209,8 @@ class TurnEngine:
         # Optional 3rd pass (Post-Turn Chronicler) when enabled and using OpenAI-compatible or opted-in multi-call adapters.
         chronicler_allowed = bool(self.turn_settings.get("enable_chronicler", True))
         use_chronicler = (
-            chronicler_allowed
+            not is_intro
+            and chronicler_allowed
             and bool(getattr(self.llm, "enable_multi_call", isinstance(self.llm, OpenAICompatibleLLM)))
             and bool(clean_text.strip())
         )
@@ -3067,6 +3227,7 @@ class TurnEngine:
                 chron_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=True)
                 planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
                 raw_chron = await self.llm.complete(chron_msgs, temperature=planner_temp, json_mode=True, **chron_kwargs)
+                _collect_usage()
                 chron_plan = extract_gm_plan(raw_chron)
                 if not chron_plan and (not isinstance(raw_chron, str) or raw_chron.strip() != "{}"):
                     warn_msg = "Post-turn chronicler returned empty or unparseable output; post-turn sync was skipped."
@@ -3123,6 +3284,26 @@ class TurnEngine:
             }
             for c in prep["citations"]
         ]
+        overall_elapsed_s = round(max(0.01, time.perf_counter() - turn_started_at), 2)
+        if usage_observed and total_completion_tokens > 0:
+            completion_tokens = total_completion_tokens
+            tokens_per_second = round(completion_tokens / overall_elapsed_s, 1)
+            tokens_estimated = False
+        else:
+            completion_tokens = max(1, round(len(raw_text) / 4)) if raw_text else 0
+            tokens_per_second = (
+                round(completion_tokens / max(0.01, stream_elapsed_s), 1)
+                if completion_tokens > 0
+                else 0.0
+            )
+            tokens_estimated = True
+        generation_stats = {
+            "elapsed_seconds": overall_elapsed_s,
+            "tokens_per_second": tokens_per_second,
+            "completion_tokens": completion_tokens,
+            "estimated": tokens_estimated,
+        }
+
         assistant_msg = self.tree.append_message(
             campaign_id,
             parent_id=user_msg["id"],
@@ -3134,7 +3315,9 @@ class TurnEngine:
             solo_revision=post_ctx["solo"]["revision"],
             metadata={
                 "turn_id": prep["turn_id"],
-                "mode": active_mode,
+                "mode": "intro" if is_intro else active_mode,
+                **({"is_intro": True} if is_intro else {}),
+                "generation_stats": generation_stats,
                 "rolls": executed["rolls"],
                 "patches": executed["patches"],
                 "library_added": [e["id"] for e in executed["library_added"]],
@@ -3157,6 +3340,7 @@ class TurnEngine:
                 "turn_id": prep["turn_id"],
                 "user_message": user_msg,
                 "assistant_message": assistant_msg,
+                "generation_stats": generation_stats,
                 "citations": prep["citations"],
                 "rolls": executed["rolls"],
                 "state_patches": executed["patches"],
@@ -3312,6 +3496,7 @@ class TurnEngine:
         mode: str | None = None,
         speaker_character_id: str | None = None,
         speaker_name: str | None = None,
+        is_intro: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one complete AI GM turn and stream typed events for the frontend UI."""
         if not isinstance(user_text, str) or not user_text.strip():
@@ -3331,6 +3516,8 @@ class TurnEngine:
         pre_ctx = prep["context"]
         speaker = self._resolve_speaker(pre_ctx["characters"], speaker_character_id, speaker_name)
         meta: dict[str, Any] = {"overclock": overclock, "luck_spend": luck_spend}
+        if is_intro:
+            meta["is_intro"] = True
         if speaker.get("id"):
             meta["speaker_character_id"] = speaker["id"]
         if speaker.get("name"):
@@ -3354,6 +3541,7 @@ class TurnEngine:
                 luck_spend=luck_spend,
                 active_mode=active_mode,
                 speaker=speaker,
+                is_intro=is_intro,
             ):
                 if ev.get("event") == "turn_done":
                     turn_completed = True
@@ -3432,5 +3620,6 @@ class TurnEngine:
             active_mode=active_mode,
             speaker=speaker,
             guidance=guidance,
+            is_intro=bool(user_msg["metadata"].get("is_intro", False)),
         ):
             yield ev
