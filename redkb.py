@@ -11,6 +11,7 @@ import asyncio
 from contextlib import contextmanager
 import hashlib
 import hmac
+import importlib.util
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from index_lock import index_lock
 
@@ -50,14 +51,31 @@ def get_printed_page(text: str) -> int | None:
     return None
 
 
-def build_index(pdf_path: Path, db_path: Path) -> dict[str, Any]:
+def build_index(
+    pdf_path: Path,
+    db_path: Path,
+    *,
+    progress_cb: Callable[[dict[str, Any]], None] | None = None,
+    source_filename: str | None = None,
+) -> dict[str, Any]:
     """Build a fresh index atomically; incomplete runs do not corrupt the old DB."""
     import pymupdf as fitz
+
+    def _emit(stage: str, percent: int, message: str, *, current: int = 0, total: int = 0) -> None:
+        if progress_cb is not None:
+            progress_cb({
+                "stage": stage,
+                "percent": max(0, min(100, int(percent))),
+                "current": current,
+                "total": total,
+                "message": message,
+            })
 
     pdf_path = pdf_path.expanduser().resolve()
     db_path = db_path.expanduser().resolve()
     if not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    _emit("reading", 2, "Opening PDF file...")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=db_path.name + ".building-", dir=db_path.parent)
     os.close(fd)
@@ -96,6 +114,7 @@ def build_index(pdf_path: Path, db_path: Path) -> dict[str, Any]:
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
         with fitz.open(stream=source_bytes, filetype="pdf") as pdf:
             count, populated, without_printed = len(pdf), 0, 0
+            _emit("extracting", 5, f"Reading {count} pages from Corebook PDF...", current=0, total=count)
             for index, page in enumerate(pdf):
                 text = clean_text(page.get_text("text", sort=False))
                 # Keep the original extraction intact. Supplemental rows preserve
@@ -123,6 +142,10 @@ def build_index(pdf_path: Path, db_path: Path) -> dict[str, Any]:
                         break
                     conn.execute("INSERT INTO passages(page_id,start_word,end_word,text) VALUES(?,?,?,?)",
                                   (page_id, start, end, " ".join(words[start:end])))
+                if count > 0 and ((index + 1) % 5 == 0 or index + 1 == count):
+                    pct = 5 + int(((index + 1) / count) * 70)
+                    _emit("extracting", pct, f"Reading page {index + 1} of {count}...", current=index + 1, total=count)
+            _emit("structure", 78, "Organizing Corebook chapters and sections...", current=count, total=count)
             from knowledge import build_structure
             build_structure(conn, pdf)
         for key, value in {
@@ -130,15 +153,17 @@ def build_index(pdf_path: Path, db_path: Path) -> dict[str, Any]:
             "extraction_method": "plain_text+conservative_line_tables_v1",
             "passage_window_words": "150",
             "passage_stride_words": "75",
-            "source_filename": pdf_path.name,
+            "source_filename": (source_filename or pdf_path.name),
             "source_sha256": source_sha256,
             "pdf_page_count": str(count),
             "populated_pages": str(populated),
             "pages_without_printed_number": str(without_printed),
         }.items():
             conn.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, value))
+        _emit("library", 86, "Building searchable skills, roles, gear & cyberware library...", current=count, total=count)
         from library import build_library
         build_library(conn)
+        _emit("fts", 94, "Building fast keyword search index...", current=count, total=count)
         conn.execute("INSERT INTO page_fts(page_fts) VALUES('rebuild')")
         conn.execute("INSERT INTO passage_fts(passage_fts) VALUES('rebuild')")
         conn.commit()
@@ -147,9 +172,12 @@ def build_index(pdf_path: Path, db_path: Path) -> dict[str, Any]:
         temp_path.unlink(missing_ok=True)
         raise
     conn.close()
+    _emit("saving", 98, "Saving Corebook database...", current=count, total=count)
     with index_lock(db_path):
         os.replace(temp_path, db_path)
-    return inspect_index(db_path)
+    info = inspect_index(db_path)
+    _emit("done", 100, f"Corebook ready ({info.get('indexed_pages', count)} pages).", current=count, total=count)
+    return info
 
 
 @contextmanager
@@ -804,6 +832,199 @@ def make_api(
             "auth_enabled": sess["auth_enabled"],
         }
 
+    _COREBOOK_MAX_BYTES = 512 * 1024 * 1024
+    corebook_job_lock = threading.Lock()
+    corebook_job: dict[str, Any] = {
+        "status": "idle",
+        "stage": "idle",
+        "percent": 0,
+        "current": 0,
+        "total": 0,
+        "filename": None,
+        "message": "",
+        "warning": None,
+        "error": None,
+        "started_at": None,
+        "finished_at": None,
+    }
+
+    def _semantic_available() -> bool:
+        return importlib.util.find_spec("fastembed") is not None and importlib.util.find_spec("numpy") is not None
+
+    @app.get("/v1/corebook/status")
+    def corebook_status(request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = require_player(request, request_id)
+        if blocked is not None:
+            return blocked
+        resolved = Path(db_path).expanduser().resolve()
+        sess = _session(request)
+        indexed_info: dict[str, Any] = {}
+        rules_indexed = resolved.is_file()
+        if rules_indexed:
+            try:
+                indexed_info = inspect_index(db_path)
+            except (OSError, sqlite3.Error):
+                rules_indexed = False
+        with corebook_job_lock:
+            job_snapshot = dict(corebook_job)
+        payload: dict[str, Any] = {
+            "rules_indexed": rules_indexed,
+            "indexed_pages": int(indexed_info.get("indexed_pages") or 0),
+            "pdf_page_count": int(indexed_info.get("pdf_page_count") or indexed_info.get("indexed_pages") or 0),
+            "source_filename": indexed_info.get("source_filename"),
+            "semantic_available": _semantic_available(),
+            "semantic_indexed": bool(indexed_info.get("embedding_model")),
+            "job": job_snapshot,
+            "request_id": request_id,
+        }
+        if sess["role"] in {"open", "admin"}:
+            payload["db_path"] = str(resolved)
+        return payload
+
+    @app.post("/v1/corebook/upload")
+    async def corebook_upload(request: Request, run_semantic: bool = False, filename: str = ""):
+        from urllib.parse import unquote
+
+        request_id = uuid.uuid4().hex
+        blocked = check_mutable_origin(request, request_id, require_json=False, min_role="admin")
+        if blocked is not None:
+            return blocked
+
+        content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        if content_type.startswith("multipart/"):
+            return JSONResponse(
+                status_code=415,
+                content={"detail": "Upload raw PDF bytes with Content-Type: application/pdf.", "request_id": request_id},
+            )
+
+        raw_name = unquote((request.headers.get("x-filename") or filename or "Corebook.pdf").strip())
+        safe_name = Path(raw_name.replace("\\", "/")).name or "Corebook.pdf"
+        if not safe_name.lower().endswith(".pdf"):
+            safe_name += ".pdf"
+
+        with corebook_job_lock:
+            if corebook_job["status"] == "running":
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": "A Corebook upload or indexing job is already running.", "job": dict(corebook_job), "request_id": request_id},
+                )
+            corebook_job.update({
+                "status": "running",
+                "stage": "uploading",
+                "percent": 1,
+                "current": 0,
+                "total": 0,
+                "filename": safe_name,
+                "message": f"Receiving {safe_name}...",
+                "warning": None,
+                "error": None,
+                "started_at": time.time(),
+                "finished_at": None,
+            })
+
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_str = tempfile.mkstemp(prefix="redgm-corebook-", suffix=".pdf")
+            tmp_path = Path(tmp_str)
+            total_bytes = 0
+            header_buf = b""
+            header_checked = False
+            with os.fdopen(fd, "wb") as handle:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    total_bytes += len(chunk)
+                    if total_bytes > _COREBOOK_MAX_BYTES:
+                        raise OverflowError("PDF exceeds the 512 MB upload limit.")
+                    if not header_checked:
+                        header_buf += chunk
+                        stripped = header_buf.lstrip()
+                        if len(stripped) >= 5:
+                            if not stripped.startswith(b"%PDF-"):
+                                raise ValueError("This file does not appear to be a valid PDF.")
+                            header_checked = True
+                    handle.write(chunk)
+            if total_bytes == 0:
+                raise ValueError("Uploaded PDF file is empty.")
+            if not header_checked and not header_buf.lstrip().startswith(b"%PDF-"):
+                raise ValueError("This file does not appear to be a valid PDF.")
+        except OverflowError as exc:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            with corebook_job_lock:
+                corebook_job.update({"status": "error", "stage": "error", "error": str(exc), "message": str(exc), "finished_at": time.time()})
+            return JSONResponse(status_code=413, content={"detail": str(exc), "request_id": request_id})
+        except (ValueError, OSError) as exc:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            with corebook_job_lock:
+                corebook_job.update({"status": "error", "stage": "error", "error": str(exc), "message": str(exc), "finished_at": time.time()})
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+        def _on_progress(ev: dict[str, Any]) -> None:
+            with corebook_job_lock:
+                corebook_job.update({
+                    "stage": ev.get("stage", "extracting"),
+                    "percent": int(ev.get("percent", 0)),
+                    "current": int(ev.get("current", 0)),
+                    "total": int(ev.get("total", 0)),
+                    "message": str(ev.get("message") or ""),
+                })
+
+        def _worker(pdf_file: Path, orig_name: str, want_semantic: bool) -> None:
+            try:
+                info = build_index(
+                    pdf_file,
+                    Path(db_path),
+                    progress_cb=_on_progress,
+                    source_filename=orig_name,
+                )
+                warning_msg: str | None = None
+                if want_semantic and _semantic_available():
+                    with corebook_job_lock:
+                        corebook_job.update({
+                            "stage": "embedding",
+                            "percent": 99,
+                            "message": "Building local AI meaning search embeddings...",
+                        })
+                    try:
+                        from semantic import build_embeddings
+                        build_embeddings(Path(db_path))
+                    except Exception as sem_exc:
+                        warning_msg = f"Corebook indexed, but semantic embeddings skipped: {sem_exc}"
+                with corebook_job_lock:
+                    corebook_job.update({
+                        "status": "completed",
+                        "stage": "done",
+                        "percent": 100,
+                        "message": f"Corebook ready ({info.get('indexed_pages', 0)} pages).",
+                        "warning": warning_msg,
+                        "error": None,
+                        "finished_at": time.time(),
+                    })
+            except Exception as exc:
+                with corebook_job_lock:
+                    corebook_job.update({
+                        "status": "error",
+                        "stage": "error",
+                        "error": str(exc),
+                        "message": f"Indexing failed: {exc}",
+                        "finished_at": time.time(),
+                    })
+            finally:
+                pdf_file.unlink(missing_ok=True)
+
+        worker = threading.Thread(
+            target=_worker,
+            args=(tmp_path, safe_name, bool(run_semantic)),
+            daemon=True,
+        )
+        worker.start()
+        with corebook_job_lock:
+            snapshot = dict(corebook_job)
+        return JSONResponse(status_code=202, content={"started": True, "job": snapshot, "request_id": request_id})
+
     @app.get("/v1/search")
     def search(request: Request, q: str = Query(min_length=2), limit: int = Query(5, ge=1, le=20)):
         blocked = require_player(request, uuid.uuid4().hex)
@@ -905,7 +1126,12 @@ def make_api(
             return JSONResponse(status_code=503, content={"detail": f"LLM settings unavailable: {exc}", "request_id": request_id})
         try:
             from creation_catalog import generate_creation_ai_assist
-            result = await generate_creation_ai_assist(db_path, active_llm, body)
+            result = await generate_creation_ai_assist(
+                db_path,
+                active_llm,
+                body,
+                settings_path=resolved_settings_path(),
+            )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
         except Exception as exc:
@@ -1270,6 +1496,9 @@ def make_api(
             "narrator_length": llm_cfg.get("narrator_length", "standard"),
             "gm_thinking_mode": llm_cfg.get("gm_thinking_mode", "quality"),
             "enable_chronicler": bool(llm_cfg.get("enable_chronicler", True)),
+            "enable_highlights": bool(llm_cfg.get("enable_highlights", True)),
+            "allow_ai_homebrew": bool(llm_cfg.get("allow_ai_homebrew", True)),
+            "auto_compress_prompt": bool(llm_cfg.get("auto_compress_prompt", True)),
             "history_window": int(llm_cfg.get("history_window", 14)),
             "compression_threshold": int(llm_cfg.get("compression_threshold", 14)),
             "citation_limit": int(llm_cfg.get("citation_limit", 4)),
@@ -1295,6 +1524,7 @@ def make_api(
             "server": server_cfg,
             "auth_policy": {
                 "allow_guest_users": acc_info["allow_guest_users"],
+                "allow_self_signup": acc_info["allow_self_signup"],
                 "user_passcode_configured": acc_info["user_passcode_configured"],
                 "admin_configured": auth.is_admin_configured(),
                 "user_configured": auth.is_user_configured(),

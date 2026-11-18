@@ -32,6 +32,7 @@ interface TopBarProps {
   onExportChat: () => Promise<void>;
   onOpenCoop: () => void;
   onOpenSettings: () => void;
+  onOpenCorebookSettings?: () => void;
   onToggleThinkingMode?: (mode: "quality" | "balanced") => Promise<void>;
   onOpenSearch: () => void;
   onOpenAuth?: () => void;
@@ -53,6 +54,7 @@ export function TopBar({
   onExportChat,
   onOpenCoop,
   onOpenSettings,
+  onOpenCorebookSettings,
   onToggleThinkingMode,
   onOpenSearch,
   onOpenAuth,
@@ -344,13 +346,25 @@ export function TopBar({
           )}
 
           {health && !health.rules_indexed && (
-            <span
-              title={health.detail ?? "Corebook PDF not indexed yet (Homebrew & Campaign play still active)"}
-              className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-300"
-            >
-              <BookOpen className="h-3 w-3" />
-              <span className="hidden sm:inline">Corebook Not Indexed</span>
-            </span>
+            canAdminSettings && onOpenCorebookSettings ? (
+              <button
+                type="button"
+                onClick={onOpenCorebookSettings}
+                title="Upload your Cyberpunk RED Corebook PDF in Settings (Freeform & Homebrew play works without it)"
+                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
+              >
+                <BookOpen className="h-3 w-3" />
+                <span className="hidden sm:inline">No Corebook PDF</span>
+              </button>
+            ) : (
+              <span
+                title={health.detail ?? "No Corebook uploaded yet (Homebrew & Freeform play still active)"}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200"
+              >
+                <BookOpen className="h-3 w-3" />
+                <span className="hidden sm:inline">No Corebook PDF</span>
+              </span>
+            )
           )}
 
           <span

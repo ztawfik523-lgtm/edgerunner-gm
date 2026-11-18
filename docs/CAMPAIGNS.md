@@ -5,7 +5,7 @@ Edgerunner GM stores campaigns, characters, branching chat trees, world clocks, 
 ## Web UI Workflow
 
 1. **Create or select a campaign:** Open the **Campaign Architect** (`New` in the top bar) or pick an existing campaign from the top-bar selector. The Campaign Architect can bootstrap starter world data, Beat Chart hooks, and notes using your configured LLM.
-2. **Attach characters:** Build characters in the **Character Creator** (`Freeform` at any time; `Streetrat`, `Edgerunner`, and `Complete Package` once a Corebook PDF is indexed) and attach them to the campaign. Each character belongs to one campaign.
+2. **Attach characters:** Build characters in the **Character Creator** (`Freeform` at any time; `Streetrat`, `Edgerunner`, and `Complete Package` once you upload your Corebook PDF in **Settings → Corebook PDF** or index via CLI) and attach them to the campaign. Each character belongs to one campaign.
 3. **Start a session:** Use the session-start control in the top bar to refill all attached characters' LUCK in one transaction. Reopening the browser or restarting the server resumes saved state without refilling LUCK.
 4. **Branching & Timeline Controls:**
    - Messages are stored in `chat_messages` as a tree.

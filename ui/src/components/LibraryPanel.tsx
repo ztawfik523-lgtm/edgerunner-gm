@@ -412,7 +412,7 @@ export function LibraryPanel({
           <div className="rounded-lg border border-slate-800 bg-[#111726] p-4 text-center text-xs text-slate-400">
             {rulesIndexed
               ? "No entries matched your filter."
-              : "Corebook PDF is not indexed yet. You can still add campaign homebrew items above."}
+              : "No Corebook PDF uploaded yet. You can upload your PDF in Settings → Corebook PDF, or add custom homebrew entries above."}
           </div>
         )}
         {items.map((entry) => (

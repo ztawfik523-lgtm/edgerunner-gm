@@ -8,6 +8,8 @@ import type {
   CharacterRecord,
   ChatTreeResponse,
   CoopPlayer,
+  CorebookJobStatus,
+  CorebookStatusResponse,
   CreationAiAssistRequest,
   CreationAiAssistResponse,
   CreationReference,
@@ -232,11 +234,14 @@ export async function updateAuthAccounts(payload: {
   password?: string;
   role?: "admin" | "user";
   allow_guest_users?: boolean;
+  allow_self_signup?: boolean;
   user_passcode?: string;
+  clear_user_passcode?: boolean;
   revoke_all_tokens?: boolean;
 }): Promise<{
   accounts: AuthAccountSummary[];
   allow_guest_users: boolean;
+  allow_self_signup?: boolean;
   user_passcode_configured: boolean;
 }> {
   return postJson("/v1/auth/accounts", payload);
@@ -277,6 +282,64 @@ export async function restartServer(): Promise<{
   in_docker: boolean;
 }> {
   return postJson("/v1/settings/server/restart", {});
+}
+
+export async function fetchCorebookStatus(): Promise<CorebookStatusResponse> {
+  return jsonFetch<CorebookStatusResponse>("/v1/corebook/status");
+}
+
+export function uploadCorebookPdf(
+  file: File,
+  options?: { runSemantic?: boolean; onUploadProgress?: (percent: number) => void },
+): Promise<{ started: boolean; job: CorebookJobStatus }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const params = new URLSearchParams();
+    if (options?.runSemantic) params.set("run_semantic", "true");
+    if (file.name) params.set("filename", file.name);
+    const qs = params.toString();
+    xhr.open("POST", `/v1/corebook/upload${qs ? `?${qs}` : ""}`);
+    xhr.withCredentials = true;
+
+    const headers = authHeaders({
+      "Content-Type": "application/pdf",
+      "X-Filename": encodeURIComponent(file.name || "Corebook.pdf"),
+    });
+    for (const [k, v] of Object.entries(headers)) {
+      xhr.setRequestHeader(k, v);
+    }
+
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && ev.total > 0) {
+        const pct = Math.min(100, Math.round((ev.loaded / ev.total) * 100));
+        options?.onUploadProgress?.(pct);
+      }
+    };
+
+    xhr.onload = () => {
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(xhr.responseText || "{}");
+      } catch {
+        data = {};
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as { started: boolean; job: CorebookJobStatus });
+      } else {
+        const detail = typeof data.detail === "string" ? data.detail : `Upload failed (${xhr.status})`;
+        reject(new Error(detail));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Network error while uploading the PDF."));
+    };
+    xhr.onabort = () => {
+      reject(new Error("PDF upload was cancelled."));
+    };
+
+    xhr.send(file);
+  });
 }
 
 export async function gameAction<T = unknown>(

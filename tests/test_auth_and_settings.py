@@ -382,3 +382,114 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
 
     listed_after = client.post("/v1/game", headers=alice_headers, json={"action": "list_campaigns", "arguments": {}}).json()["result"]
     assert [c["id"] for c in listed_after] == [c2["id"]]
+
+
+def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
+    import time
+    import pymupdf
+
+    rules_db = tmp_path / "rules.sqlite"
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+    app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+
+    setup = client.post(
+        "/v1/auth/setup",
+        json={"admin_username": "admin", "admin_password": "admin-password-1"},
+    )
+    assert setup.status_code == 200
+    admin_headers = {"X-RedGM-Token": setup.json()["token"]}
+
+    # Initially unindexed
+    st0 = client.get("/v1/corebook/status", headers=admin_headers)
+    assert st0.status_code == 200
+    assert st0.json()["rules_indexed"] is False
+
+    # Reject non-PDF upload cleanly
+    bad = client.post(
+        "/v1/corebook/upload",
+        headers={**admin_headers, "Content-Type": "application/pdf", "X-Filename": "notpdf.pdf"},
+        content=b"plain text not a pdf",
+    )
+    assert bad.status_code == 400
+
+    # Build a small valid in-memory PDF with PyMuPDF
+    doc = pymupdf.open()
+    p1 = doc.new_page()
+    p1.insert_text((72, 72), "129\nSkill Checks\nRoll 1d10 + STAT + Skill against a DV.")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    up = client.post(
+        "/v1/corebook/upload",
+        headers={**admin_headers, "Content-Type": "application/pdf", "X-Filename": "MyCorebook.pdf"},
+        content=pdf_bytes,
+    )
+    assert up.status_code == 202
+    assert up.json()["started"] is True
+
+    final_status = None
+    for _ in range(60):
+        res = client.get("/v1/corebook/status", headers=admin_headers)
+        assert res.status_code == 200
+        data = res.json()
+        if data["job"]["status"] in {"completed", "error"}:
+            final_status = data
+            break
+        time.sleep(0.05)
+
+    assert final_status is not None
+    assert final_status["job"]["status"] == "completed", final_status
+    assert final_status["rules_indexed"] is True
+    assert final_status["indexed_pages"] == 1
+    assert final_status["source_filename"] == "MyCorebook.pdf"
+    assert client.get("/health", headers=admin_headers).json()["rules_indexed"] is True
+    assert client.get("/v1/pages/129", headers=admin_headers).status_code == 200
+
+    # Expanded settings & prompts work end-to-end
+    upd_llm = client.post(
+        "/v1/settings/llm",
+        headers=admin_headers,
+        json={
+            "planner_temperature": 0.25,
+            "creation_temperature": 0.9,
+            "enable_highlights": False,
+            "allow_ai_homebrew": False,
+            "auto_compress_prompt": False,
+        },
+    )
+    assert upd_llm.status_code == 200
+    assert upd_llm.json()["planner_temperature"] == 0.25
+    assert upd_llm.json()["creation_temperature"] == 0.9
+    assert upd_llm.json()["enable_highlights"] is False
+    assert upd_llm.json()["allow_ai_homebrew"] is False
+    assert upd_llm.json()["auto_compress_prompt"] is False
+
+    upd_prompts = client.post(
+        "/v1/settings/prompts",
+        headers=admin_headers,
+        json={
+            "creation_assist_persona": "CUSTOM CREATOR PERSONA",
+            "narrator_core_rules": "CUSTOM CORE RULES",
+        },
+    )
+    assert upd_prompts.status_code == 200
+    assert upd_prompts.json()["prompts"]["creation_assist_persona"] == "CUSTOM CREATOR PERSONA"
+    assert upd_prompts.json()["prompts"]["narrator_core_rules"] == "CUSTOM CORE RULES"
+
+    # Verify custom narrator_core_rules + enable_highlights=False take effect in TurnEngine
+    svc = GameplayService(camp_db, rules_db)
+    camp = svc.execute("create_campaign", {"name": "Custom Rules Camp", "operation_id": "crc-1"})["result"]
+    llm = RecordingLLM()
+    engine = TurnEngine(svc, llm, settings_path=settings_path)
+    import asyncio
+
+    async def _run():
+        return [ev async for ev in engine.run_turn(camp["id"], "Look around")]
+
+    asyncio.run(_run())
+    narrator_sys = llm.stream_calls[0][0]["content"]
+    assert "CUSTOM CORE RULES" in narrator_sys
+    assert "Visual UI flair" not in narrator_sys

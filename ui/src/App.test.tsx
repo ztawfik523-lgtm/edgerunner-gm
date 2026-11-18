@@ -396,7 +396,7 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getAllByText(/Branch A outcome\./i).length).toBeGreaterThan(0);
     });
     expect(screen.getByText(/Branch State Differs/i)).toBeInTheDocument();
-    expect(screen.getByText(/Corebook Not Indexed/i)).toBeInTheDocument();
+    expect(screen.getByText(/No Corebook PDF/i)).toBeInTheDocument();
     expect(screen.getAllByText("1/2").length).toBeGreaterThan(0);
 
     // Switch branch via next arrow
@@ -1768,4 +1768,234 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByText("2/2")).toBeInTheDocument();
     });
   });
+
+  it("supports Corebook PDF upload with progress bar and advanced built-in prompt editing in Settings", async () => {
+    let rulesIndexed = false;
+    let pollCount = 0;
+
+    // Mock XMLHttpRequest for uploadCorebookPdf
+    const OriginalXHR = globalThis.XMLHttpRequest;
+    class MockXHR {
+      status = 202;
+      responseText = JSON.stringify({
+        started: true,
+        job: {
+          status: "running",
+          stage: "extracting",
+          percent: 30,
+          current: 1,
+          total: 2,
+          filename: "CPR-Corebook.pdf",
+          message: "Reading page 1 of 2...",
+          warning: null,
+          error: null,
+          started_at: 1,
+          finished_at: null,
+        },
+      });
+      withCredentials = false;
+      upload: { onprogress?: (ev: { lengthComputable: boolean; loaded: number; total: number }) => void } = {};
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      open() {}
+      setRequestHeader() {}
+      send() {
+        this.upload.onprogress?.({ lengthComputable: true, loaded: 100, total: 100 });
+        setTimeout(() => {
+          this.onload?.();
+        }, 0);
+      }
+    }
+    globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest;
+
+    try {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/health") {
+          return jsonResponse({ status: "ok", rules_indexed: rulesIndexed, indexed_pages: rulesIndexed ? 2 : 0 });
+        }
+        if (url === "/v1/auth/status") {
+          return jsonResponse({
+            auth_enabled: false,
+            pin_only_mode: false,
+            authenticated: true,
+            role: "open",
+            username: null,
+            admin_configured: false,
+            user_configured: false,
+            user_passcode_configured: false,
+            allow_guest_users: false,
+            can_bootstrap: true,
+          });
+        }
+        if (url === "/v1/settings/llm") {
+          return jsonResponse({
+            base_url: "http://127.0.0.1:11434/v1",
+            model: "llama3",
+            has_api_key: false,
+            api_key_masked: "",
+            temperature: 0.75,
+            planner_temperature: 0.1,
+            creation_temperature: 0.85,
+            max_tokens: 1200,
+            timeout_s: 90,
+            mode: "two_pass",
+            enable_highlights: true,
+            allow_ai_homebrew: true,
+            auto_compress_prompt: true,
+          });
+        }
+        if (url === "/v1/settings/all") {
+          return jsonResponse({
+            llm: {
+              base_url: "http://127.0.0.1:11434/v1",
+              model: "llama3",
+              has_api_key: false,
+              api_key_masked: "",
+              temperature: 0.75,
+              planner_temperature: 0.1,
+              creation_temperature: 0.85,
+              max_tokens: 1200,
+              timeout_s: 90,
+              mode: "two_pass",
+              enable_highlights: true,
+              allow_ai_homebrew: true,
+              auto_compress_prompt: true,
+            },
+            prompts: {
+              system_persona: "Default GM",
+              world_rules_prefix: "",
+              planner_extra: "",
+              narrator_extra: "",
+              chronicler_extra: "",
+              archivist_extra: "",
+              creation_assist_persona: "Default Co-Writer",
+              creation_assist_extra: "",
+              narrator_core_rules: "Default Core Rules",
+              planner_core_rules: "Default Planner Rules",
+              chronicler_core_rules: "Default Chronicler Rules",
+              archivist_core_rules: "Default Archivist Rules",
+            },
+            prompt_defaults: {
+              system_persona: "Default GM",
+              world_rules_prefix: "",
+              planner_extra: "",
+              narrator_extra: "",
+              chronicler_extra: "",
+              archivist_extra: "",
+              creation_assist_persona: "Default Co-Writer",
+              creation_assist_extra: "",
+              narrator_core_rules: "Default Core Rules",
+              planner_core_rules: "Default Planner Rules",
+              chronicler_core_rules: "Default Chronicler Rules",
+              archivist_core_rules: "Default Archivist Rules",
+            },
+            server: { bind_host: "127.0.0.1", port: 8765, allowed_origins: [], public_url: "" },
+            auth_policy: {
+              allow_guest_users: false,
+              allow_self_signup: true,
+              user_passcode_configured: false,
+              admin_configured: false,
+              user_configured: false,
+              accounts: [],
+            },
+            runtime: {
+              active_host: "127.0.0.1",
+              active_port: 8765,
+              in_docker: false,
+              restart_supported: true,
+              restart_required: false,
+            },
+          });
+        }
+        if (url === "/v1/corebook/status") {
+          pollCount += 1;
+          if (pollCount >= 2) {
+            rulesIndexed = true;
+            return jsonResponse({
+              rules_indexed: true,
+              indexed_pages: 2,
+              pdf_page_count: 2,
+              source_filename: "CPR-Corebook.pdf",
+              semantic_available: false,
+              semantic_indexed: false,
+              job: {
+                status: "completed",
+                stage: "done",
+                percent: 100,
+                current: 2,
+                total: 2,
+                filename: "CPR-Corebook.pdf",
+                message: "Corebook ready (2 pages).",
+                warning: null,
+                error: null,
+                started_at: 1,
+                finished_at: 2,
+              },
+            });
+          }
+          return jsonResponse({
+            rules_indexed: false,
+            indexed_pages: 0,
+            pdf_page_count: 0,
+            source_filename: null,
+            semantic_available: false,
+            semantic_indexed: false,
+            job: {
+              status: "idle",
+              stage: "idle",
+              percent: 0,
+              current: 0,
+              total: 0,
+              filename: null,
+              message: "",
+              warning: null,
+              error: null,
+              started_at: null,
+              finished_at: null,
+            },
+          });
+        }
+        if (url === "/v1/skills") {
+          return jsonResponse({ skills: {}, rules_indexed: rulesIndexed });
+        }
+        if (url === "/v1/game") {
+          const body = JSON.parse(String(initOptionsOrEmpty(undefined)));
+          void body;
+          return jsonResponse({ result: [] });
+        }
+        return jsonResponse({});
+      });
+      void fetchMock;
+
+      render(<App />);
+      const noCorebookBtn = await screen.findByRole("button", { name: /No Corebook PDF/i });
+      fireEvent.click(noCorebookBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Bring Your Own Corebook/i)).toBeInTheDocument();
+      });
+
+      const fileInput = screen.getByLabelText(/Upload Corebook PDF file/i) as HTMLInputElement;
+      const pdfFile = new File(["%PDF-1.4 test"], "CPR-Corebook.pdf", { type: "application/pdf" });
+      fireEvent.change(fileInput, { target: { files: [pdfFile] } });
+
+      await waitFor(() => {
+        expect(screen.getByRole("progressbar")).toBeInTheDocument();
+        expect(screen.getAllByText(/Corebook Ready \(2 pages\)/i).length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Open Prompts tab and expand Advanced built-in prompts
+      fireEvent.click(screen.getByRole("button", { name: /^Prompts$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Advanced: Full Built-In System Rules/i }));
+      expect(await screen.findByDisplayValue("Default Core Rules")).toBeInTheDocument();
+    } finally {
+      globalThis.XMLHttpRequest = OriginalXHR;
+    }
+  });
 });
+
+function initOptionsOrEmpty(x: unknown) {
+  return x ?? "{}";
+}

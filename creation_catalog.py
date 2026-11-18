@@ -997,6 +997,8 @@ async def generate_creation_ai_assist(
     rules_path: str | Path | None,
     llm: Any,
     payload: dict[str, Any],
+    *,
+    settings_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Generate or expand character Backstory, Contacts, or Campaign setup grounded in sheet & Corebook lore."""
     if not isinstance(payload, dict):
@@ -1113,14 +1115,25 @@ async def generate_creation_ai_assist(
         "lifepath": {k: v for k, v in lifepath.items() if k not in {"friends", "enemies", "tragic_love_affairs"} and v},
     }
 
+    from turnloop import DEFAULT_PROMPT_TEMPLATES, load_llm_settings, load_prompt_settings
+
+    resolved_settings = Path(settings_path) if settings_path else None
+    prompt_cfg = load_prompt_settings(resolved_settings) if resolved_settings is not None else dict(DEFAULT_PROMPT_TEMPLATES)
+    llm_cfg = load_llm_settings(resolved_settings) if resolved_settings is not None else {}
+    assist_persona = (prompt_cfg.get("creation_assist_persona") or "").strip() or DEFAULT_PROMPT_TEMPLATES["creation_assist_persona"]
+    world_prefix = (prompt_cfg.get("world_rules_prefix") or "").strip()
+    assist_extra = (prompt_cfg.get("creation_assist_extra") or "").strip()
+    extra_sections = ""
+    if world_prefix:
+        extra_sections += f"\nTable World Rules:\n{world_prefix}\n"
+    if assist_extra:
+        extra_sections += f"\nCustom Co-Writer Instructions:\n{assist_extra}\n"
+
     system_prompt = (
-        "You are a Cyberpunk RED (Year 2045, Time of the Red) Narrative Co-Writer.\n"
-        "STRICT RULES:\n"
-        "1. Adhere faithfully to the player's actual character sheet (Role Rank 4, STAT scores, trained Skills, installed Cyberware, Weapons/Armor, and Lifepath) or campaign setup.\n"
-        "2. Never contradict the sheet (e.g., don't claim a low-TECH character is an elite surgeon, or give a character cyberware/stats they do not have).\n"
-        "3. Stay grounded in official Cyberpunk RED Night City 2045 lore (Time of the Red scarcity, Night Markets, Fixers, Continental Brands, local gangs, Watson/Heywood/Westbrook/Santo Domingo/Pacifica/Combat Zone/Badlands).\n"
+        f"{assist_persona}\n"
         f"{_ANTI_CLICHE_RULE}\n"
-        "4. Return ONLY valid JSON matching the requested schema. No markdown prose outside the JSON."
+        f"{extra_sections}"
+        "Return ONLY valid JSON matching the requested schema. No markdown prose outside the JSON."
     )
 
     lore_block = "\n".join(lore_snippets[:4]) if lore_snippets else "Setting: Night City 2045 (Time of the Red, post-4th Corporate War)."
@@ -1291,7 +1304,9 @@ async def generate_creation_ai_assist(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
     ]
-    raw_reply = await llm.complete(messages, json_mode=True, temperature=0.95 if mode == "scratch" else 0.7)
+    base_temp = float(llm_cfg.get("creation_temperature", 0.85))
+    effective_temp = min(1.5, base_temp + 0.1) if mode == "scratch" else max(0.0, base_temp - 0.15)
+    raw_reply = await llm.complete(messages, json_mode=True, temperature=effective_temp)
     cleaned = _strip_json_fences(raw_reply)
     parsed = json.loads(cleaned)
     if not isinstance(parsed, dict):

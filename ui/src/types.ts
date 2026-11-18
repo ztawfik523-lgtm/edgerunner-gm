@@ -140,6 +140,37 @@ export interface PromptSettings {
   narrator_extra: string;
   chronicler_extra: string;
   archivist_extra: string;
+  creation_assist_persona?: string;
+  creation_assist_extra?: string;
+  narrator_core_rules?: string;
+  planner_core_rules?: string;
+  chronicler_core_rules?: string;
+  archivist_core_rules?: string;
+}
+
+export interface CorebookJobStatus {
+  status: "idle" | "running" | "completed" | "error";
+  stage: string;
+  percent: number;
+  current: number;
+  total: number;
+  filename: string | null;
+  message: string;
+  warning: string | null;
+  error: string | null;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
+export interface CorebookStatusResponse {
+  rules_indexed: boolean;
+  indexed_pages: number;
+  pdf_page_count: number;
+  source_filename?: string | null;
+  semantic_available: boolean;
+  semantic_indexed: boolean;
+  db_path?: string;
+  job: CorebookJobStatus;
 }
 
 export interface ServerSettings {
@@ -163,6 +194,8 @@ export interface LLMSettings {
   has_api_key: boolean;
   api_key_masked: string;
   temperature: number;
+  planner_temperature?: number;
+  creation_temperature?: number;
   max_tokens: number;
   timeout_s: number;
   mode: "two_pass" | "single_pass_tagged";
@@ -170,6 +203,9 @@ export interface LLMSettings {
   presence_penalty?: number;
   frequency_penalty?: number;
   enable_chronicler?: boolean;
+  enable_highlights?: boolean;
+  allow_ai_homebrew?: boolean;
+  auto_compress_prompt?: boolean;
   retry_attempts?: number;
   history_window?: number;
   compression_threshold?: number;
@@ -187,6 +223,7 @@ export interface AllSettingsResponse {
   server: ServerSettings;
   auth_policy: {
     allow_guest_users: boolean;
+    allow_self_signup?: boolean;
     user_passcode_configured: boolean;
     admin_configured: boolean;
     user_configured: boolean;
@@ -204,6 +241,9 @@ export interface PublicSettingsResponse {
   narrator_length: string;
   gm_thinking_mode?: "quality" | "balanced";
   enable_chronicler: boolean;
+  enable_highlights?: boolean;
+  allow_ai_homebrew?: boolean;
+  auto_compress_prompt?: boolean;
   history_window: number;
   compression_threshold: number;
   citation_limit: number;

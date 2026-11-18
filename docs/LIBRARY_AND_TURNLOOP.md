@@ -81,8 +81,11 @@ All mutating endpoints enforce trusted-origin (`--allow-origin`) and `Content-Ty
 | `POST /v1/campaigns/{id}/presence` | Register or refresh Co-op seat presence | JSON: `client_id`, `player_name`, `character_id` |
 | `GET /v1/campaigns/{id}/events` | Subscribe to live Co-op SSE updates | Query: optional `pin` |
 | `GET /v1/settings/llm` | Read saved LLM connection settings (key masked) | — |
-| `POST /v1/settings/llm` | Save persistent LLM connection settings | JSON: `base_url`, `model`, `api_key`, `clear_api_key`, `temperature`, `max_tokens`, `timeout_s`, `mode` |
+| `POST /v1/settings/llm` | Save persistent LLM connection & tuning settings | JSON: `base_url`, `model`, `api_key`, `clear_api_key`, `temperature`, `planner_temperature`, `creation_temperature`, `max_tokens`, `timeout_s`, `mode`, `enable_chronicler`, `enable_highlights`, `allow_ai_homebrew`, `auto_compress_prompt`, etc. |
+| `POST /v1/settings/prompts` | Save or reset GM prompt templates | JSON: `system_persona`, `world_rules_prefix`, `narrator_extra`, `planner_extra`, `chronicler_extra`, `archivist_extra`, `creation_assist_persona`, `creation_assist_extra`, `*_core_rules`, or `{"reset": true}` |
 | `POST /v1/settings/llm/test` | Probe provider `/models` endpoint | JSON: `base_url`, optional `api_key` |
+| `GET /v1/corebook/status` | Check Corebook index status & upload job progress | — |
+| `POST /v1/corebook/upload` | Upload Corebook PDF (`application/pdf`) and index in background | Raw PDF bytes, optional `X-Filename` header, query `run_semantic` |
 
 When built (`ui/dist/index.html` present), [redkb.py](../redkb.py) also serves the custom React web UI directly on `GET /` and `/assets/*` alongside the API.
 

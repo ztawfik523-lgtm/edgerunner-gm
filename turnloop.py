@@ -110,6 +110,74 @@ _DEFAULT_NARRATOR_PERSONA = (
     "driven by human friction, distinct character voices, and real consequences."
 )
 
+_DEFAULT_CREATION_ASSIST_PERSONA = (
+    "You are a Cyberpunk RED (Year 2045, Time of the Red) Narrative Co-Writer.\n"
+    "STRICT RULES:\n"
+    "1. Adhere faithfully to the player's actual character sheet (Role Rank 4, STAT scores, trained Skills, installed Cyberware, Weapons/Armor, and Lifepath) or campaign setup.\n"
+    "2. Never contradict the sheet (e.g., don't claim a low-TECH character is an elite surgeon, or give a character cyberware/stats they do not have).\n"
+    "3. Stay grounded in official Cyberpunk RED Night City 2045 lore (Time of the Red scarcity, Night Markets, Fixers, Continental Brands, local gangs, Watson/Heywood/Westbrook/Santo Domingo/Pacifica/Combat Zone/Badlands)."
+)
+
+_DEFAULT_PLANNER_CORE_RULES = (
+    "- Ground everything in each Character's actual stats, skills, money, inventory, detail, and wound_state. If inventory is {} and detail is {}, they carry NO confirmed gear or cyberware—do not invent unowned cyberarms or weapons.\n"
+    "- Respect player agency: only schedule checks or character changes for actions the player actually declared or external hazards/attacks inflicted on them—never assume decisions or habits the player didn't choose.\n"
+    "- Checks & Role Abilities: use canonical Cyberpunk RED skills or Role Abilities (`Interface`, `Charismatic Impact`, `Credibility`, `Operator`, `Moto`, `Maker`, `Medicine`, `Surgery`, `Medical Tech`). For pure role checks like `Interface`, set `stat` to `\"ROLE\"` (or omit `stat` so the engine resolves `ROLE`).\n"
+    "- Playstyle IP Awards: award 10–80 IP per scene/session based on Group Playstyle + Roleplay (never award hundreds at once; use solo_ops role_action award_ip with actor, amount, and reason).\n"
+    "- Beat Chart & Combat Cliffhanger Pacing: alternate Action, Investigation, and Character-Interaction beats; scale Cliffhangers per Corebook pp. 412–416 (1 Mook per PC, 1 Lieutenant per 2 PCs, 1 Boss per 4 PCs); EMP drops per tens digit of Humanity lost.\n"
+    "- Pre-roll player stakes: if `Overclock` or `Pre-committed LUCK` is > 0, apply it only if a check is genuinely warranted by the player's action (never invent a pointless roll just to burn LUCK/Humanity).\n"
+    "- Information Fog-of-War & Earned Intel:\n"
+    "  * Keep player-visible Narrative Memory (`state.npcs`, `state.discoveries`, `state.summary`) spoiler-free—record only what the player character has directly seen, heard, or confirmed in play.\n"
+    "  * Store hidden NPC motives, true employers, framed evidence, unspotted traps, or behind-the-scenes truths in `gm_secrets` instead (set a key to null once genuinely uncovered and move the revealed fact into `discoveries`).\n"
+    "  * Treat sensitive information as earned, never free: if the player asks an NPC for hidden reasons, motives, names, or secrets, schedule a fitting check (`Conversation`, `Human Perception`, `Interrogation`, `Streetwise`, `Bribery`, `Library Search`, `Electronics/Security Tech`) or require leverage/payment/legwork.\n"
+    "- Clocks & Pressure (`clock_ops`): when an active gig timer, site alert, faction pursuit, or looming deadline enters play (or when the player requests a tracked threat clock), create 1-2 tracked clocks (`segments` 4-8; use `visibility: \"public\"` for player-visible or requested threat timers, patrol sweeps, alerts, and deadlines, and `visibility: \"secret\"` ONLY for hidden off-screen GM plots) and tick `+1`/`-1` only when real pressure shifts—never tick blindly every turn.\n"
+    "- Time Management (`start_time` & `time_elapsed_minutes`): check `Solo Engine State.clock_minutes` and `clock_label`. If `clock_minutes == 0` at campaign start and the opening sets a specific time of day (e.g. `22:15`), emit `\"start_time\": \"HH:MM\"` once. Emit `time_elapsed_minutes` (`0` for combat/rapid dialogue, `5`-`15` for quick searches/bandaging, `30`-`90` for district transit/stakeouts, `480` for overnight sleep) whenever narrative time meaningfully passes (skip if a `solo_ops` `rest`/`treat_injury`/`therapy`/`hustle` already advances time).\n"
+    "- Solo Engine (`solo_ops`) & `state_ops` (`update_character`): use `solo_ops` for gig payouts (`economy_action` `job_reward` with `amount` and `contract_reason`), monthly rent/lifestyle (`pay_month`), canonical buying/equipping (`gear_action` `buy`/`equip_weapon`/`equip_armor`), recovery (`health_action` `rest`/`stabilize`/`treat_injury`), and tactical `start_encounter` for attached PCs only (omit unattached NPC enemies from `character_ids` and resolve their attacks via normal `checks`); put starting cash/ad-hoc gear or direct HP/money/inventory changes in `state_ops` as `{\"type\": \"update_character\", \"actor\": \"name\", \"changes\": {\"money\": 120, \"inventory\": {...}}, \"reason\": \"...\"}`.\n"
+    "- ALWAYS keep Narrative Memory synced: if state.scene or state.summary is empty, or if the location, newly introduced/changed NPCs (including any named NPCs mentioned in recent messages not yet in state.npcs—format each as `Role, location — Disposition (Hostile -2 / Wary -1 / Neutral 0 / Warm +1 / Trusted +2); latest tie-in` using realistic, culturally varied everyday names, never cliché names like Jax, Vex, Kael, Vane, Vance, Razor, or Keres), objectives, discoveries, or unresolved hooks change in the current scene, emit an update_campaign state_op using ONLY top-level keys from {scene, summary, npcs, objectives, discoveries, unresolved} (nest any extracted lore/map notes inside `discoveries`, never as custom top-level keys).\n"
+    "- Keep existing state.npcs natural: only plan around off-screen NPCs when location, faction, or the player's choices naturally involve them—never force stored NPCs into every scene.\n"
+    "- For update_character state_ops, only use changes keys: hp (int), money (int), humanity (int), inventory ({item_name: quantity_int})."
+)
+
+_DEFAULT_NARRATOR_CORE_RULES = (
+    "Player agency & GM role:\n"
+    "- NEVER control, decide, or narrate the player character's own actions, dialogue, habits (drinking, smoking, leaning), inner thoughts, emotions, or unstated backstory. You run the world, NPCs, external events, and hazards/injuries inflicted ON the character (backed by the rolls/outcomes below)—never puppet what the player decides to do.\n"
+    "- When the player gives an open prompt, bring an outside situation or NPC to them where they stand and leave their choice and reaction completely open.\n"
+    "Information Fog-of-War & Earned Intel:\n"
+    "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
+    "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
+    "Character voice, naming & grounded realism:\n"
+    "- Keep the tone gritty, everyday, and street-level—transactional, awkward, tense, and worn down—NOT witty action-movie banter, snappy one-liners, or fantastical heroics. People care about rent, cheap food, NCPD heat, and getting home alive.\n"
+    "- Write NPCs as ordinary, flawed people first (tired, defensive, irritated, blunt, hesitant, or quietly worried), each with a distinct rhythm and speech pattern rather than stoic thriller stereotypes.\n"
+    "- Ground emotion in mundane human behavior and subtext (rubbing a sore wrist, counting change, looking past your shoulder) rather than clinical scanner clichés ('pupil dilation', 'micro-servos whining', 'heart rate spike').\n"
+    "- Give NPCs realistic, culturally varied everyday names, surnames, or understated street handles (diverse working-class names rather than cartoon nicknames). NEVER use repetitive stock AI names like Jax, Vex, Kael, Nyx, Vane, Vance, Razor, Keres, Rook, Sable, or Varela.\n"
+    "- Persistent NPC cast & disposition: Keep any NPCs listed in Narrative State -> npcs consistent in role, voice, disposition/trust, and past slights or favors (and honor names already set in Locked Engine Outcomes), but do NOT force off-screen contacts into unrelated scenes just because they are in the list.\n"
+    "- Reflect physical consequences: if a character's `wound_state` is `serious` or `mortal` (or has an injury/armor penalty), reflect the pain, sluggishness, and wound penalty in play.\n"
+    "- If any clock in Active Clocks reaches full (`filled == segments`), deliver its world consequence naturally in the scene.\n"
+    "- Write full, natural sentences with varied rhythm. Avoid clipped subjectless fragments ('Not a question.', 'Doesn't glance up.', 'Slow. Deliberate.'), heavy em-dash interruptions in every paragraph, and AI tics like 'doesn't flinch', 'voice flat', or 'a pause'.\n"
+    "- Respect Cyberpunk RED's gritty street economy: typical edgerunner gigs pay 500–2,000eb (rare high-risk jobs reach ~5,000eb), never tens or hundreds of thousands of eurobucks.\n"
+    "Strict grounding & formatting rules:\n"
+    "- Never alter or contradict any dice roll total, stat, dice value, pass/fail, critical fumble/success, HP/Humanity/eb change, or rulebook citation listed in the Engine Roll Ledger below. Never offer to spend LUCK retroactively on an already-rolled check—in Cyberpunk RED, LUCK must be committed before rolling.\n"
+    "- NEVER fabricate unapplied numeric HP, Humanity, or eb damage/changes in prose unless an executed patch or Engine Roll Ledger outcome applied them (describe shock/strain qualitatively if HP wasn't reduced), and do NOT print raw stat-formula blocks like '**Roll: ... Dice: [...]**' inside story prose (the UI shows dice cards separately).\n"
+    "- Honor roll pass/fail mechanically: on a FAILURE, the attempted action FAILS—it is denied, jammed, spotted, or misses its mark (at most a partial hint at a steep cost on a narrow miss by 1–2; NEVER grant full lock bypasses, full NET data extraction, or target objective completion when a check failed).\n"
+    "- If the Engine Roll Ledger says `NONE (0 rolls executed)`, NO skill check or attack roll ran this turn—NEVER invent, simulate, or print any dice numbers, d10 result, total, or 'vs DV' pass/fail line in your prose.\n"
+    "- Treat the Characters JSON below as canonical truth for stats, skills, money, inventory, and detail. If a character has `inventory: {}` and `detail: {}`, they own NO confirmed weapons, items, or cyberware—do NOT attribute cyberarms, weapons, or loadouts to them even if earlier chat messages mentioned them.\n"
+    '- Clean Markdown only: write spoken dialogue in normal quotes (e.g. "Step away from the case."), NOT wrapped inside `**...**`, and NEVER nest `**bold**` markers inside already-bolded spans.'
+)
+
+_DEFAULT_CHRONICLER_CORE_RULES = (
+    "- Only record NPCs, locations, clues, or discoveries explicitly observed by the PC in the GM prose.\n"
+    "- Selectively capture up to 1-2 newly introduced major recurring named NPCs, custom locations/nodes, or unique datashards/items in `new_homebrew` ONLY if they are player-observed, recurring, and not already stored; leave `new_homebrew` empty (`[]`) on routine turns.\n"
+    "- Never invent unmentioned cyberware/gear or modify character HP/money.\n"
+    "- Never copy `gm_secrets` or `secret` clocks into `state_ops`.\n"
+    "- If time clearly passed in the narrated prose (e.g. 'twenty minutes later', 'by dawn') and `Solo Engine State` has not yet advanced for it, set `time_elapsed_minutes` accordingly; otherwise 0.\n"
+    "- If everything from the narration is already synced, return empty lists and 0."
+)
+
+_DEFAULT_ARCHIVIST_CORE_RULES = (
+    "1. Information Fog-of-War: `library_entries` and `campaign_updates` are PLAYER-VISIBLE. NEVER leak `gm_secrets`, unrevealed employers, unseen traps, or secret clocks into `library_entries`, `summary`, `npcs`, or `discoveries`.\n"
+    "2. Put repeatable details (NPC dossiers/dispositions, gang/corp faction profiles, recurring venues/locations, custom datashards/gear/house rules) into `library_entries` with structured `stats` fields so `campaign_updates.summary` stays short and points to them via `[Category: Name]`.\n"
+    "3. Preserve established names, eddies/gear facts, and unresolved obligations accurately."
+)
+
 DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
     "system_persona": _DEFAULT_NARRATOR_PERSONA,
     "world_rules_prefix": "",
@@ -117,6 +185,12 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, str] = {
     "narrator_extra": "",
     "chronicler_extra": "",
     "archivist_extra": "",
+    "creation_assist_persona": _DEFAULT_CREATION_ASSIST_PERSONA,
+    "creation_assist_extra": "",
+    "narrator_core_rules": _DEFAULT_NARRATOR_CORE_RULES,
+    "planner_core_rules": _DEFAULT_PLANNER_CORE_RULES,
+    "chronicler_core_rules": _DEFAULT_CHRONICLER_CORE_RULES,
+    "archivist_core_rules": _DEFAULT_ARCHIVIST_CORE_RULES,
 }
 
 _GM_STYLE_HINTS = {
@@ -169,6 +243,8 @@ def _default_llm_dict() -> dict[str, Any]:
         "model": os.environ.get("REDGM_LLM_MODEL", "llama3"),
         "api_key": os.environ.get("REDGM_LLM_API_KEY", ""),
         "temperature": 0.75,
+        "planner_temperature": 0.1,
+        "creation_temperature": 0.85,
         "top_p": 1.0,
         "presence_penalty": 0.0,
         "frequency_penalty": 0.0,
@@ -176,6 +252,9 @@ def _default_llm_dict() -> dict[str, Any]:
         "timeout_s": 60.0,
         "mode": "two_pass",
         "enable_chronicler": True,
+        "enable_highlights": True,
+        "allow_ai_homebrew": True,
+        "auto_compress_prompt": True,
         "retry_attempts": 2,
         "history_window": 14,
         "compression_threshold": _COMPRESSION_MESSAGE_THRESHOLD,
@@ -208,6 +287,16 @@ def _validate_llm_settings(raw: dict[str, Any], existing: dict[str, Any] | None 
         if not 0.0 <= temp <= 2.0:
             raise ValueError("temperature must be between 0.0 and 2.0")
         base["temperature"] = temp
+    if "planner_temperature" in raw and raw["planner_temperature"] is not None:
+        ptemp = float(raw["planner_temperature"])
+        if not 0.0 <= ptemp <= 1.5:
+            raise ValueError("planner_temperature must be between 0.0 and 1.5")
+        base["planner_temperature"] = ptemp
+    if "creation_temperature" in raw and raw["creation_temperature"] is not None:
+        ctemp = float(raw["creation_temperature"])
+        if not 0.0 <= ctemp <= 1.5:
+            raise ValueError("creation_temperature must be between 0.0 and 1.5")
+        base["creation_temperature"] = ctemp
     if "top_p" in raw and raw["top_p"] is not None:
         tp = float(raw["top_p"])
         if not 0.05 <= tp <= 1.0:
@@ -240,6 +329,12 @@ def _validate_llm_settings(raw: dict[str, Any], existing: dict[str, Any] | None 
         base["mode"] = mode
     if "enable_chronicler" in raw and raw["enable_chronicler"] is not None:
         base["enable_chronicler"] = bool(raw["enable_chronicler"])
+    if "enable_highlights" in raw and raw["enable_highlights"] is not None:
+        base["enable_highlights"] = bool(raw["enable_highlights"])
+    if "allow_ai_homebrew" in raw and raw["allow_ai_homebrew"] is not None:
+        base["allow_ai_homebrew"] = bool(raw["allow_ai_homebrew"])
+    if "auto_compress_prompt" in raw and raw["auto_compress_prompt"] is not None:
+        base["auto_compress_prompt"] = bool(raw["auto_compress_prompt"])
     if "retry_attempts" in raw and raw["retry_attempts"] is not None:
         ra = int(raw["retry_attempts"])
         if not 0 <= ra <= 5:
@@ -322,6 +417,8 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "has_api_key": bool(key),
         "api_key_masked": masked,
         "temperature": settings["temperature"],
+        "planner_temperature": float(settings.get("planner_temperature", 0.1)),
+        "creation_temperature": float(settings.get("creation_temperature", 0.85)),
         "top_p": settings.get("top_p", 1.0),
         "presence_penalty": settings.get("presence_penalty", 0.0),
         "frequency_penalty": settings.get("frequency_penalty", 0.0),
@@ -329,6 +426,9 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "timeout_s": settings["timeout_s"],
         "mode": settings["mode"],
         "enable_chronicler": bool(settings.get("enable_chronicler", True)),
+        "enable_highlights": bool(settings.get("enable_highlights", True)),
+        "allow_ai_homebrew": bool(settings.get("allow_ai_homebrew", True)),
+        "auto_compress_prompt": bool(settings.get("auto_compress_prompt", True)),
         "retry_attempts": int(settings.get("retry_attempts", 2)),
         "history_window": int(settings.get("history_window", 14)),
         "compression_threshold": int(settings.get("compression_threshold", _COMPRESSION_MESSAGE_THRESHOLD)),
@@ -338,6 +438,10 @@ def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "default_time_step_minutes": int(settings.get("default_time_step_minutes", 0)),
         "gm_thinking_mode": settings.get("gm_thinking_mode", "quality"),
     }
+
+
+_MAX_PROMPT_CHARS = 16000
+_NON_EMPTY_PROMPT_KEYS = frozenset({"system_persona", "creation_assist_persona"})
 
 
 def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
@@ -350,7 +454,8 @@ def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
     for key in defaults:
         val = raw.get(key)
         if isinstance(val, str):
-            out[key] = val.strip()[:4000] if key != "system_persona" or val.strip() else defaults["system_persona"]
+            trimmed = val.strip()[:_MAX_PROMPT_CHARS]
+            out[key] = trimmed if (trimmed or key not in _NON_EMPTY_PROMPT_KEYS) else defaults[key]
     return out
 
 
@@ -367,9 +472,9 @@ def save_prompt_settings(updates: dict[str, Any], settings_path: Path | None = N
             for key in DEFAULT_PROMPT_TEMPLATES:
                 if key in updates and updates[key] is not None:
                     text = str(updates[key]).strip()
-                    if len(text) > 4000:
-                        raise ValueError(f"Prompt field {key} exceeds 4000 characters")
-                    if key == "system_persona" and not text:
+                    if len(text) > _MAX_PROMPT_CHARS:
+                        raise ValueError(f"Prompt field {key} exceeds {_MAX_PROMPT_CHARS} characters")
+                    if key in _NON_EMPTY_PROMPT_KEYS and not text:
                         next_prompts[key] = DEFAULT_PROMPT_TEMPLATES[key]
                     else:
                         next_prompts[key] = text
@@ -1260,7 +1365,7 @@ class TurnEngine:
             for k in DEFAULT_PROMPT_TEMPLATES:
                 if isinstance(prompt_settings.get(k), str):
                     val = prompt_settings[k].strip()
-                    base_prompts[k] = val if (val or k != "system_persona") else DEFAULT_PROMPT_TEMPLATES[k]
+                    base_prompts[k] = val if (val or k not in _NON_EMPTY_PROMPT_KEYS) else DEFAULT_PROMPT_TEMPLATES[k]
         self.prompt_settings = base_prompts
         self._skill_cache: dict[str, dict[str, Any]] | None = None
         self._item_cache: dict[str, dict[str, Any]] | None = None
@@ -2208,7 +2313,7 @@ class TurnEngine:
             "clocks": branch_clocks,
             "dice_pool": {"d10": d10_pool["dice"], "d6": d6_pool["dice"]},
             "citations": citations,
-            "compression_recommended": turns_since_compress >= threshold,
+            "compression_recommended": bool(self.turn_settings.get("auto_compress_prompt", True)) and turns_since_compress >= threshold,
         }
 
     def _build_planner_messages(
@@ -2253,12 +2358,16 @@ class TurnEngine:
         default_step = int(self.turn_settings.get("default_time_step_minutes") or 0)
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
         planner_extra = (self.prompt_settings.get("planner_extra") or "").strip()
+        planner_core = (self.prompt_settings.get("planner_core_rules") or "").strip()
+        allow_homebrew = bool(self.turn_settings.get("allow_ai_homebrew", True))
         custom_lines = ""
         if world_prefix:
             custom_lines += f"Campaign World / Table Rules:\n{world_prefix}\n"
         if planner_extra:
             custom_lines += f"Custom Planner Instructions:\n{planner_extra}\n"
-        step_note = f" Default fallback if time passed without another value: {default_step}m." if default_step > 0 else ""
+        step_note = f"- Default fallback if time passed without another value: {default_step}m.\n" if default_step > 0 else ""
+        homebrew_note = "" if allow_homebrew else "- Leave `new_homebrew` empty (`[]`); auto-saving AI homebrew is disabled.\n"
+        core_block = f"Planning rules:\n{planner_core}\n" if planner_core else ""
         system_prompt = (
             "You are the Cyberpunk RED Rules Planner. Return ONLY a single valid JSON object with no markdown or prose.\n"
             f"Campaign Style: {style_hint}\n"
@@ -2275,23 +2384,9 @@ class TurnEngine:
             '  "new_homebrew": [{"name": "...", "category": "skill|weapon|armor|cyberware|gear|role|rule|npc|faction|location|ammo|attachment|vehicle|drug|service|housing|mook|encounter|streetslang|screamsheet", "summary": "...", "description": "...", "stats": {...}}],\n'
             '  "gm_notes": "short resolution guidance"\n'
             "}\n"
-            "Planning rules:\n"
-            "- Ground everything in each Character's actual stats, skills, money, inventory, detail, and wound_state. If inventory is {} and detail is {}, they carry NO confirmed gear or cyberware—do not invent unowned cyberarms or weapons.\n"
-            "- Respect player agency: only schedule checks or character changes for actions the player actually declared or external hazards/attacks inflicted on them—never assume decisions or habits the player didn't choose.\n"
-            "- Checks & Role Abilities: use canonical Cyberpunk RED skills or Role Abilities (`Interface`, `Charismatic Impact`, `Credibility`, `Operator`, `Moto`, `Maker`, `Medicine`, `Surgery`, `Medical Tech`). For pure role checks like `Interface`, set `stat` to `\"ROLE\"` (or omit `stat` so the engine resolves `ROLE`).\n"
-            "- Playstyle IP Awards: award 10–80 IP per scene/session based on Group Playstyle + Roleplay (never award hundreds at once; use solo_ops role_action award_ip with actor, amount, and reason).\n"
-            "- Beat Chart & Combat Cliffhanger Pacing: alternate Action, Investigation, and Character-Interaction beats; scale Cliffhangers per Corebook pp. 412–416 (1 Mook per PC, 1 Lieutenant per 2 PCs, 1 Boss per 4 PCs); EMP drops per tens digit of Humanity lost.\n"
-            "- Pre-roll player stakes: if `Overclock` or `Pre-committed LUCK` is > 0, apply it only if a check is genuinely warranted by the player's action (never invent a pointless roll just to burn LUCK/Humanity).\n"
-            "- Information Fog-of-War & Earned Intel:\n"
-            "  * Keep player-visible Narrative Memory (`state.npcs`, `state.discoveries`, `state.summary`) spoiler-free—record only what the player character has directly seen, heard, or confirmed in play.\n"
-            "  * Store hidden NPC motives, true employers, framed evidence, unspotted traps, or behind-the-scenes truths in `gm_secrets` instead (set a key to null once genuinely uncovered and move the revealed fact into `discoveries`).\n"
-            "  * Treat sensitive information as earned, never free: if the player asks an NPC for hidden reasons, motives, names, or secrets, schedule a fitting check (`Conversation`, `Human Perception`, `Interrogation`, `Streetwise`, `Bribery`, `Library Search`, `Electronics/Security Tech`) or require leverage/payment/legwork.\n"
-            "- Clocks & Pressure (`clock_ops`): when an active gig timer, site alert, faction pursuit, or looming deadline enters play (or when the player requests a tracked threat clock), create 1-2 tracked clocks (`segments` 4-8; use `visibility: \"public\"` for player-visible or requested threat timers, patrol sweeps, alerts, and deadlines, and `visibility: \"secret\"` ONLY for hidden off-screen GM plots) and tick `+1`/`-1` only when real pressure shifts—never tick blindly every turn.\n"
-            f"- Time Management (`start_time` & `time_elapsed_minutes`): check `Solo Engine State.clock_minutes` and `clock_label`. If `clock_minutes == 0` at campaign start and the opening sets a specific time of day (e.g. `22:15`), emit `\"start_time\": \"HH:MM\"` once. Emit `time_elapsed_minutes` (`0` for combat/rapid dialogue, `5`-`15` for quick searches/bandaging, `30`-`90` for district transit/stakeouts, `480` for overnight sleep) whenever narrative time meaningfully passes (skip if a `solo_ops` `rest`/`treat_injury`/`therapy`/`hustle` already advances time).{step_note}\n"
-            "- Solo Engine (`solo_ops`) & `state_ops` (`update_character`): use `solo_ops` for gig payouts (`economy_action` `job_reward` with `amount` and `contract_reason`), monthly rent/lifestyle (`pay_month`), canonical buying/equipping (`gear_action` `buy`/`equip_weapon`/`equip_armor`), recovery (`health_action` `rest`/`stabilize`/`treat_injury`), and tactical `start_encounter` for attached PCs only (omit unattached NPC enemies from `character_ids` and resolve their attacks via normal `checks`); put starting cash/ad-hoc gear or direct HP/money/inventory changes in `state_ops` as `{\"type\": \"update_character\", \"actor\": \"name\", \"changes\": {\"money\": 120, \"inventory\": {...}}, \"reason\": \"...\"}`.\n"
-            "- ALWAYS keep Narrative Memory synced: if state.scene or state.summary is empty, or if the location, newly introduced/changed NPCs (including any named NPCs mentioned in recent messages not yet in state.npcs—format each as `Role, location — Disposition (Hostile -2 / Wary -1 / Neutral 0 / Warm +1 / Trusted +2); latest tie-in` using realistic, culturally varied everyday names, never cliché names like Jax, Vex, Kael, Vane, Vance, Razor, or Keres), objectives, discoveries, or unresolved hooks change in the current scene, emit an update_campaign state_op using ONLY top-level keys from {scene, summary, npcs, objectives, discoveries, unresolved} (nest any extracted lore/map notes inside `discoveries`, never as custom top-level keys).\n"
-            "- Keep existing state.npcs natural: only plan around off-screen NPCs when location, faction, or the player's choices naturally involve them—never force stored NPCs into every scene.\n"
-            "- For update_character state_ops, only use changes keys: hp (int), money (int), humanity (int), inventory ({item_name: quantity_int}).\n"
+            f"{core_block}"
+            f"{step_note}"
+            f"{homebrew_note}"
             f"{speaker_line}"
             f"{guidance_line}"
             f"Overclock requested by player: {overclock}.\n"
@@ -2406,39 +2501,25 @@ class TurnEngine:
         length_hint = _LENGTH_HINTS.get(length_key, _LENGTH_HINTS["standard"])
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
         narrator_extra = (self.prompt_settings.get("narrator_extra") or "").strip()
+        narrator_core = (self.prompt_settings.get("narrator_core_rules") or "").strip()
+        enable_highlights = bool(self.turn_settings.get("enable_highlights", True))
         custom_sections = ""
         if world_prefix:
             custom_sections += f"\nTable World Rules:\n{world_prefix}\n"
         if narrator_extra:
             custom_sections += f"\nCustom Narrator Instructions:\n{narrator_extra}\n"
+        core_block = f"\n{narrator_core}\n" if narrator_core else "\n"
+        flair_line = (
+            "- Visual UI flair: highlight 2–5 short key terms per reply using inline color tags, e.g. [[cyan:Kiroshi Tower]], [[rose:Trauma Team]], [[amber:500eb]], [[emerald:Conversation]], or [[violet:NetWatch]]. Keep highlighted spans short (1–4 words) and never wrap whole sentences.\n"
+            if enable_highlights
+            else "- Clean plain Markdown only: do NOT use [[color:...]] inline highlight tags.\n"
+        )
         system_prompt = (
             f"{persona}\n"
             f"Tone & Pacing: {style_hint} {length_hint}"
-            f"{custom_sections}\n"
-            "Player agency & GM role:\n"
-            "- NEVER control, decide, or narrate the player character's own actions, dialogue, habits (drinking, smoking, leaning), inner thoughts, emotions, or unstated backstory. You run the world, NPCs, external events, and hazards/injuries inflicted ON the character (backed by the rolls/outcomes below)—never puppet what the player decides to do.\n"
-            "- When the player gives an open prompt, bring an outside situation or NPC to them where they stand and leave their choice and reaction completely open.\n"
-            "Information Fog-of-War & Earned Intel:\n"
-            "- Strictly separate Player Knowledge (`Narrative State` + established scene facts) from Private GM Truth (`Hidden GM Secrets` and `secret` clocks). NEVER narrate NPC inner motives, secret employers, unspotted traps, hidden clock ticks, or conspiracies the player character has no observable way to know.\n"
-            "- Gate sensitive answers behind rolls, leverage, money, or legwork: if the player asks why they're targeted, who is behind something, or what an NPC knows—and a check FAILED or no check/leverage unlocked it—have the NPC deflect, lie plausibly, push back, or name a price instead of monologuing the answer. Even on a success, give only the grounded fragment that person or clue can realistically reveal.\n"
-            "Character voice, naming & grounded realism:\n"
-            "- Keep the tone gritty, everyday, and street-level—transactional, awkward, tense, and worn down—NOT witty action-movie banter, snappy one-liners, or fantastical heroics. People care about rent, cheap food, NCPD heat, and getting home alive.\n"
-            "- Write NPCs as ordinary, flawed people first (tired, defensive, irritated, blunt, hesitant, or quietly worried), each with a distinct rhythm and speech pattern rather than stoic thriller stereotypes.\n"
-            "- Ground emotion in mundane human behavior and subtext (rubbing a sore wrist, counting change, looking past your shoulder) rather than clinical scanner clichés ('pupil dilation', 'micro-servos whining', 'heart rate spike').\n"
-            "- Give NPCs realistic, culturally varied everyday names, surnames, or understated street handles (diverse working-class names rather than cartoon nicknames). NEVER use repetitive stock AI names like Jax, Vex, Kael, Nyx, Vane, Vance, Razor, Keres, Rook, Sable, or Varela.\n"
-            "- Persistent NPC cast & disposition: Keep any NPCs listed in Narrative State -> npcs consistent in role, voice, disposition/trust, and past slights or favors (and honor names already set in Locked Engine Outcomes), but do NOT force off-screen contacts into unrelated scenes just because they are in the list.\n"
-            "- Reflect physical consequences: if a character's `wound_state` is `serious` or `mortal` (or has an injury/armor penalty), reflect the pain, sluggishness, and wound penalty in play.\n"
-            "- If any clock in Active Clocks reaches full (`filled == segments`), deliver its world consequence naturally in the scene.\n"
-            "- Write full, natural sentences with varied rhythm. Avoid clipped subjectless fragments ('Not a question.', 'Doesn't glance up.', 'Slow. Deliberate.'), heavy em-dash interruptions in every paragraph, and AI tics like 'doesn't flinch', 'voice flat', or 'a pause'.\n"
-            "- Respect Cyberpunk RED's gritty street economy: typical edgerunner gigs pay 500–2,000eb (rare high-risk jobs reach ~5,000eb), never tens or hundreds of thousands of eurobucks.\n"
-            "Strict grounding & formatting rules:\n"
-            "- Never alter or contradict any dice roll total, stat, dice value, pass/fail, critical fumble/success, HP/Humanity/eb change, or rulebook citation listed in the Engine Roll Ledger below. Never offer to spend LUCK retroactively on an already-rolled check—in Cyberpunk RED, LUCK must be committed before rolling.\n"
-            "- NEVER fabricate unapplied numeric HP, Humanity, or eb damage/changes in prose unless an executed patch or Engine Roll Ledger outcome applied them (describe shock/strain qualitatively if HP wasn't reduced), and do NOT print raw stat-formula blocks like '**Roll: ... Dice: [...]**' inside story prose (the UI shows dice cards separately).\n"
-            "- Honor roll pass/fail mechanically: on a FAILURE, the attempted action FAILS—it is denied, jammed, spotted, or misses its mark (at most a partial hint at a steep cost on a narrow miss by 1–2; NEVER grant full lock bypasses, full NET data extraction, or target objective completion when a check failed).\n"
-            "- If the Engine Roll Ledger says `NONE (0 rolls executed)`, NO skill check or attack roll ran this turn—NEVER invent, simulate, or print any dice numbers, d10 result, total, or 'vs DV' pass/fail line in your prose.\n"
-            "- Treat the Characters JSON below as canonical truth for stats, skills, money, inventory, and detail. If a character has `inventory: {}` and `detail: {}`, they own NO confirmed weapons, items, or cyberware—do NOT attribute cyberarms, weapons, or loadouts to them even if earlier chat messages mentioned them.\n"
-            '- Clean Markdown only: write spoken dialogue in normal quotes (e.g. "Step away from the case."), NOT wrapped inside `**...**`, and NEVER nest `**bold**` markers inside already-bolded spans.\n'
-            "- Visual UI flair: highlight 2–5 short key terms per reply using inline color tags, e.g. [[cyan:Kiroshi Tower]], [[rose:Trauma Team]], [[amber:500eb]], [[emerald:Conversation]], or [[violet:NetWatch]]. Keep highlighted spans short (1–4 words) and never wrap whole sentences.\n"
+            f"{custom_sections}"
+            f"{core_block}"
+            f"{flair_line}"
             f"- Narrative State: {json.dumps(state)}\n"
             f"- Solo Engine State: {json.dumps(solo_summary)}\n"
             f"- Active Clocks (secret clocks are GM eyes only): {json.dumps(clocks)}\n"
@@ -2477,7 +2558,10 @@ class TurnEngine:
         gm_secrets = executed.get("gm_secrets", prep.get("gm_secrets") or {})
         clocks = executed.get("clocks", prep.get("clocks") or [])
         chron_extra = (self.prompt_settings.get("chronicler_extra") or "").strip()
+        chron_core = (self.prompt_settings.get("chronicler_core_rules") or "").strip()
         extra_block = f"\nCustom Chronicler Instructions:\n{chron_extra}\n" if chron_extra else "\n"
+        core_block = f"Rules:\n{chron_core}\n" if chron_core else ""
+        homebrew_note = "" if self.turn_settings.get("allow_ai_homebrew", True) else "- Leave `new_homebrew` empty (`[]`).\n"
         system_prompt = (
             "You are the Cyberpunk RED Post-Turn Chronicler. Compare the player turn and the actual narrated GM prose against the current state, "
             "and record ONLY facts, NPCs, clues, scene transitions, or time elapsed that appeared in the narrated prose and are NOT yet captured.\n"
@@ -2490,13 +2574,8 @@ class TurnEngine:
             '  "gm_secrets": {"secret_key": "unrevealed off-screen motive/consequence or null if revealed in prose"},\n'
             '  "new_homebrew": [{"name": "...", "category": "npc|location|faction|gear|program|rule|ammo|attachment|vehicle|drug|service|housing|mook|encounter|streetslang|screamsheet", "summary": "1-sentence player-known summary", "description": "concise factual entry", "stats": {...}}]\n'
             "}\n"
-            "Rules:\n"
-            "- Only record NPCs, locations, clues, or discoveries explicitly observed by the PC in the GM prose.\n"
-            "- Selectively capture up to 1-2 newly introduced major recurring named NPCs, custom locations/nodes, or unique datashards/items in `new_homebrew` ONLY if they are player-observed, recurring, and not already stored; leave `new_homebrew` empty (`[]`) on routine turns.\n"
-            "- Never invent unmentioned cyberware/gear or modify character HP/money.\n"
-            "- Never copy `gm_secrets` or `secret` clocks into `state_ops`.\n"
-            "- If time clearly passed in the narrated prose (e.g. 'twenty minutes later', 'by dawn') and `Solo Engine State` has not yet advanced for it, set `time_elapsed_minutes` accordingly; otherwise 0.\n"
-            "- If everything from the narration is already synced, return empty lists and 0.\n"
+            f"{core_block}"
+            f"{homebrew_note}"
             f"Current Narrative State: {json.dumps(state)}\n"
             f"Solo Engine State: {json.dumps(solo_summary)}\n"
             f"Active Clocks: {json.dumps(clocks)}\n"
@@ -2529,7 +2608,8 @@ class TurnEngine:
         warnings: list[str] = []
 
         # 1. Create any AI-proposed campaign homebrew entries first so skill checks can reference new skills.
-        for idx, hb in enumerate(plan.get("new_homebrew") or []):
+        raw_homebrew = (plan.get("new_homebrew") or []) if self.turn_settings.get("allow_ai_homebrew", True) else []
+        for idx, hb in enumerate(raw_homebrew):
             if not isinstance(hb, dict):
                 continue
             try:
@@ -2836,7 +2916,8 @@ class TurnEngine:
                 speaker=speaker,
                 guidance=guidance,
             )
-            raw_plan = await self.llm.complete(planner_msgs, temperature=0.1, json_mode=True)
+            planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
+            raw_plan = await self.llm.complete(planner_msgs, temperature=planner_temp, json_mode=True)
             plan = extract_gm_plan(raw_plan)
             executed = self._execute_plan(
                 campaign_id,
@@ -2921,7 +3002,8 @@ class TurnEngine:
                 }
                 chron_msgs = self._build_chronicler_messages(chron_prep, user_text, clean_text, executed)
                 chron_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=True)
-                raw_chron = await self.llm.complete(chron_msgs, temperature=0.1, json_mode=True, **chron_kwargs)
+                planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
+                raw_chron = await self.llm.complete(chron_msgs, temperature=planner_temp, json_mode=True, **chron_kwargs)
                 chron_plan = extract_gm_plan(raw_chron)
                 if not chron_plan and (not isinstance(raw_chron, str) or raw_chron.strip() != "{}"):
                     warn_msg = "Post-turn chronicler returned empty or unparseable output; post-turn sync was skipped."
@@ -3046,7 +3128,9 @@ class TurnEngine:
             raise ValueError("No conversation history or summary to compress yet")
 
         archivist_extra = (self.prompt_settings.get("archivist_extra") or "").strip()
+        archivist_core = (self.prompt_settings.get("archivist_core_rules") or "").strip()
         arch_block = f"\nCustom Archivist Instructions:\n{archivist_extra}\n" if archivist_extra else "\n"
+        core_block = f"Critical rules:\n{archivist_core}\n" if archivist_core else ""
         comp_prompt = (
             "You are the Cyberpunk RED Campaign Archivist. Compress the conversation history into clean, structured persistent records.\n"
             f"{arch_block}"
@@ -3066,21 +3150,19 @@ class TurnEngine:
             '  "gm_secrets": {"secret_key": "private GM truth, hidden motive, or null to remove resolved secret"},\n'
             '  "clock_ops": [{"id": "...", "name": "...", "delta": 0, "filled": 0, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}]\n'
             "}\n"
-            "Critical rules:\n"
-            "1. Information Fog-of-War: `library_entries` and `campaign_updates` are PLAYER-VISIBLE. NEVER leak `gm_secrets`, unrevealed employers, unseen traps, or secret clocks into `library_entries`, `summary`, `npcs`, or `discoveries`.\n"
-            "2. Put repeatable details (NPC dossiers/dispositions, gang/corp faction profiles, recurring venues/locations, custom datashards/gear/house rules) into `library_entries` with structured `stats` fields so `campaign_updates.summary` stays short and points to them via `[Category: Name]`.\n"
-            "3. Preserve established names, eddies/gear facts, and unresolved obligations accurately.\n"
+            f"{core_block}"
             f"Current Campaign State: {json.dumps(ctx['campaign']['state'])}\n"
             f"Existing Campaign Library Entries: {json.dumps(existing_lib)}\n"
             f"Current Private GM Secrets: {json.dumps(secrets)}\n"
             f"Current Clocks: {json.dumps(clocks)}"
         )
+        planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
         raw = await self.llm.complete(
             [
                 {"role": "system", "content": comp_prompt},
                 {"role": "user", "content": "Branch Transcript:\n" + "\n\n".join(transcript_lines)},
             ],
-            temperature=0.1,
+            temperature=planner_temp,
             json_mode=True,
         )
         parsed = extract_gm_plan(raw)

@@ -823,7 +823,7 @@ export function CharacterCreatorModal({
     if (!name.trim()) issues.push("Enter a Handle / Name on Step 1 (Identity & Role).");
     if (method === "complete_package") {
       if (!refData?.rules_indexed) {
-        issues.push("Complete Package requires the Corebook rules index; switch to Freeform if unindexed.");
+        issues.push("Complete Package needs your Corebook PDF uploaded in Settings → Corebook PDF (or switch to Freeform).");
       }
       if (statSum !== 62) {
         issues.push(`STAT total must equal 62 for Complete Package (currently ${statSum}).`);

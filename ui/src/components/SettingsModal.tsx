@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Cpu,
   FileText,
   Globe,
@@ -12,6 +15,7 @@ import {
   Shield,
   Sliders,
   Trash2,
+  Upload,
   UserPlus,
   X,
   XCircle,
@@ -19,6 +23,7 @@ import {
 import {
   deleteAuthAccount,
   fetchAllSettings,
+  fetchCorebookStatus,
   restartServer,
   saveLLMSettings,
   savePromptSettings,
@@ -26,27 +31,31 @@ import {
   setupInitialAuth,
   testLLMSettings,
   updateAuthAccounts,
+  uploadCorebookPdf,
 } from "../api";
 import type {
   AuthAccountSummary,
   AuthStatus,
+  CorebookStatusResponse,
   LLMSettings,
   PromptSettings,
   RuntimeServerInfo,
   ServerSettings,
 } from "../types";
 
+export type SettingsTab = "connection" | "corebook" | "tuning" | "prompts" | "network" | "access";
+
 export interface SettingsModalProps {
   open: boolean;
+  initialTab?: SettingsTab;
   settings: LLMSettings | null;
   authStatus?: AuthStatus | null;
   onClose: () => void;
   onSaved: (updated: LLMSettings) => void;
   onAuthChanged?: () => Promise<void> | void;
+  onCorebookIndexed?: () => Promise<void> | void;
   onNotify?: (msg: string) => void;
 }
-
-type SettingsTab = "connection" | "tuning" | "prompts" | "network" | "access";
 
 const PRESETS = [
   { label: "Ollama (Local)", base_url: "http://127.0.0.1:11434/v1", model: "llama3" },
@@ -170,6 +179,12 @@ const EMPTY_PROMPTS: PromptSettings = {
   narrator_extra: "",
   chronicler_extra: "",
   archivist_extra: "",
+  creation_assist_persona: "",
+  creation_assist_extra: "",
+  narrator_core_rules: "",
+  planner_core_rules: "",
+  chronicler_core_rules: "",
+  archivist_core_rules: "",
 };
 
 const PROMPT_FIELDS: Array<{
@@ -177,55 +192,98 @@ const PROMPT_FIELDS: Array<{
   label: string;
   hint: string;
   rows: number;
+  advanced?: boolean;
 }> = [
   {
     key: "system_persona",
-    label: "Core GM Persona",
-    hint: "Primary role, grounded Night City tone, and player-agency rules sent to the model.",
-    rows: 5,
+    label: "GM Voice & Persona",
+    hint: "Who your Game Master is and the overall tone of the story.",
+    rows: 4,
   },
   {
     key: "world_rules_prefix",
-    label: "World Rules / Campaign Tone Prefix",
-    hint: "Prepended to both Planner and Narrator context for table rules or house lore.",
-    rows: 3,
-  },
-  {
-    key: "planner_extra",
-    label: "Planner & Mechanics Extra Instructions",
-    hint: "Appended to the pass that adjudicates skill checks, dice, and campaign state mutations.",
+    label: "House Rules & Setting Lore",
+    hint: "Custom table rules, campaign premise, or setting lore sent to the GM on every turn and character assist.",
     rows: 3,
   },
   {
     key: "narrator_extra",
-    label: "Narrator Prose Extra Instructions",
-    hint: "Appended to the narrative prose pass (pacing, sensory detail, dialogue style).",
+    label: "Storytelling & Writing Notes",
+    hint: "Extra instructions for how the GM writes scenes (pacing, dialogue style, sensory detail, formatting).",
     rows: 3,
+  },
+  {
+    key: "planner_extra",
+    label: "Rules & Dice Referee Notes",
+    hint: "Extra instructions for when to ask for skill checks, set difficulty (DV), or update HP/money/clocks.",
+    rows: 3,
+  },
+  {
+    key: "creation_assist_persona",
+    label: "Character & Campaign Generator Persona",
+    hint: "Role and rules used when clicking AI Generate / Expand in the Character Creator or Campaign Creator.",
+    rows: 4,
+  },
+  {
+    key: "creation_assist_extra",
+    label: "Character & Campaign Generator Extra Notes",
+    hint: "Extra creative direction for AI-generated backstories, contacts, and campaign hooks.",
+    rows: 2,
   },
   {
     key: "chronicler_extra",
-    label: "Chronicler & NPC Memory Extra Instructions",
-    hint: "Appended to the background pass extracting time elapsed, NPC updates, and clues.",
-    rows: 3,
+    label: "Session Note-Taker (Chronicler) Notes",
+    hint: "Extra instructions for the background note-taker that logs new NPCs, clues, and time passed.",
+    rows: 2,
   },
   {
     key: "archivist_extra",
-    label: "Archivist / Memory Compression Extra Instructions",
-    hint: "Appended when compressing older turns into campaign summaries and library dossiers.",
-    rows: 3,
+    label: "History Recap & Compression Notes",
+    hint: "Extra instructions when compressing long chats into campaign summaries and Library entries.",
+    rows: 2,
+  },
+  {
+    key: "narrator_core_rules",
+    label: "Built-In Storytelling, Agency & Realism Rules",
+    hint: "Full built-in narrator instructions (player agency, secret-keeping, NPC naming, economy, and roll grounding).",
+    rows: 8,
+    advanced: true,
+  },
+  {
+    key: "planner_core_rules",
+    label: "Built-In Rules Referee, Pacing & Clock Guidelines",
+    hint: "Full built-in instructions for how the planner schedules rolls, IP awards, clocks, time, and NPC memory.",
+    rows: 8,
+    advanced: true,
+  },
+  {
+    key: "chronicler_core_rules",
+    label: "Built-In Post-Turn Note-Taker Guidelines",
+    hint: "Full built-in rules controlling what the post-turn Chronicler logs into campaign memory.",
+    rows: 5,
+    advanced: true,
+  },
+  {
+    key: "archivist_core_rules",
+    label: "Built-In Story Compression Guidelines",
+    hint: "Full built-in rules controlling how Compress to Library summarizes old messages and builds dossiers.",
+    rows: 4,
+    advanced: true,
   },
 ];
 
 export function SettingsModal({
   open,
+  initialTab,
   settings,
   authStatus,
   onClose,
   onSaved,
   onAuthChanged,
+  onCorebookIndexed,
   onNotify,
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("connection");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? "connection");
 
   // Connection + Turn & Tuning state
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:11434/v1");
@@ -233,6 +291,8 @@ export function SettingsModal({
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [temperature, setTemperature] = useState(0.75);
+  const [plannerTemperature, setPlannerTemperature] = useState(0.1);
+  const [creationTemperature, setCreationTemperature] = useState(0.85);
   const [maxTokens, setMaxTokens] = useState(1200);
   const [timeoutS, setTimeoutS] = useState(90);
   const [mode, setMode] = useState<"two_pass" | "single_pass_tagged">("two_pass");
@@ -240,6 +300,9 @@ export function SettingsModal({
   const [presencePenalty, setPresencePenalty] = useState(0);
   const [frequencyPenalty, setFrequencyPenalty] = useState(0);
   const [enableChronicler, setEnableChronicler] = useState(true);
+  const [enableHighlights, setEnableHighlights] = useState(true);
+  const [allowAiHomebrew, setAllowAiHomebrew] = useState(true);
+  const [autoCompressPrompt, setAutoCompressPrompt] = useState(true);
   const [retryAttempts, setRetryAttempts] = useState(1);
   const [historyWindow, setHistoryWindow] = useState(14);
   const [compressionThreshold, setCompressionThreshold] = useState(14);
@@ -248,6 +311,15 @@ export function SettingsModal({
   const [narratorLength, setNarratorLength] = useState<"concise" | "standard" | "detailed">("standard");
   const [gmThinkingMode, setGmThinkingMode] = useState<"quality" | "balanced">("quality");
   const [defaultTimeStep, setDefaultTimeStep] = useState(0);
+
+  // Corebook PDF upload & indexing state
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const [corebookStatus, setCorebookStatus] = useState<CorebookStatusResponse | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [runSemanticOnUpload, setRunSemanticOnUpload] = useState(false);
+  const [selectedPdfName, setSelectedPdfName] = useState<string | null>(null);
+  const [showAdvancedPrompts, setShowAdvancedPrompts] = useState(false);
 
   // Saved Presets
   const [customProviderPresets, setCustomProviderPresets] = useState<CustomProviderPreset[]>(() =>
@@ -278,6 +350,7 @@ export function SettingsModal({
   // Access & Auth state
   const [accounts, setAccounts] = useState<AuthAccountSummary[]>([]);
   const [allowGuests, setAllowGuests] = useState(false);
+  const [allowSelfSignup, setAllowSelfSignup] = useState(true);
   const [passcodeConfigured, setPasscodeConfigured] = useState(false);
   const [newUserName, setNewUserName] = useState("");
   const [newUserPass, setNewUserPass] = useState("");
@@ -307,6 +380,8 @@ export function SettingsModal({
     setApiKey("");
     setClearKey(false);
     setTemperature(s.temperature);
+    setPlannerTemperature(s.planner_temperature ?? 0.1);
+    setCreationTemperature(s.creation_temperature ?? 0.85);
     setMaxTokens(s.max_tokens);
     setTimeoutS(s.timeout_s ?? 90);
     setMode(s.mode);
@@ -314,6 +389,9 @@ export function SettingsModal({
     setPresencePenalty(s.presence_penalty ?? 0);
     setFrequencyPenalty(s.frequency_penalty ?? 0);
     setEnableChronicler(s.enable_chronicler ?? true);
+    setEnableHighlights(s.enable_highlights ?? true);
+    setAllowAiHomebrew(s.allow_ai_homebrew ?? true);
+    setAutoCompressPrompt(s.auto_compress_prompt ?? true);
     setRetryAttempts(s.retry_attempts ?? 1);
     setHistoryWindow(s.history_window ?? 14);
     setCompressionThreshold(s.compression_threshold ?? 14);
@@ -323,6 +401,12 @@ export function SettingsModal({
     setGmThinkingMode(s.gm_thinking_mode === "balanced" ? "balanced" : "quality");
     setDefaultTimeStep(s.default_time_step_minutes ?? 0);
   };
+
+  useEffect(() => {
+    if (open && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   useEffect(() => {
     if (!open) return;
@@ -338,8 +422,8 @@ export function SettingsModal({
       .then((all) => {
         if (cancelled || !all) return;
         if (all.llm) applyLlmFields(all.llm);
-        if (all.prompts) setPrompts(all.prompts);
-        if (all.prompt_defaults) setPromptDefaults(all.prompt_defaults);
+        if (all.prompts) setPrompts({ ...EMPTY_PROMPTS, ...all.prompts });
+        if (all.prompt_defaults) setPromptDefaults({ ...EMPTY_PROMPTS, ...all.prompt_defaults });
         if (all.server) {
           setServerCfg(all.server);
           setOriginsText((all.server.allowed_origins || []).join("\n"));
@@ -348,6 +432,7 @@ export function SettingsModal({
         if (all.auth_policy) {
           setAccounts(all.auth_policy.accounts || []);
           setAllowGuests(Boolean(all.auth_policy.allow_guest_users));
+          setAllowSelfSignup(all.auth_policy.allow_self_signup ?? true);
           setPasscodeConfigured(Boolean(all.auth_policy.user_passcode_configured));
         }
       })
@@ -357,10 +442,45 @@ export function SettingsModal({
       .finally(() => {
         if (!cancelled) setLoadingAll(false);
       });
+    fetchCorebookStatus()
+      .then((cb) => {
+        if (!cancelled && cb && typeof cb.rules_indexed === "boolean") {
+          setCorebookStatus(cb);
+        }
+      })
+      .catch(() => {
+        // Ignore in mocked environments without /v1/corebook/status
+      });
     return () => {
       cancelled = true;
     };
   }, [open, settings]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (corebookStatus?.job?.status !== "running") return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      fetchCorebookStatus()
+        .then((cb) => {
+          if (cancelled || !cb || typeof cb.rules_indexed !== "boolean") return;
+          setCorebookStatus(cb);
+          if (cb.job?.status === "completed") {
+            const msg = cb.job.warning || cb.job.message || "Corebook indexed and ready to play!";
+            setNotice(msg);
+            onNotify?.("Corebook loaded and ready!");
+            void onCorebookIndexed?.();
+          } else if (cb.job?.status === "error") {
+            setError(cb.job.error || cb.job.message || "Corebook indexing failed.");
+          }
+        })
+        .catch(() => undefined);
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [open, corebookStatus?.job?.status, onCorebookIndexed, onNotify]);
 
   useEffect(() => {
     if (!open) return;
@@ -403,6 +523,8 @@ export function SettingsModal({
         base_url: baseUrl,
         model,
         temperature,
+        planner_temperature: plannerTemperature,
+        creation_temperature: creationTemperature,
         max_tokens: maxTokens,
         timeout_s: timeoutS,
         mode,
@@ -410,6 +532,9 @@ export function SettingsModal({
         presence_penalty: presencePenalty,
         frequency_penalty: frequencyPenalty,
         enable_chronicler: enableChronicler,
+        enable_highlights: enableHighlights,
+        allow_ai_homebrew: allowAiHomebrew,
+        auto_compress_prompt: autoCompressPrompt,
         retry_attempts: retryAttempts,
         history_window: historyWindow,
         compression_threshold: compressionThreshold,
@@ -431,6 +556,46 @@ export function SettingsModal({
       setError(err instanceof Error ? err.message : "Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCorebookFileSelected = async (file: File | null | undefined) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type && file.type !== "application/pdf") {
+      setError("Please select a PDF file (.pdf).");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setSelectedPdfName(file.name);
+    setUploadingPdf(true);
+    setUploadPercent(0);
+    try {
+      const res = await uploadCorebookPdf(file, {
+        runSemantic: runSemanticOnUpload,
+        onUploadProgress: (pct) => setUploadPercent(pct),
+      });
+      setCorebookStatus((prev) => ({
+        rules_indexed: prev?.rules_indexed ?? false,
+        indexed_pages: prev?.indexed_pages ?? 0,
+        pdf_page_count: prev?.pdf_page_count ?? 0,
+        source_filename: prev?.source_filename ?? file.name,
+        semantic_available: prev?.semantic_available ?? false,
+        semantic_indexed: prev?.semantic_indexed ?? false,
+        db_path: prev?.db_path,
+        job: res.job,
+      }));
+      const fresh = await fetchCorebookStatus().catch(() => null);
+      if (fresh && typeof fresh.rules_indexed === "boolean") {
+        setCorebookStatus(fresh);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload Corebook PDF");
+    } finally {
+      setUploadingPdf(false);
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = "";
+      }
     }
   };
 
@@ -580,7 +745,7 @@ export function SettingsModal({
     }
   };
 
-  const handleUpdateAccessPolicy = async (revokeTokens = false) => {
+  const handleUpdateAccessPolicy = async (revokeTokens = false, clearPasscode = false) => {
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -588,23 +753,35 @@ export function SettingsModal({
       const payload: {
         action: "policy";
         allow_guest_users: boolean;
+        allow_self_signup: boolean;
         user_passcode?: string;
+        clear_user_passcode?: boolean;
         revoke_all_tokens?: boolean;
       } = {
         action: "policy",
         allow_guest_users: allowGuests,
+        allow_self_signup: allowSelfSignup,
         revoke_all_tokens: revokeTokens,
       };
-      if (sharedPasscode.trim()) {
+      if (clearPasscode) {
+        payload.clear_user_passcode = true;
+      } else if (sharedPasscode.trim()) {
         payload.user_passcode = sharedPasscode.trim();
       }
       const res = await updateAuthAccounts(payload);
       setAccounts(res.accounts);
       setAllowGuests(res.allow_guest_users);
+      setAllowSelfSignup(res.allow_self_signup ?? allowSelfSignup);
       setPasscodeConfigured(res.user_passcode_configured);
       setSharedPasscode("");
       await onAuthChanged?.();
-      setNotice(revokeTokens ? "Updated policy and signed out old tokens." : "Saved access policy.");
+      setNotice(
+        clearPasscode
+          ? "Cleared shared player passcode."
+          : revokeTokens
+            ? "Updated policy and signed out all existing sessions."
+            : "Saved player access policy.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update policy");
     } finally {
@@ -630,11 +807,19 @@ export function SettingsModal({
 
   const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = [
     { id: "connection", label: "Connection", icon: Cpu },
+    { id: "corebook", label: "Corebook PDF", icon: BookOpen },
     { id: "tuning", label: "Turn & Tuning", icon: Sliders },
     { id: "prompts", label: "Prompts", icon: FileText },
     { id: "network", label: "Network", icon: Globe },
     { id: "access", label: "Access & Auth", icon: Shield },
   ];
+
+  const isIndexing = corebookStatus?.job?.status === "running";
+  const combinedProgress = uploadingPdf
+    ? Math.max(1, Math.round(uploadPercent * 0.25))
+    : isIndexing
+      ? Math.max(25, Math.min(100, 25 + Math.round((corebookStatus?.job?.percent ?? 0) * 0.75)))
+      : 0;
 
   return (
     <div
@@ -650,7 +835,7 @@ export function SettingsModal({
               AI Game Master Connection
             </h2>
             <p className="text-xs text-slate-400">
-              Admin Control Center: model provider, turn tuning, prompts, network IP/port, and access control.
+              Connect your AI model, upload your Corebook PDF, customize GM behavior &amp; prompts, and manage players.
             </p>
           </div>
           <button
@@ -1008,6 +1193,167 @@ export function SettingsModal({
             </form>
           )}
 
+          {activeTab === "corebook" && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100">
+                      Bring Your Own Corebook (Optional)
+                    </h3>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      Your Cyberpunk RED Corebook PDF stays private on your own server. Upload it once to unlock official Roles, Streetrat/Edgerunner/Complete Package character builders, gear catalogs, and exact page lookup.
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      corebookStatus?.rules_indexed
+                        ? "border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                        : "border border-amber-500/40 bg-amber-500/15 text-amber-200"
+                    }`}
+                  >
+                    {corebookStatus?.rules_indexed
+                      ? `Corebook Ready (${corebookStatus.indexed_pages} pages)`
+                      : "No Corebook Yet (Freeform Mode)"}
+                  </span>
+                </div>
+
+                {corebookStatus?.rules_indexed && (
+                  <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300 space-y-1">
+                    <div>
+                      Loaded file:{" "}
+                      <span className="font-mono text-cyan-300">
+                        {corebookStatus.source_filename || "Cyberpunk RED Corebook.pdf"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      {corebookStatus.indexed_pages} pages indexed
+                      {corebookStatus.semantic_indexed ? " · AI meaning search active" : ""}
+                    </div>
+                  </div>
+                )}
+
+                <input
+                  ref={pdfInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  aria-label="Upload Corebook PDF file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    void handleCorebookFileSelected(file);
+                  }}
+                />
+
+                {corebookStatus?.semantic_available && (
+                  <label className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={runSemanticOnUpload}
+                      disabled={uploadingPdf || isIndexing}
+                      onChange={(e) => setRunSemanticOnUpload(e.target.checked)}
+                    />
+                    <span>Also build AI meaning search after indexing (slower on CPU, optional)</span>
+                  </label>
+                )}
+
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (uploadingPdf || isIndexing) return;
+                    const file = e.dataTransfer.files?.[0];
+                    void handleCorebookFileSelected(file);
+                  }}
+                  className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-700 bg-slate-900/40 px-4 py-6 text-center transition hover:border-cyan-500/60"
+                >
+                  <Upload className="mb-2 h-7 w-7 text-cyan-400" />
+                  <div className="text-xs font-medium text-slate-200">
+                    {uploadingPdf || isIndexing
+                      ? `Processing ${selectedPdfName || corebookStatus?.job?.filename || "Corebook PDF"}...`
+                      : "Drag & drop your Cyberpunk RED Corebook PDF here, or click below"}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {corebookStatus?.rules_indexed
+                      ? "Uploading a new PDF safely replaces the existing rulebook database."
+                      : "Without a PDF, you can still create Freeform characters and homebrew rules."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={uploadingPdf || isIndexing}
+                    onClick={() => pdfInputRef.current?.click()}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                  >
+                    {uploadingPdf || isIndexing ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Working...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-3.5 w-3.5" />
+                        {corebookStatus?.rules_indexed ? "Replace Corebook PDF" : "Upload Corebook PDF"}
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {(uploadingPdf || isIndexing || corebookStatus?.job?.status === "completed") && (
+                  <div
+                    className="rounded-md border border-slate-800 bg-slate-900/80 p-3 space-y-2"
+                    aria-live="polite"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-slate-200">
+                        {uploadingPdf
+                          ? `Uploading PDF to server (${uploadPercent}%)...`
+                          : corebookStatus?.job?.message || "Building Corebook database..."}
+                      </span>
+                      <span className="font-mono text-cyan-300">
+                        {uploadingPdf || isIndexing ? `${combinedProgress}%` : "100%"}
+                      </span>
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-valuenow={uploadingPdf || isIndexing ? combinedProgress : 100}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
+                    >
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          corebookStatus?.job?.status === "completed" && !uploadingPdf
+                            ? "bg-emerald-500"
+                            : "bg-cyan-500"
+                        }`}
+                        style={{
+                          width: `${uploadingPdf || isIndexing ? combinedProgress : 100}%`,
+                        }}
+                      />
+                    </div>
+                    {isIndexing && (corebookStatus?.job?.total ?? 0) > 0 && (
+                      <div className="text-[11px] text-slate-400">
+                        Page {corebookStatus?.job?.current} of {corebookStatus?.job?.total}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeTab === "tuning" && (
             <form onSubmit={handleSaveConnectionOrTuning} className="space-y-4">
               {/* Tuning Presets */}
@@ -1249,14 +1595,14 @@ export function SettingsModal({
                   <HelpCircle className="h-3 w-3 text-slate-500" />
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label
                       className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
-                      title="Controls randomness/creativity (0.0 = deterministic & blunt, 1.5 = wild & creative)."
+                      title="Controls creativity in story prose (0.0 = predictable, 1.5 = wild & inventive)."
                     >
                       <span className="inline-flex items-center gap-1">
-                        Temperature ({temperature.toFixed(2)})
+                        Story Temperature ({temperature.toFixed(2)})
                         <HelpCircle className="h-3 w-3 text-slate-500" />
                       </span>
                       <span className="font-mono text-[10px] text-slate-400">
@@ -1275,22 +1621,63 @@ export function SettingsModal({
                   </div>
                   <div>
                     <label
-                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                      title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models like Nemotron spend thinking tokens out of this budget — 4096–8192 is recommended."
+                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      title="Temperature used for rules checks, state updates, and session memory (lower = stricter JSON & rules accuracy; 0.10 recommended)."
                     >
-                      Max Output Tokens
-                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                      <span className="inline-flex items-center gap-1">
+                        Rules Temp ({plannerTemperature.toFixed(2)})
+                        <HelpCircle className="h-3 w-3 text-slate-500" />
+                      </span>
                     </label>
                     <input
-                      type="number"
-                      min={128}
-                      max={65536}
-                      step={1}
-                      value={maxTokens}
-                      onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      type="range"
+                      min={0}
+                      max={1.5}
+                      step={0.05}
+                      value={plannerTemperature}
+                      onChange={(e) => setPlannerTemperature(parseFloat(e.target.value))}
+                      className="w-full accent-cyan-400"
                     />
                   </div>
+                  <div>
+                    <label
+                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      title="Temperature used when generating character backstories, contacts, and campaign pitches."
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        Creator Temp ({creationTemperature.toFixed(2)})
+                        <HelpCircle className="h-3 w-3 text-slate-500" />
+                      </span>
+                    </label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1.5}
+                      step={0.05}
+                      value={creationTemperature}
+                      onChange={(e) => setCreationTemperature(parseFloat(e.target.value))}
+                      className="w-full accent-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models spend thinking tokens out of this budget — 4096–8192 is recommended."
+                  >
+                    Max Output Tokens
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </label>
+                  <input
+                    type="number"
+                    min={128}
+                    max={65536}
+                    step={1}
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">
@@ -1404,18 +1791,52 @@ export function SettingsModal({
                   </label>
                 </div>
 
-                <label
-                  className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-help"
-                  title="Runs a post-turn extraction pass to automatically log new NPCs, clues, scene changes, world clock time, and homebrew entries from the GM's reply."
-                >
-                  <input
-                    type="checkbox"
-                    checked={enableChronicler}
-                    onChange={(e) => setEnableChronicler(e.target.checked)}
-                  />
-                  <span>Enable automatic Chronicler time &amp; NPC memory extraction pass</span>
-                  <HelpCircle className="h-3 w-3 shrink-0 text-slate-500" />
-                </label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label
+                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    title="Runs a background note-taker after each GM reply to log newly seen NPCs, clues, scene changes, and elapsed time."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enableChronicler}
+                      onChange={(e) => setEnableChronicler(e.target.checked)}
+                    />
+                    <span>Auto-track NPCs, clues &amp; time (Chronicler)</span>
+                  </label>
+                  <label
+                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    title="Highlights key names, places, and amounts in color inside GM replies."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enableHighlights}
+                      onChange={(e) => setEnableHighlights(e.target.checked)}
+                    />
+                    <span>Highlight key terms in color in GM replies</span>
+                  </label>
+                  <label
+                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    title="Lets the AI GM save new recurring NPCs, locations, and custom items directly into your Campaign Library."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allowAiHomebrew}
+                      onChange={(e) => setAllowAiHomebrew(e.target.checked)}
+                    />
+                    <span>Allow AI to save new Library entries automatically</span>
+                  </label>
+                  <label
+                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    title="Shows a gentle reminder to compress old chat history into Library dossiers once a branch gets long."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={autoCompressPrompt}
+                      onChange={(e) => setAutoCompressPrompt(e.target.checked)}
+                    />
+                    <span>Show story compression reminders when chat grows</span>
+                  </label>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -1439,11 +1860,15 @@ export function SettingsModal({
 
           {activeTab === "prompts" && (
             <form onSubmit={handleSavePrompts} className="space-y-3">
-              {PROMPT_FIELDS.map((field) => (
+              <p className="text-xs text-slate-400">
+                Customize how your AI Game Master talks, writes, and runs the table. Everyday prompts are shown first; open the Advanced section below to edit the full built-in system instructions.
+              </p>
+
+              {PROMPT_FIELDS.filter((f) => !f.advanced).map((field) => (
                 <label key={field.key} className="block">
                   <div className="mb-1 flex items-center justify-between">
                     <span className="text-xs font-semibold text-slate-200">{field.label}</span>
-                    {prompts[field.key] !== promptDefaults[field.key] && (
+                    {(prompts[field.key] ?? "") !== (promptDefaults[field.key] ?? "") && (
                       <button
                         type="button"
                         onClick={() =>
@@ -1461,7 +1886,7 @@ export function SettingsModal({
                   <p className="mb-1 text-[11px] text-slate-400">{field.hint}</p>
                   <textarea
                     rows={field.rows}
-                    value={prompts[field.key]}
+                    value={prompts[field.key] ?? ""}
                     onChange={(e) =>
                       setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
                     }
@@ -1469,6 +1894,54 @@ export function SettingsModal({
                   />
                 </label>
               ))}
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedPrompts((prev) => !prev)}
+                  className="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold text-slate-200 hover:text-cyan-200"
+                >
+                  <span>Advanced: Full Built-In System Rules (Narrator, Planner, Chronicler, Archivist)</span>
+                  {showAdvancedPrompts ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {showAdvancedPrompts && (
+                  <div className="space-y-3 border-t border-slate-800 p-3.5">
+                    <p className="text-[11px] text-amber-200/80">
+                      These are the full default instructions sent to the AI on every turn. You can tweak banned names, economy pacing, agency rules, or anything else here—and click Revert field or Reset All Prompts anytime.
+                    </p>
+                    {PROMPT_FIELDS.filter((f) => f.advanced).map((field) => (
+                      <label key={field.key} className="block">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-slate-200">{field.label}</span>
+                          {(prompts[field.key] ?? "") !== (promptDefaults[field.key] ?? "") && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrompts((prev) => ({
+                                  ...prev,
+                                  [field.key]: promptDefaults[field.key] ?? "",
+                                }))
+                              }
+                              className="text-[11px] text-cyan-300 hover:underline"
+                            >
+                              Revert field
+                            </button>
+                          )}
+                        </div>
+                        <p className="mb-1 text-[11px] text-slate-400">{field.hint}</p>
+                        <textarea
+                          rows={field.rows}
+                          value={prompts[field.key] ?? ""}
+                          onChange={(e) =>
+                            setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
+                          }
+                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center justify-between pt-2">
                 <button
@@ -1787,15 +2260,35 @@ export function SettingsModal({
                     <label className="flex items-center gap-2 text-xs text-slate-200">
                       <input
                         type="checkbox"
+                        checked={allowSelfSignup}
+                        onChange={(e) => setAllowSelfSignup(e.target.checked)}
+                      />
+                      Allow new players to create their own accounts
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-200">
+                      <input
+                        type="checkbox"
                         checked={allowGuests}
                         onChange={(e) => setAllowGuests(e.target.checked)}
                       />
                       Allow passwordless guest player sign-in
                     </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs text-slate-400">
-                        Update shared Player Passcode {passcodeConfigured ? "(currently set)" : "(none)"}
-                      </span>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">
+                          Update shared Player Passcode {passcodeConfigured ? "(currently set)" : "(none)"}
+                        </span>
+                        {passcodeConfigured && (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void handleUpdateAccessPolicy(false, true)}
+                            className="text-[11px] text-rose-300 hover:underline"
+                          >
+                            Clear passcode
+                          </button>
+                        )}
+                      </div>
                       <input
                         type="password"
                         value={sharedPasscode}
@@ -1803,7 +2296,7 @@ export function SettingsModal({
                         placeholder="Leave blank to keep unchanged"
                         className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
                       />
-                    </label>
+                    </div>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <button
                         type="button"

@@ -36,7 +36,7 @@ import { ChatPane, type StreamingTurnState } from "./components/ChatPane";
 import { CommandPalette } from "./components/CommandPalette";
 import { CoopModal } from "./components/CoopModal";
 import { LibraryPanel } from "./components/LibraryPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, type SettingsTab } from "./components/SettingsModal";
 import { TopBar } from "./components/TopBar";
 import type {
   ActiveTurnInfo,
@@ -112,6 +112,7 @@ export function App() {
   const [rightTab, setRightTab] = useState<RightTab>("character");
   const [selectedLibraryEntry, setSelectedLibraryEntry] = useState<LibraryEntry | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("connection");
   const [campaignCreatorOpen, setCampaignCreatorOpen] = useState(false);
   const [campaignCreatorEdit, setCampaignCreatorEdit] = useState<CampaignRecord | null>(null);
   const [coopOpen, setCoopOpen] = useState(false);
@@ -764,7 +765,14 @@ export function App() {
         onStartSession={handleStartSession}
         onExportChat={handleExportChat}
         onOpenCoop={() => setCoopOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsInitialTab("connection");
+          setSettingsOpen(true);
+        }}
+        onOpenCorebookSettings={() => {
+          setSettingsInitialTab("corebook");
+          setSettingsOpen(true);
+        }}
         onToggleThinkingMode={async (nextMode) => {
           try {
             const updated = await saveLLMSettings({ gm_thinking_mode: nextMode });
@@ -877,6 +885,7 @@ export function App() {
 
       <SettingsModal
         open={settingsOpen}
+        initialTab={settingsInitialTab}
         settings={llmSettings}
         authStatus={authStatus}
         onClose={() => setSettingsOpen(false)}
@@ -885,6 +894,14 @@ export function App() {
           notify(`Saved AI settings (${updated.model}).`);
         }}
         onAuthChanged={refreshInitial}
+        onCorebookIndexed={async () => {
+          const [h, skillsData] = await Promise.all([
+            fetchHealth().catch(() => null),
+            fetchSkillsCatalog().catch(() => ({ skills: {}, rules_indexed: false })),
+          ]);
+          if (h) setHealth(h);
+          setCorebookSkills(skillsData.skills ?? {});
+        }}
         onNotify={notify}
       />
 
