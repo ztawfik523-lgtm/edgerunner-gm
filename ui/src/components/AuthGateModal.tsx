@@ -27,9 +27,9 @@ export function AuthGateModal({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [setupAdminUser, setSetupAdminUser] = useState("admin");
+  const [setupAdminUser, setSetupAdminUser] = useState("");
   const [setupAdminPass, setSetupAdminPass] = useState("");
-  const [setupPlayerUser, setSetupPlayerUser] = useState("player");
+  const [setupPlayerUser, setSetupPlayerUser] = useState("");
   const [setupPlayerPass, setSetupPlayerPass] = useState("");
   const [setupRoomPasscode, setSetupRoomPasscode] = useState("");
   const [allowGuests, setAllowGuests] = useState(false);
@@ -89,8 +89,14 @@ export function AuthGateModal({
     setBusy(true);
     setError(null);
     try {
+      const adminUname = setupAdminUser.trim();
+      if (!adminUname) {
+        setError("Choose an Admin username.");
+        setBusy(false);
+        return;
+      }
       await setupInitialAuth({
-        admin_username: setupAdminUser.trim() || "admin",
+        admin_username: adminUname,
         admin_password: setupAdminPass,
         user_username: setupPlayerPass.trim() ? (setupPlayerUser.trim() || "player") : "",
         user_password: setupPlayerPass.trim(),
@@ -175,7 +181,7 @@ export function AuthGateModal({
       aria-modal="true"
       aria-label="Cyberpunk RED GM Access"
     >
-      <div className="cyber-cut cyber-panel-glow w-full max-w-md overflow-hidden border border-cyan-500/35 bg-[#0b1019] shadow-2xl">
+      <div className="cyber-cut cyber-panel-glow max-h-[92dvh] w-full max-w-md overflow-y-auto border border-cyan-500/35 bg-[#0b1019] shadow-2xl">
         {/* Cyberpunk Banner Header */}
         <div className="relative border-b border-slate-800 px-5 py-4">
           <img
@@ -267,16 +273,17 @@ export function AuthGateModal({
         {tab === "setup" ? (
           <form onSubmit={handleSetup} className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-medium text-slate-300">Admin username</span>
-                <input
-                  type="text"
-                  required
-                  value={setupAdminUser}
-                  onChange={(e) => setSetupAdminUser(e.target.value)}
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                />
-              </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-slate-300">Admin username</span>
+                  <input
+                    type="text"
+                    required
+                    value={setupAdminUser}
+                    onChange={(e) => setSetupAdminUser(e.target.value)}
+                    placeholder="e.g. fixer_boss"
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  />
+                </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-slate-300">
                   Admin password (min 6)
@@ -437,7 +444,7 @@ export function AuthGateModal({
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required={tab === "admin"}
-                placeholder={tab === "admin" ? "admin" : "player"}
+                placeholder={tab === "admin" ? "Enter admin username..." : "Username"}
                 className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
               />
             </label>

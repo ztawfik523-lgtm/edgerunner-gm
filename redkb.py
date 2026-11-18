@@ -905,6 +905,20 @@ def make_api(
             eff_role = _effective_role(request, sess)
             uname = str(sess.get("username") or "").strip()
 
+            admin_campaign_actions = {
+                "create_campaign",
+                "update_campaign",
+                "start_session",
+                "undo_campaign",
+                "delete_campaign",
+                "set_primary_campaign",
+            }
+            if action_name in admin_campaign_actions and eff_role == "user" and not sess.get("pin_only_mode"):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Admin permission required to create or modify campaigns and sessions.", "request_id": request_id},
+                )
+
             # Automatically stamp owner_username when a signed-in user creates a character
             if uname and action_name == "create_character":
                 det = dict(args_payload.get("detail") or {}) if isinstance(args_payload.get("detail"), dict) else {}
@@ -976,11 +990,41 @@ def make_api(
                             args_payload["expected_revision"] = cur_solo["revision"]
                         except Exception:
                             pass
+                before_session_num: int | None = None
+                if action_name == "start_session":
+                    target_camp_pre = camp_id or args_payload.get("campaign_id")
+                    if isinstance(target_camp_pre, str) and target_camp_pre:
+                        cur_pre = svc.memory.get_campaign(target_camp_pre)
+                        if cur_pre is not None:
+                            before_session_num = int(cur_pre.get("session_number") or 0)
                 res_out = (
                     svc.execute(action_name, args_payload, campaign_id=camp_id)
                     if camp_id is not None
                     else svc.execute(action_name, args_payload)
                 )
+                if action_name == "start_session" and isinstance(res_out.get("result"), dict):
+                    try:
+                        from turnloop import ChatTreeStore
+                        camp_obj = res_out["result"]
+                        sess_num = int(camp_obj.get("session_number") or 1)
+                        target_camp = camp_id or camp_obj.get("id")
+                        if target_camp and (before_session_num is None or sess_num > before_session_num):
+                            ts = ChatTreeStore(svc)
+                            main_tree = ts.get_tree(target_camp, channel_id="main")
+                            revs = ts._current_revisions(target_camp)
+                            ts.append_message(
+                                target_camp,
+                                parent_id=main_tree.get("active_leaf_id"),
+                                role="system",
+                                content=f"Session {sess_num} started — Party LUCK refilled.",
+                                campaign_revision=revs["campaign_revision"],
+                                solo_revision=revs["solo_revision"],
+                                channel_id="main",
+                                metadata={"session_started": sess_num},
+                            )
+                            ts.sync_active_leaf_revisions(target_camp, channel_id="main")
+                    except Exception:
+                        pass
                 if auto_revision and camp_id and action_name not in read_only_actions:
                     try:
                         from turnloop import ChatTreeStore
@@ -1536,6 +1580,9 @@ def make_api(
         blocked = require_player(request, request_id)
         if blocked is not None:
             return blocked
+        sess = _session(request)
+        if _effective_role(request, sess) == "user" and not sess.get("pin_only_mode"):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to export story logs.", "request_id": request_id})
         from turnloop import ChatTreeStore
         try:
             exported = ChatTreeStore(gameplay_service()).export_branch(campaign_id, leaf_id, channel_id=channel_id)
@@ -2386,9 +2433,12 @@ def make_api(
     @app.post("/v1/campaigns/{campaign_id}/clocks")
     async def campaign_clocks_mutate(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = check_mutable_origin(request, request_id, require_json=True)
+        blocked = check_mutable_origin(request, request_id, require_json=True, min_role="admin")
         if blocked is not None:
             return blocked
+        sess = _session(request)
+        if _effective_role(request, sess) == "user" and not (sess.get("pin_only_mode") and not auth.is_admin_configured()):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify world clocks.", "request_id": request_id})
         from turnloop import TurnEngine
         try:
             body = await request.json()
@@ -2578,9 +2628,12 @@ def make_api(
     @app.post("/v1/campaigns/{campaign_id}/bootstrap")
     async def campaign_bootstrap(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = check_mutable_origin(request, request_id, require_json=True)
+        blocked = check_mutable_origin(request, request_id, require_json=True, min_role="admin")
         if blocked is not None:
             return blocked
+        sess = _session(request)
+        if _effective_role(request, sess) == "user" and not (sess.get("pin_only_mode") and not auth.is_admin_configured()):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify campaign setup.", "request_id": request_id})
         from turnloop import TurnEngine
         try:
             body = await request.json()

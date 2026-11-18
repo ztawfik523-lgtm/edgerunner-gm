@@ -1,7 +1,6 @@
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
-import nightMarketHero from "../assets/night-market-hero.jpg";
 import {
   AlertTriangle,
   ArrowDown,
@@ -19,18 +18,15 @@ import {
   Layers,
   Lock,
   Minus,
-  Newspaper,
   Palette,
   Pencil,
   Play,
   Plus,
-  Radio,
   RefreshCw,
   Send,
   Shield,
   Sparkles,
   Square,
-  Terminal,
   Trash2,
   User,
   UserPlus,
@@ -53,7 +49,6 @@ import type {
   ChatMessageNode,
   DiceRollResult,
   LibraryEntry,
-  NpcIdentityProfile,
   PartyGroupingState,
   StatePatchEvent,
 } from "../types";
@@ -188,7 +183,6 @@ export interface StreamingTurnState {
 interface ChatPaneProps {
   campaignId: string | null;
   campaign?: CampaignRecord | null;
-  npcProfiles?: Record<string, NpcIdentityProfile>;
   partyGrouping?: PartyGroupingState | null;
   activeChannelId?: string;
   onChangeChannelId?: (channelId: string) => void;
@@ -197,12 +191,13 @@ interface ChatPaneProps {
   isPeerStreaming?: boolean;
   characters: CharacterRecord[];
   selectedSpeakerId: string;
+  overclock?: boolean;
+  onClearOverclock?: () => void;
   activeTurn: ActiveTurnInfo | null;
   selfClientId: string;
   isAdmin?: boolean;
   currentUsername?: string | null;
   requireCharacterToSpeak?: boolean;
-  onChangeSpeakerId: (charId: string) => void;
   onUpdateCharacterColor?: (charId: string, color: string) => Promise<void>;
   onOpenCreateCharacter?: () => void;
   onSend: (
@@ -215,7 +210,6 @@ interface ChatPaneProps {
       gmMode?: "auto" | "force_gm" | "hold_gm";
     },
   ) => Promise<void>;
-  onSendIntro?: () => Promise<void>;
   onEditUserMessage: (msg: ChatMessageNode, newText: string, overclock: boolean, luckSpend?: number) => Promise<void>;
   onUpdateMessageInPlace: (msg: ChatMessageNode, newText: string) => Promise<void>;
   onDeleteMessage: (msg: ChatMessageNode, scope?: "single" | "branch") => Promise<void>;
@@ -237,17 +231,25 @@ const QUICK_DICE_PRESETS = [
   { label: "d100", count: 1, sides: 100 },
 ];
 
-const ROLES_OVERVIEW = [
-  { name: "Solo", ability: "Combat Awareness", desc: "Tactical threat detection, precision damage, and initiative control." },
-  { name: "Netrunner", ability: "Interface", desc: "Breach local NET architectures, crack Black ICE, and hijack control nodes." },
-  { name: "Tech", ability: "Maker", desc: "Field-rig, upgrade, fabricate, and invent custom hardware & weapons." },
-  { name: "Medtech", ability: "Medicine", desc: "Trauma surgery, combat pharmaceuticals (Speedheal/Stim), and cryotanks." },
-  { name: "Rockerboy", ability: "Charismatic Impact", desc: "Sway crowds, fans, and street venues through raw rebel presence." },
-  { name: "Media", ability: "Credibility", desc: "Uncover street rumors, break corporate coverups, and broadcast truth." },
-  { name: "Exec", ability: "Teamwork", desc: "Corporate housing, business suit, and a loyal specialist team member." },
-  { name: "Lawman", ability: "Backup", desc: "Call armed patrol or tactical response squads when under fire." },
-  { name: "Fixer", ability: "Operator", desc: "Source scarce Night Market gear, haggle 10% margins, and work street contacts." },
-  { name: "Nomad", ability: "Moto", desc: "Access the clan motorpool for armored groundcars, bikes, and combat upgrades." },
+const GM_MODES = [
+  {
+    id: "auto" as const,
+    label: "Smart GM",
+    tip: "Smart GM: lets players chat together/OOC and triggers the GM on world/NPC actions. Click to cycle mode.",
+    cls: "border-cyan-500/45 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25",
+  },
+  {
+    id: "hold_gm" as const,
+    label: "Party Chat",
+    tip: "Party Chat (Hold GM): post dialogue or queue actions without triggering the GM yet. Click to cycle mode.",
+    cls: "border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25",
+  },
+  {
+    id: "force_gm" as const,
+    label: "Force GM",
+    tip: "Force GM: always trigger an AI GM response immediately on send. Click to cycle mode.",
+    cls: "border-rose-500/45 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25",
+  },
 ];
 
 function RollCard({ roll, compact = false }: { roll: DiceRollResult; compact?: boolean }) {
@@ -374,14 +376,8 @@ function BranchPager({
   );
 }
 
-function getSkipStorageKey(campaignId: string | null, username?: string | null): string {
-  return `redgm:orientationSkipped:${(username || "anon").toLowerCase()}:${campaignId || "none"}`;
-}
-
 export function ChatPane({
   campaignId,
-  campaign,
-  npcProfiles = {},
   partyGrouping = null,
   activeChannelId = "main",
   onChangeChannelId,
@@ -390,16 +386,16 @@ export function ChatPane({
   isPeerStreaming = false,
   characters,
   selectedSpeakerId,
+  overclock = false,
+  onClearOverclock,
   activeTurn,
   selfClientId,
   isAdmin = true,
   currentUsername = null,
   requireCharacterToSpeak = true,
-  onChangeSpeakerId,
   onUpdateCharacterColor,
   onOpenCreateCharacter,
   onSend,
-  onSendIntro,
   onEditUserMessage,
   onUpdateMessageInPlace,
   onDeleteMessage,
@@ -412,7 +408,6 @@ export function ChatPane({
   onNotify,
 }: ChatPaneProps) {
   const [input, setInput] = useState("");
-  const [overclock, setOverclock] = useState(false);
   const [luckSpend, setLuckSpend] = useState(0);
   const [gmMode, setGmMode] = useState<"auto" | "force_gm" | "hold_gm">("auto");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -429,15 +424,6 @@ export function ChatPane({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [streamElapsedSec, setStreamElapsedSec] = useState<number>(0);
   const [gmOpsOpenIds, setGmOpsOpenIds] = useState<Record<string, boolean>>({});
-  const [orientationTab, setOrientationTab] = useState<"screamsheet" | "rules">("screamsheet");
-  const [orientationManuallyOpen, setOrientationManuallyOpen] = useState(false);
-  const [orientationSkipped, setOrientationSkipped] = useState<boolean>(() => {
-    try {
-      return window.localStorage?.getItem(getSkipStorageKey(campaignId, currentUsername)) === "1";
-    } catch {
-      return false;
-    }
-  });
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -452,27 +438,6 @@ export function ChatPane({
       if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
     };
   }, [selectedSpeakerId]);
-
-  useEffect(() => {
-    try {
-      setOrientationSkipped(
-        window.localStorage?.getItem(getSkipStorageKey(campaignId, currentUsername)) === "1",
-      );
-    } catch {
-      setOrientationSkipped(false);
-    }
-    setOrientationManuallyOpen(false);
-  }, [campaignId, currentUsername]);
-
-  const handleSkipOrientation = () => {
-    setOrientationSkipped(true);
-    setOrientationManuallyOpen(false);
-    try {
-      window.localStorage?.setItem(getSkipStorageKey(campaignId, currentUsername), "1");
-    } catch {
-      // ignore storage errors
-    }
-  };
 
   useEffect(() => {
     if (!streaming?.startedAt) {
@@ -606,15 +571,6 @@ export function ChatPane({
   const blockedByNoCharacter =
     !isAdmin && requireCharacterToSpeak && !speakerChar;
 
-  // Show Orientation Screamsheet if:
-  // 1) User manually opened it, OR
-  // 2) Campaign has 0 messages and not skipped, OR
-  // 3) User has no character yet (or hasn't selected one) and hasn't skipped it
-  const showOrientation =
-    !streaming &&
-    (orientationManuallyOpen ||
-      (!orientationSkipped && (visibleMessages.length === 0 || !speakerChar)));
-
   const lastMessage = visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null;
   const partyFloorOpen = Boolean(lastMessage && lastMessage.role === "user" && !streaming);
 
@@ -675,7 +631,7 @@ export function ChatPane({
     setInput("");
     const useOverclock = overclock;
     const useLuck = Math.min(luckSpend, maxLuck);
-    setOverclock(false);
+    onClearOverclock?.();
     setLuckSpend(0);
     stickToBottomRef.current = true;
     setShowJumpToLatest(false);
@@ -761,21 +717,13 @@ export function ChatPane({
               Welcome to Night City
             </h2>
             <p className="max-w-md font-cyber-hud text-sm leading-relaxed text-slate-300">
-              Create or select a campaign in the top bar to jack into the Time of the Red with your AI Game Master.
+              Create or select a campaign to jack into the Time of the Red.
             </p>
           </div>
         </div>
       </div>
     );
   }
-
-  const campState = campaign?.state;
-  const customBannerUrl =
-    campState?.discoveries?.["__banner_url"] ||
-    campState?.discoveries?.["Banner URL"] ||
-    nightMarketHero;
-  const activeObjectives = Object.entries(campState?.objectives ?? {});
-  const activeNpcs = Object.entries(campState?.npcs ?? {});
 
   const speakerCharDetail = (speakerChar?.detail ?? {}) as Record<string, unknown>;
   const rawSpeakerColor = typeof speakerCharDetail.color === "string" ? speakerCharDetail.color.trim() : "";
@@ -792,48 +740,16 @@ export function ChatPane({
     return partyGrouping.channels.filter((ch) => ch.id === myChan || ch.id === activeChannelId);
   })();
 
-  return (
-    <div className="relative flex h-full flex-col bg-[#080b12]/80">
-      {/* Compact Subheader for Orientation / Screamsheet Re-open + Party Location */}
-      {!showOrientation && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 bg-[#0b0f19]/90 px-4 py-1.5 text-[11px]">
-          <div className="flex min-w-0 items-center gap-2 truncate text-slate-400">
-            <Radio className="h-3 w-3 shrink-0 text-rose-400" />
-            <span className="font-mono uppercase tracking-wider text-rose-300">
-              {campaign?.name || "NIGHT CITY // 2045"}
-            </span>
-            {partyGrouping && characters.length >= 2 && (
-              <span
-                className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
-                  partyGrouping.mode === "split"
-                    ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
-                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                }`}
-              >
-                {partyGrouping.mode === "split"
-                  ? `SPLIT (${partyGrouping.channels.length} scenes)`
-                  : `TOGETHER @ ${partyGrouping.active_location}`}
-              </span>
-            )}
-            {campState?.scene && (
-              <>
-                <span className="text-slate-600">//</span>
-                <span className="truncate text-slate-300">{campState.scene}</span>
-              </>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setOrientationManuallyOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-cyan-500/35 bg-cyan-950/30 px-2 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-400 hover:bg-cyan-900/40"
-          >
-            <Newspaper className="h-3 w-3" />
-            <span>Screamsheet &amp; Briefing</span>
-          </button>
-        </div>
-      )}
+  const currentGmMode = GM_MODES.find((m) => m.id === gmMode) ?? GM_MODES[0];
+  const cycleGmMode = () => {
+    const idx = GM_MODES.findIndex((m) => m.id === gmMode);
+    const next = GM_MODES[(idx + 1) % GM_MODES.length];
+    setGmMode(next.id);
+  };
 
-      {/* Split-Scene Channel Bar */}
+  return (
+    <div className="relative flex h-full min-h-0 min-w-0 w-full flex-col bg-[#080b12]/80">
+      {/* Split-Scene Channel Bar (only shown when party is split into separate scene channels) */}
       {partyGrouping?.mode === "split" && visibleSplitChannels.length > 0 && onChangeChannelId && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-amber-500/25 bg-[#0e1422]/95 px-4 py-1.5 text-[11px]">
           <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
@@ -875,313 +791,32 @@ export function ChatPane({
           className="flex-1 overflow-y-auto px-4 py-5"
         >
           <div className="mx-auto max-w-3xl space-y-5">
-            {/* INTERACTIVE N54 SCREAMSHEET & ORIENTATION BRIEFING (Skippable, available to new/characterless players) */}
-            {showOrientation && (
-              <div className="cyber-hud-card overflow-hidden rounded-lg bg-[#0a0f1a] shadow-2xl">
-                {/* Banner Header */}
-                <div className="relative h-36 w-full overflow-hidden border-b border-rose-500/35 sm:h-44">
-                  <img
-                    src={customBannerUrl}
-                    alt=""
-                    aria-hidden="true"
-                    className="h-full w-full object-cover object-center opacity-75"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#0a0f1a] via-[#0a0f1a]/60 to-transparent" />
-                  <div className="absolute top-2.5 right-3 z-10 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={handleSkipOrientation}
-                      className="inline-flex items-center gap-1 rounded border border-slate-700/90 bg-slate-950/85 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-300 backdrop-blur hover:border-rose-400 hover:text-white"
-                    >
-                      <X className="h-3 w-3" />
-                      <span>Skip Briefing</span>
-                    </button>
-                  </div>
-                  <div className="absolute inset-x-0 bottom-3 flex flex-col items-start px-5">
-                    <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 rounded border border-rose-500/60 bg-rose-950/85 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-rose-200">
-                        N54 SCREAMSHEET // DISPATCH 2045
-                      </span>
-                      <span className="rounded border border-cyan-500/40 bg-slate-950/80 px-2 py-0.5 font-mono text-[10px] text-cyan-300">
-                        SESSION {campaign?.session_number ?? 1}
-                      </span>
-                    </div>
-                    <h3
-                      data-text={campaign?.name || "Ready to Run the Streets"}
-                      className="cyber-glitch-title font-cyber-display text-lg font-bold tracking-[0.08em] text-slate-100 uppercase sm:text-xl"
-                    >
-                      {campaign?.name || "Ready to Run the Streets"}
-                    </h3>
-                  </div>
-                </div>
-
-                {/* Orientation Navigation Tabs */}
-                <div className="flex items-center justify-between border-b border-slate-800 bg-[#0d1322] px-4">
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setOrientationTab("screamsheet")}
-                      className={`border-b-2 px-3 py-2 font-mono text-xs font-bold uppercase tracking-wider transition ${
-                        orientationTab === "screamsheet"
-                          ? "border-rose-500 text-rose-200"
-                          : "border-transparent text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      1. Situation &amp; Crew
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOrientationTab("rules")}
-                      className={`border-b-2 px-3 py-2 font-mono text-xs font-bold uppercase tracking-wider transition ${
-                        orientationTab === "rules"
-                          ? "border-cyan-400 text-cyan-200"
-                          : "border-transparent text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      2. Rules &amp; Roles HUD
-                    </button>
-                  </div>
-                  <span className="hidden sm:inline font-mono text-[10px] text-slate-500">
-                    TIME OF THE RED // NIGHT CITY
-                  </span>
-                </div>
-
-                {orientationTab === "screamsheet" ? (
-                  <div className="space-y-4 p-5 text-xs leading-relaxed text-slate-200">
-                    {/* In-Universe Screamsheet Lead & Active Scene */}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-                      <div className="space-y-2 rounded border border-slate-800/90 bg-slate-950/70 p-3.5 sm:col-span-7">
-                        <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-rose-300">
-                          <span>LOCAL FEED // STREET SITREP</span>
-                          <span>CH. 54</span>
-                        </div>
-                        <p className="text-xs leading-relaxed text-slate-200">
-                          {campState?.summary?.trim() ||
-                            "Night City, 2045. Post-war supply lines are fractured, megacorps fight shadow wars from Neo-Militarist towers, and Fixers broker survival at midnight Night Markets. Check your iron, watch your Humanity, and don't sign a corporate contract without reading the fine print."}
-                        </p>
-                        {campState?.scene?.trim() && (
-                          <div className="mt-2 rounded border border-cyan-500/30 bg-cyan-950/20 px-2.5 py-2">
-                            <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-cyan-300">
-                              Active Scene Location
-                            </div>
-                            <div className="mt-0.5 text-slate-100">{campState.scene}</div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Crew & Objectives */}
-                      <div className="space-y-2.5 rounded border border-slate-800/90 bg-slate-950/70 p-3.5 sm:col-span-5">
-                        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-cyan-300">
-                          Edgerunners at the Table ({characters.length})
-                        </div>
-                        {characters.length === 0 ? (
-                          <p className="text-[11px] text-slate-400">
-                            No Edgerunners attached yet. Open the Character Creator to roll or build your street operative.
-                          </p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {characters.map((c) => {
-                              const d = (c.detail ?? {}) as Record<string, unknown>;
-                              const handle = typeof d.handle === "string" && d.handle.trim() ? d.handle.trim() : c.name;
-                              const roles = Array.isArray(d.roles) ? (d.roles as Array<{ role?: string; rank?: number }>) : [];
-                              const primaryRole = roles[0]?.role || "Edgerunner";
-                              const weapon = typeof d.equipped_weapon === "string" ? d.equipped_weapon : null;
-                              const colorKey = typeof d.color === "string" && d.color.trim() ? d.color.trim() : "cyan";
-                              const theme = resolveCharacterColor(colorKey);
-                              return (
-                                <div
-                                  key={c.id}
-                                  className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900/75 px-2.5 py-1.5"
-                                >
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className={`h-2 w-2 rounded-full ${theme.dotClass}`} style={theme.dotStyle} />
-                                      <span className="truncate font-bold text-slate-100">{handle}</span>
-                                      <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                                        {primaryRole}
-                                      </span>
-                                    </div>
-                                    {weapon && (
-                                      <div className="truncate text-[10px] text-slate-400">Armed: {weapon}</div>
-                                    )}
-                                  </div>
-                                  <span className="shrink-0 font-mono text-[10px] text-emerald-300">
-                                    HP {c.hp}/{c.max_hp}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {activeObjectives.length > 0 && (
-                          <div className="border-t border-slate-800/80 pt-2">
-                            <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                              Active Objectives
-                            </div>
-                            <ul className="mt-1.5 max-h-48 space-y-1.5 overflow-y-auto pr-1 text-[11px] text-slate-300">
-                              {activeObjectives.map(([obj, status]) => {
-                                const statusStr = String(status || "");
-                                const isShortStatus = statusStr.length <= 24;
-                                return (
-                                  <li
-                                    key={obj}
-                                    className="rounded border border-slate-800/70 bg-slate-900/55 px-2 py-1.5"
-                                  >
-                                    <div className="flex items-start justify-between gap-2">
-                                      <span className="font-semibold text-amber-200 break-words">• {obj}</span>
-                                      {isShortStatus && (
-                                        <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
-                                          {statusStr}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {!isShortStatus && (
-                                      <p className="mt-0.5 leading-snug text-slate-300">{statusStr}</p>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {activeNpcs.length > 0 && (
-                      <div className="rounded border border-slate-800/90 bg-slate-950/60 px-3.5 py-2.5">
-                        <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          Known Fixers, Contacts &amp; Local Figures
-                        </div>
-                        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                          {activeNpcs.slice(0, 4).map(([npcName, desc]) => {
-                            const prof = npcProfiles[npcName];
-                            const npcReal = prof?.real_name;
-                            const npcHidden = Boolean(prof?.real_name_hidden);
-                            return (
-                              <div key={npcName} className="rounded border border-slate-800/80 bg-slate-900/60 px-2.5 py-1.5 text-[11px]">
-                                <span className="font-bold text-rose-300">{npcName}</span>
-                                {npcReal && !npcHidden && npcReal !== npcName && (
-                                  <span className="ml-1 text-[10px] text-slate-400">({npcReal})</span>
-                                )}
-                                {npcHidden && isAdmin && (
-                                  <span
-                                    title={npcReal ? `Real name '${npcReal}' is hidden from players` : "Hidden real name"}
-                                    className="ml-1 inline-flex items-center gap-0.5 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 font-mono text-[9px] text-slate-400"
-                                  >
-                                    <EyeOff className="h-2.5 w-2.5" /> {npcReal ? `Alias (${npcReal})` : "Alias Only"}
-                                  </span>
-                                )}
-                                <span className="font-bold text-rose-300">:</span>{" "}
-                                <span className="text-slate-300">{desc}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Action Footer */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {onOpenCreateCharacter && (
-                          <button
-                            type="button"
-                            onClick={onOpenCreateCharacter}
-                            className="cyber-cut-sm inline-flex items-center gap-2 border border-cyan-400/60 bg-cyan-600/90 px-4 py-2 font-cyber-hud text-xs font-bold tracking-wider text-white uppercase transition hover:bg-cyan-500"
-                          >
-                            <UserPlus className="h-3.5 w-3.5" />
-                            <span>Create Your Edgerunner</span>
-                          </button>
-                        )}
-                        {onSendIntro && (
-                          <button
-                            type="button"
-                            disabled={busy || lockedByPeer}
-                            onClick={() => {
-                              handleSkipOrientation();
-                              void onSendIntro();
-                            }}
-                            className="cyber-cta-pulse cyber-cut-sm inline-flex items-center gap-2 border border-rose-500/60 bg-gradient-to-r from-rose-600/90 to-rose-700/85 px-4 py-2 font-cyber-hud text-xs font-bold tracking-wider text-white uppercase transition hover:from-rose-500 hover:to-rose-600 disabled:opacity-45"
-                          >
-                            <Terminal className="h-3.5 w-3.5 text-amber-200" />
-                            <span>Introductory First Message</span>
-                          </button>
-                        )}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleSkipOrientation}
-                        className="rounded border border-slate-700 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-300 hover:border-slate-500 hover:text-white"
-                      >
-                        Enter Table Chat →
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4 p-5 text-xs text-slate-200">
-                    {/* Mechanics Grid */}
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                      <div className="rounded border border-cyan-500/30 bg-slate-950/75 p-3">
-                        <div className="font-mono text-[10px] font-bold uppercase text-cyan-300">
-                          1. Skill Checks (1d10)
-                        </div>
-                        <p className="mt-1 text-[11px] text-slate-300">
-                          Roll <strong>1d10 + STAT + Skill</strong> vs Difficulty Value (DV 13 Everyday, DV 15 Difficult, DV 17 Professional). Natural <strong>10</strong> explodes (+1d10); Natural <strong>1</strong> fumbles (-1d10).
-                        </p>
-                      </div>
-                      <div className="rounded border border-amber-500/30 bg-slate-950/75 p-3">
-                        <div className="font-mono text-[10px] font-bold uppercase text-amber-300">
-                          2. LUCK &amp; Overclock
-                        </div>
-                        <p className="mt-1 text-[11px] text-slate-300">
-                          Pre-commit <strong>LUCK</strong> (+1 per point, refills each session) or toggle <strong>Overclock</strong> (-2 Humanity for +2 on a check) in the chat bar before rolling.
-                        </p>
-                      </div>
-                      <div className="rounded border border-rose-500/30 bg-slate-950/75 p-3">
-                        <div className="font-mono text-[10px] font-bold uppercase text-rose-300">
-                          3. Wounds &amp; Chrome
-                        </div>
-                        <p className="mt-1 text-[11px] text-slate-300">
-                          Below 50% HP = <strong>Seriously Wounded (-2)</strong>. Below 1 HP = <strong>Death Saves</strong> vs BODY. Every 10 Humanity lost drops current EMP by 1.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* 10 Roles Quick Matrix */}
-                    <div>
-                      <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        The 10 Iconic Roles (Start at Rank 4)
-                      </div>
-                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                        {ROLES_OVERVIEW.map((r) => (
-                          <div key={r.name} className="flex items-start justify-between gap-2 rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-1.5 text-[11px]">
-                            <div>
-                              <span className="font-bold text-slate-100">{r.name}</span>{" "}
-                              <span className="font-mono text-[10px] text-cyan-300">({r.ability})</span>
-                              <div className="text-slate-400">{r.desc}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end border-t border-slate-800 pt-3">
-                      <button
-                        type="button"
-                        onClick={handleSkipOrientation}
-                        className="rounded border border-slate-700 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-300 hover:border-slate-500 hover:text-white"
-                      >
-                        Close Guide
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {visibleMessages.length === 0 && !streaming && (
+              <div className="rounded-lg border border-slate-800/80 bg-[#0b101b]/75 px-4 py-6 text-center text-xs text-slate-400">
+                No messages yet. Check the <strong className="text-slate-200">Campaign</strong> tab for story &amp; rules, or describe your opening move below.
               </div>
             )}
 
             {visibleMessages.map((msg, msgIdx) => {
+              if (msg.role === "system") {
+                const isSession = Boolean(msg.metadata?.session_started);
+                return (
+                  <div key={msg.id} className="my-2 flex items-center gap-3 px-2">
+                    <div className="h-px flex-1 bg-slate-800/80" />
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                        isSession
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                          : "border-cyan-500/35 bg-cyan-950/30 text-cyan-200"
+                      }`}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {msg.content}
+                    </span>
+                    <div className="h-px flex-1 bg-slate-800/80" />
+                  </div>
+                );
+              }
               const isUser = msg.role === "user";
               const isEditing = editingId === msg.id;
               const isConfirmingDelete = confirmDeleteId === msg.id;
@@ -1813,7 +1448,7 @@ export function ChatPane({
       {/* Composer Dock */}
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="border-t border-slate-800/90 bg-[#0b0f19]/95 px-4 py-3 backdrop-blur-md"
+        className="shrink-0 border-t border-slate-800/90 bg-[#0b0f19]/95 px-4 py-3 backdrop-blur-md"
       >
         <div className="mx-auto max-w-3xl space-y-2">
           {lockedByPeer && (
@@ -1950,98 +1585,17 @@ export function ChatPane({
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              {selectableCharacters.length > 0 && (
-                <div className="inline-flex items-center gap-1">
-                  <select
-                    aria-label="Speaking character"
-                    value={selectedSpeakerId}
-                    onChange={(e) => onChangeSpeakerId(e.target.value)}
-                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-semibold text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  >
-                    {(isAdmin || !requireCharacterToSpeak) && (
-                      <option value="">Party / General</option>
-                    )}
-                    {selectableCharacters.map((c) => {
-                      const d = (c.detail ?? {}) as Record<string, unknown>;
-                      const handle = typeof d.handle === "string" && d.handle.trim() ? d.handle.trim() : c.name;
-                      return (
-                        <option key={c.id} value={c.id}>
-                          As: {handle}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-              )}
-
-              {/* GM Turn Pacing Mode (Smart GM vs Hold GM for Party Chat vs Always GM) */}
-              <div
-                role="group"
-                aria-label="GM turn mode"
-                className="inline-flex items-center rounded-md border border-slate-700 bg-slate-900 p-0.5 text-[11px]"
-              >
-                {(
-                  [
-                    {
-                      id: "auto",
-                      label: "Smart GM",
-                      tip: "AI Gatekeeper lets players talk to each other or OOC without interrupting, and triggers the GM automatically on world/NPC actions.",
-                    },
-                    {
-                      id: "hold_gm",
-                      label: "Party Chat (Hold GM)",
-                      tip: "Post dialogue or queue your action to the table without triggering the GM yet.",
-                    },
-                    {
-                      id: "force_gm",
-                      label: "Force GM",
-                      tip: "Always trigger a full AI GM response immediately after sending.",
-                    },
-                  ] as const
-                ).map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    title={m.tip}
-                    onClick={() => setGmMode(m.id)}
-                    className={`rounded px-2 py-0.5 font-medium transition ${
-                      gmMode === m.id
-                        ? m.id === "hold_gm"
-                          ? "bg-amber-500/20 text-amber-200"
-                          : "bg-cyan-500/20 text-cyan-200"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setOverclock((v) => !v)}
-                title="Spend 2 Humanity to gain +2 on your primary check this turn"
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition ${
-                  overclock
-                    ? "border-rose-500 bg-rose-600/25 text-rose-200 shadow-[0_0_12px_rgba(244,63,94,0.25)]"
-                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Zap className="h-3.5 w-3.5" />
-                Overclock (-2 Humanity / +2 Check)
-              </button>
-
+            <div className="flex flex-wrap items-center gap-1.5">
               {luckChar && (
                 <div
                   title={`Commit LUCK before the roll (only spent if a check runs this turn; ${maxLuck} available)`}
-                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
+                  className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[11px] ${
                     effectiveLuck > 0
                       ? "border-amber-500/70 bg-amber-500/15 text-amber-200"
                       : "border-slate-700 bg-slate-900 text-slate-400"
                   }`}
                 >
-                  <span className="font-mono text-[11px] font-semibold">LUCK</span>
+                  <Sparkles className="h-3 w-3 text-amber-400" />
                   <button
                     type="button"
                     aria-label="Decrease Luck spend"
@@ -2049,9 +1603,9 @@ export function ChatPane({
                     onClick={() => setLuckSpend((v) => Math.max(0, v - 1))}
                     className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-35"
                   >
-                    <Minus className="h-3 w-3" />
+                    <Minus className="h-2.5 w-2.5" />
                   </button>
-                  <span className="min-w-[2.2rem] text-center font-mono text-[11px] font-semibold">
+                  <span className="min-w-[1.8rem] text-center font-mono text-[11px] font-semibold">
                     +{effectiveLuck}/{maxLuck}
                   </span>
                   <button
@@ -2061,7 +1615,7 @@ export function ChatPane({
                     onClick={() => setLuckSpend((v) => Math.min(maxLuck, v + 1))}
                     className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-35"
                   >
-                    <Plus className="h-3 w-3" />
+                    <Plus className="h-2.5 w-2.5" />
                   </button>
                 </div>
               )}
@@ -2092,9 +1646,19 @@ export function ChatPane({
                 <Palette className="h-3.5 w-3.5" />
                 Color
               </button>
+
+              {overclock && (
+                <span
+                  title="Overclock armed in Character tab (-2 Humanity / +2 Check on next roll)"
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/60 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-rose-200"
+                >
+                  <Zap className="h-3 w-3 text-cyan-300" />
+                  OVERCLOCK
+                </span>
+              )}
             </div>
 
-            <span className="text-[11px] text-slate-500">
+            <span className="hidden sm:inline text-[11px] text-slate-500">
               Enter to send · Shift+Enter for new line · <code className="text-slate-400">/roll 3d6</code>
             </span>
           </div>
@@ -2119,14 +1683,24 @@ export function ChatPane({
               }
               rows={2}
               disabled={busy || lockedByPeer || blockedByNoCharacter}
-              className="flex-1 resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-60"
+              className="min-w-0 flex-1 resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-60"
             />
+
+            <button
+              type="button"
+              onClick={cycleGmMode}
+              aria-label={`GM turn mode: ${currentGmMode.label}`}
+              title={currentGmMode.tip}
+              className={`inline-flex h-10 shrink-0 items-center rounded-lg border px-2.5 text-[11px] font-semibold transition ${currentGmMode.cls}`}
+            >
+              {currentGmMode.label}
+            </button>
 
             {busy ? (
               <button
                 type="button"
                 onClick={onStopStream}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-500"
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-semibold text-white hover:bg-rose-500 sm:px-4"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
                 Stop
@@ -2135,7 +1709,7 @@ export function ChatPane({
               <button
                 type="submit"
                 disabled={!input.trim() || lockedByPeer || blockedByNoCharacter}
-                className={`inline-flex h-10 items-center gap-1.5 rounded-lg px-4 text-xs font-semibold text-white disabled:opacity-40 ${
+                className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold text-white disabled:opacity-40 sm:px-4 ${
                   gmMode === "hold_gm"
                     ? "bg-amber-600 hover:bg-amber-500"
                     : "bg-cyan-600 hover:bg-cyan-500"

@@ -116,18 +116,18 @@ export function CoopModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
-      aria-label="Co-op & LAN Multiplayer"
+      aria-label="Party & LAN Multiplayer"
       onClick={onClose}
     >
       <div
-        className="cyber-cut flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden border border-slate-700 bg-[#0d111a] shadow-2xl"
+        className="cyber-cut flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden border border-slate-700 bg-[#0d111a] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
           <div className="flex items-center gap-2.5">
             <Users className="h-4 w-4 text-cyan-400" />
             <div>
-              <h2 className="text-sm font-bold text-slate-100">Co-op & LAN Table</h2>
+              <h2 className="text-sm font-bold text-slate-100">Party &amp; LAN Table</h2>
               <p className="text-[11px] text-slate-400">
                 {campaignName ? `Campaign: ${campaignName}` : "No campaign selected"}
               </p>
@@ -136,7 +136,7 @@ export function CoopModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close co-op settings"
+            aria-label="Close party settings"
             className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
           >
             <X className="h-4 w-4" />

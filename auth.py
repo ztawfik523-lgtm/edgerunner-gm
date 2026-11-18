@@ -486,11 +486,16 @@ class AuthManager:
             if username:
                 if len(username) > 40:
                     raise AuthError("Username must be at most 40 characters")
-                target_role = str(role or "user").strip().lower()
-                if target_role not in {"admin", "user"}:
-                    raise AuthError("Account role must be 'admin' or 'user'")
                 key = username.lower()
                 existing = accs.get(key)
+                default_role = existing.get("role", "user") if existing else "user"
+                target_role = str(role or default_role).strip().lower()
+                if target_role not in {"admin", "user"}:
+                    raise AuthError("Account role must be 'admin' or 'user'")
+                if existing and existing.get("role") == "admin" and target_role != "admin":
+                    other_admins = [k for k, v in accs.items() if k != key and v.get("role") == "admin"]
+                    if not other_admins and self._env_admin() is None:
+                        raise AuthError("Cannot demote the last admin account")
                 if password:
                     pw_hash = hash_password(str(password))
                 elif existing:
@@ -498,7 +503,7 @@ class AuthManager:
                 else:
                     raise AuthError("Password is required when creating a new account")
                 accs[key] = {
-                    "username": username,
+                    "username": existing["username"] if existing else username,
                     "role": target_role,
                     "password_hash": pw_hash,
                     "created_at": existing.get("created_at", now_iso) if existing else now_iso,

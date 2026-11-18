@@ -336,6 +336,73 @@
   animation: cyber-eq-pulse 0.9s ease-in-out infinite;
 }
 
+@keyframes cyber-overclock-flicker {
+  0%, 72%, 100% {
+    transform: translate(0, 0);
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.35), 0 0 20px rgba(34, 211, 238, 0.15);
+  }
+  74% {
+    transform: translate(-1.5px, 0.5px) skewX(-3deg);
+    box-shadow: 2px 0 14px rgba(34, 211, 238, 0.65), -2px 0 14px rgba(244, 63, 94, 0.8);
+  }
+  76% {
+    transform: translate(1.5px, -0.5px) skewX(2.5deg);
+    box-shadow: -2px 0 16px rgba(34, 211, 238, 0.7), 2px 0 16px rgba(244, 63, 94, 0.75);
+  }
+  78% {
+    transform: translate(0, 0);
+  }
+  91% {
+    transform: translate(1px, 0);
+  }
+  92% {
+    transform: translate(-1px, 0);
+  }
+  93% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes cyber-overclock-scan {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(220%);
+  }
+}
+
+.cyber-overclock-btn {
+  position: relative;
+  overflow: hidden;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.cyber-overclock-btn:hover {
+  text-shadow: 1px 0 rgba(34, 211, 238, 0.7), -1px 0 rgba(244, 63, 94, 0.7);
+}
+
+.cyber-overclock-active {
+  animation: cyber-overclock-flicker 2.1s infinite linear;
+  text-shadow: 1px 0 rgba(34, 211, 238, 0.8), -1px 0 rgba(244, 63, 94, 0.85);
+}
+
+.cyber-overclock-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  height: 40%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(244, 63, 94, 0.28),
+    rgba(34, 211, 238, 0.2),
+    transparent
+  );
+  pointer-events: none;
+  animation: cyber-overclock-scan 1.4s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cyber-glitch-title,
   .cyber-glitch-title::after,
@@ -343,7 +410,9 @@
   .cyber-brand-badge::before,
   .cyber-holo-sweep::after,
   .cyber-cta-pulse,
-  .cyber-eq-bar {
+  .cyber-eq-bar,
+  .cyber-overclock-active,
+  .cyber-overclock-active::after {
     animation: none !important;
   }
 }

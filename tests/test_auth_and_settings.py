@@ -158,18 +158,55 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     assert login_user.json()["role"] == "user"
 
     user_headers = {"X-RedGM-Token": user_token}
-    # Normal play features work for User.
+    # Normal play features work for User; campaign creation/mutation & export are Admin-only.
     pub = client.get("/v1/settings/public", headers=user_headers)
     assert pub.status_code == 200
     assert pub.json()["role"] == "user"
+    assert client.get("/v1/library", headers=user_headers).status_code == 200
 
-    created = client.post(
+    blocked_create = client.post(
         "/v1/game",
         headers=user_headers,
         json={"action": "create_campaign", "arguments": {"name": "Kabuki Run", "operation_id": "op-1"}},
     )
+    assert blocked_create.status_code == 403
+
+    # Admin creates campaign; user cannot mutate campaign, clocks, or export chat.
+    admin_headers = {"X-RedGM-Token": admin_token}
+    created = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_campaign", "arguments": {"name": "Kabuki Run", "operation_id": "op-1"}},
+    )
     assert created.status_code == 200
-    assert client.get("/v1/library", headers=user_headers).status_code == 200
+    camp_id = created.json()["result"]["id"]
+    assert client.post(
+        "/v1/game",
+        headers=user_headers,
+        json={"action": "update_campaign", "campaign_id": camp_id, "arguments": {"expected_revision": 1, "changes": {"scene": "Hacked"}, "reason": "test", "operation_id": "op-u1"}},
+    ).status_code == 403
+    assert client.post(
+        "/v1/game",
+        headers=user_headers,
+        json={"action": "start_session", "campaign_id": camp_id, "arguments": {"expected_revision": 1, "reason": "test", "operation_id": "op-u2"}},
+    ).status_code == 403
+    assert client.post(f"/v1/campaigns/{camp_id}/clocks", headers=user_headers, json={"action": "upsert", "name": "Heat"}).status_code == 403
+    assert client.get("/v1/chat/export", params={"campaign_id": camp_id}, headers=user_headers).status_code == 403
+    assert client.get("/v1/chat/export", params={"campaign_id": camp_id}, headers=admin_headers).status_code == 200
+
+    # Starting a session appends a system divider in chat without triggering GM.
+    started = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "start_session", "campaign_id": camp_id, "arguments": {"expected_revision": 1, "reason": "next session", "operation_id": "op-s2"}},
+    )
+    assert started.status_code == 200
+    assert started.json()["result"]["session_number"] == 1
+    tree = client.get("/v1/chat/tree", params={"campaign_id": camp_id}, headers=user_headers).json()
+    assert any(
+        n["role"] == "system" and n["metadata"].get("session_started") == 1 and "LUCK refilled" in n["content"]
+        for n in tree["active_branch"]
+    )
 
     # Admin-only endpoints reject User with 403 Forbidden.
     assert client.get("/v1/settings/all", headers=user_headers).status_code == 403
@@ -189,7 +226,6 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     assert passcode_login.json()["role"] == "user"
 
     # Admin token can read and write all settings, prompts, network IP/port, and accounts.
-    admin_headers = {"X-RedGM-Token": admin_token}
     all_res = client.get("/v1/settings/all", headers=admin_headers)
     assert all_res.status_code == 200
     assert all_res.json()["runtime"]["active_port"] == 8765
@@ -248,14 +284,38 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     net_info = client.get("/v1/network/info", headers=admin_headers).json()
     assert net_info["join_urls"][0].startswith("https://nightcity.example.com/")
 
-    # Accounts management: add user, then delete user.
+    # Accounts management: add user, promote to admin, demote back, then delete user.
     add_user = client.post(
         "/v1/auth/accounts",
         headers=admin_headers,
         json={"action": "upsert_account", "username": "solo2", "password": "pass-1234", "role": "user"},
     )
     assert add_user.status_code == 200
-    assert any(a["username"] == "solo2" for a in add_user.json()["accounts"])
+    assert any(a["username"] == "solo2" and a["role"] == "user" for a in add_user.json()["accounts"])
+
+    promote = client.post(
+        "/v1/auth/accounts",
+        headers=admin_headers,
+        json={"action": "upsert_account", "username": "solo2", "role": "admin"},
+    )
+    assert promote.status_code == 200
+    assert any(a["username"] == "solo2" and a["role"] == "admin" for a in promote.json()["accounts"])
+
+    demote = client.post(
+        "/v1/auth/accounts",
+        headers=admin_headers,
+        json={"action": "upsert_account", "username": "solo2", "role": "user"},
+    )
+    assert demote.status_code == 200
+    assert any(a["username"] == "solo2" and a["role"] == "user" for a in demote.json()["accounts"])
+
+    # Cannot demote the sole remaining admin account.
+    demote_last = client.post(
+        "/v1/auth/accounts",
+        headers=admin_headers,
+        json={"action": "upsert_account", "username": "netwatch", "role": "user"},
+    )
+    assert demote_last.status_code == 400
 
     del_user = client.delete("/v1/auth/accounts/solo2", headers=admin_headers)
     assert del_user.status_code == 200

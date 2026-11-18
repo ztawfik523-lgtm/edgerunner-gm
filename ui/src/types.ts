@@ -422,6 +422,8 @@ export interface ChatMessageMetadata {
   speaker_portrait_url?: string;
   gm_deferred?: boolean;
   defer_reason?: string;
+  session_started?: number;
+  party_transition?: string;
   manual_roll?: boolean;
   edited?: boolean;
   edited_at?: string;

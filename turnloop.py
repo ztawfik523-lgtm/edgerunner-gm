@@ -1335,8 +1335,11 @@ class ChatTreeStore:
             lines.append("")
         for msg in branch:
             meta = msg.get("metadata") or {}
-            speaker = meta.get("speaker_name") or ("Player" if msg["role"] == "user" else "Game Master")
-            lines.append(f"## {speaker} ({msg['role']})")
+            if msg["role"] == "system":
+                lines.append("## System Notice")
+            else:
+                speaker = meta.get("speaker_name") or ("Player" if msg["role"] == "user" else "Game Master")
+                lines.append(f"## {speaker} ({msg['role']})")
             lines.append("")
             lines.append(msg["content"])
             for r in meta.get("rolls") or []:
@@ -2990,7 +2993,10 @@ class TurnEngine:
             ]
             msgs.append({"role": "system", "content": "Prior Main Table context before party split:\n" + "\n".join(tail_lines)})
         for item in prep["branch"][-hist_win:]:
-            item_speaker = (item.get("metadata") or {}).get("speaker_name")
+            meta = item.get("metadata") or {}
+            if item["role"] == "system" and (meta.get("session_started") or meta.get("party_transition")):
+                continue
+            item_speaker = meta.get("speaker_name")
             content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
             msgs.append({"role": item["role"], "content": content})
         msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})
@@ -3202,7 +3208,10 @@ class TurnEngine:
             ]
             msgs.append({"role": "system", "content": "Prior Main Table context before party split:\n" + "\n".join(tail_lines)})
         for item in prep["branch"][-hist_win:]:
-            item_speaker = (item.get("metadata") or {}).get("speaker_name")
+            meta = item.get("metadata") or {}
+            if item["role"] == "system" and (meta.get("session_started") or meta.get("party_transition")):
+                continue
+            item_speaker = meta.get("speaker_name")
             content = self._format_player_message(item["content"], item_speaker) if item["role"] == "user" else item["content"]
             msgs.append({"role": item["role"], "content": content})
         msgs.append({"role": "user", "content": self._format_player_message(user_text, speaker_name)})

@@ -26,6 +26,7 @@ import {
   Upload,
   UserCheck,
   UserPlus,
+  Zap,
 } from "lucide-react";
 import {
   fetchCharacterHistory,
@@ -59,6 +60,11 @@ interface CharacterPanelProps {
   isAdmin?: boolean;
   currentUsername?: string | null;
   activeChannelId?: string;
+  overclock?: boolean;
+  onToggleOverclock?: () => void;
+  selectedSpeakerId?: string;
+  onSelectSpeakerId?: (id: string) => void;
+  requireCharacterToSpeak?: boolean;
   onOpenCreateCharacter?: () => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
@@ -122,6 +128,11 @@ export function CharacterPanel({
   isAdmin = true,
   currentUsername = null,
   activeChannelId = "main",
+  overclock = false,
+  onToggleOverclock,
+  selectedSpeakerId,
+  onSelectSpeakerId,
+  requireCharacterToSpeak = true,
   onOpenCreateCharacter,
   onRefresh,
   onNotify,
@@ -146,7 +157,11 @@ export function CharacterPanel({
     });
   })();
 
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<string>(() =>
+    selectedSpeakerId && visibleCharacters.some((c) => c.id === selectedSpeakerId)
+      ? selectedSpeakerId
+      : "",
+  );
   const [creating, setCreating] = useState(false);
   const [sheetTab, setSheetTab] = useState<SheetTab>("skills");
   const [inspectedStat, setInspectedStat] = useState<StatName | null>(null);
@@ -206,10 +221,14 @@ export function CharacterPanel({
       setSelectedId("");
       return;
     }
+    if (selectedSpeakerId && visibleCharacters.some((c) => c.id === selectedSpeakerId)) {
+      setSelectedId((prev) => (prev === selectedSpeakerId ? prev : selectedSpeakerId));
+      return;
+    }
     if (!visibleCharacters.some((c) => c.id === selectedId)) {
       setSelectedId(visibleCharacters[0].id);
     }
-  }, [visibleCharacters, selectedId]);
+  }, [visibleCharacters, selectedId, selectedSpeakerId]);
 
   useEffect(() => {
     setConfirmRemoveItem(null);
@@ -591,21 +610,6 @@ export function CharacterPanel({
               written backstory, custom portrait, and starting gear.
             </p>
 
-            <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-              <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                <div className="font-semibold text-cyan-300">4 Creation Modes</div>
-                <div className="mt-0.5 text-slate-400">
-                  Streetrat, Edgerunner, Complete Package (62 STATs / 86 Skills / 2,550 eb), or Freeform.
-                </div>
-              </div>
-              <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                <div className="font-semibold text-rose-300">Lifepath &amp; Ties</div>
-                <div className="mt-0.5 text-slate-400">
-                  Roll or write Culture, Origins, Friends, Enemies, Role Lifepath, and Night City history.
-                </div>
-              </div>
-            </div>
-
             <button
               type="button"
               onClick={openCreator}
@@ -707,25 +711,35 @@ export function CharacterPanel({
     <div className="space-y-3 p-3.5">
       {creatorModal}
       {/* Unified Header + Crew Switcher */}
-      {visibleCharacters.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
+      {(visibleCharacters.length > 1 || (onSelectSpeakerId && (isAdmin || !requireCharacterToSpeak))) && (
+        <div className="flex flex-wrap items-center gap-1.5">
           {visibleCharacters.map((c) => {
             const owner = roster.find((p) => p.character_id === c.id);
             const cDet = (c.detail ?? {}) as Record<string, unknown>;
             const cHandle = typeof cDet.handle === "string" && cDet.handle.trim() ? cDet.handle.trim() : c.name;
             const cOwnerUser = typeof cDet.owner_username === "string" ? cDet.owner_username.trim() : "";
             const selected = c.id === active.id;
+            const isSpeaking = selectedSpeakerId === c.id;
             return (
               <button
                 key={c.id}
                 type="button"
-                onClick={() => setSelectedId(c.id)}
+                onClick={() => {
+                  setSelectedId(c.id);
+                  onSelectSpeakerId?.(c.id);
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition ${
                   selected
                     ? "border-rose-500/70 bg-rose-500/15 text-slate-100 shadow-[0_0_10px_rgba(244,63,94,0.15)]"
                     : "border-slate-800 bg-[#111726] text-slate-400 hover:text-slate-200"
                 }`}
               >
+                {isSpeaking && (
+                  <span
+                    title="Active speaker in chat"
+                    className="h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee]"
+                  />
+                )}
                 <span className="font-medium">{cHandle}</span>
                 <span className="font-mono text-[10px] text-slate-400">
                   {c.hp}/{c.max_hp}
@@ -738,6 +752,20 @@ export function CharacterPanel({
               </button>
             );
           })}
+          {onSelectSpeakerId && (isAdmin || !requireCharacterToSpeak) && (
+            <button
+              type="button"
+              onClick={() => onSelectSpeakerId("")}
+              title="Speak in chat as Party / General instead of a specific character"
+              className={`rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+                selectedSpeakerId === ""
+                  ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
+                  : "border-slate-800 bg-[#111726] text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Party / General
+            </button>
+          )}
         </div>
       )}
 
@@ -747,7 +775,7 @@ export function CharacterPanel({
           <span>
             {ownedByOtherAccount
               ? `Owned by ${ownerUsername}. Only ${ownerUsername} or Admin can modify this sheet.`
-              : `Controlled by ${claimant?.player_name}. Disable sheet protection in Co-op to edit.`}
+              : `Controlled by ${claimant?.player_name}. Disable sheet protection in Party to edit.`}
           </span>
         </div>
       )}
@@ -1006,6 +1034,28 @@ export function CharacterPanel({
             </div>
           </div>
         </div>
+
+        {onToggleOverclock && (
+          <button
+            type="button"
+            onClick={onToggleOverclock}
+            aria-pressed={overclock}
+            title="Spend 2 Humanity to gain +2 on your primary check next turn"
+            className={`cyber-overclock-btn flex w-full items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-xs font-semibold ${
+              overclock
+                ? "cyber-overclock-active border-rose-500 bg-rose-600/25 text-rose-100"
+                : "border-slate-800 bg-slate-950/80 text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5 font-cyber-display text-[11px] tracking-wider uppercase">
+              <Zap className={`h-3.5 w-3.5 ${overclock ? "text-cyan-300" : "text-rose-400"}`} />
+              Overclock
+            </span>
+            <span className="font-mono text-[10px]">
+              {overclock ? "ARMED // -2 HUM +2 CHK" : "-2 Humanity / +2 Check"}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* 5x2 Clickable Attributes Strip */}
@@ -1604,37 +1654,22 @@ export function CharacterPanel({
                   </div>
                   <div>
                     <label className="mb-0.5 block text-[11px] text-slate-400">Gender</label>
-                    <select
+                    <input
+                      type="text"
                       aria-label="Edit character gender"
-                      value={
-                        bioGender === "__custom__"
-                          ? "__custom__"
-                          : ["", "Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(bioGender)
-                            ? bioGender
-                            : "__custom__"
-                      }
-                      onChange={(e) => setBioGender(e.target.value === "__custom__" ? "__custom__" : e.target.value)}
+                      list="cpr-panel-gender-list"
+                      value={bioGender === "__custom__" ? "" : bioGender}
+                      onChange={(e) => setBioGender(e.target.value)}
+                      placeholder="Woman, Man, Non-Binary..."
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                    >
-                      <option value="">Unspecified</option>
-                      <option value="Woman">Woman</option>
-                      <option value="Man">Man</option>
-                      <option value="Non-Binary">Non-Binary</option>
-                      <option value="Genderfluid">Genderfluid</option>
-                      <option value="Agender">Agender</option>
-                      <option value="Prefer not to say">Prefer not to say</option>
-                      <option value="__custom__">Custom…</option>
-                    </select>
-                    {bioGender !== "" &&
-                      !["Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(bioGender) && (
-                        <input
-                          type="text"
-                          value={bioGender === "__custom__" ? "" : bioGender}
-                          onChange={(e) => setBioGender(e.target.value.trim() ? e.target.value : "__custom__")}
-                          placeholder="Type gender..."
-                          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                        />
-                      )}
+                    />
+                    <datalist id="cpr-panel-gender-list">
+                      <option value="Woman" />
+                      <option value="Man" />
+                      <option value="Non-Binary" />
+                      <option value="Genderfluid" />
+                      <option value="Agender" />
+                    </datalist>
                   </div>
                   <div>
                     <label className="mb-0.5 block text-[11px] text-slate-400">Pronouns</label>

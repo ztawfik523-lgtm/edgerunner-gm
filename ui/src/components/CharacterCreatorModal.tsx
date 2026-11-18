@@ -1988,44 +1988,22 @@ export function CharacterCreatorModal({
                   </div>
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Gender</label>
-                    <select
+                    <input
+                      type="text"
                       aria-label="Gender"
-                      value={
-                        gender === "__custom__"
-                          ? "__custom__"
-                          : ["", "Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(gender)
-                            ? gender
-                            : "__custom__"
-                      }
-                      onChange={(e) => {
-                        if (e.target.value === "__custom__") {
-                          setGender("__custom__");
-                        } else {
-                          setGender(e.target.value);
-                        }
-                      }}
+                      list="cpr-gender-list"
+                      value={gender === "__custom__" ? "" : gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      placeholder="Woman, Man, Non-Binary…"
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-                    >
-                      <option value="">Select…</option>
-                      <option value="Woman">Woman</option>
-                      <option value="Man">Man</option>
-                      <option value="Non-Binary">Non-Binary</option>
-                      <option value="Genderfluid">Genderfluid</option>
-                      <option value="Agender">Agender</option>
-                      <option value="Prefer not to say">Prefer not to say</option>
-                      <option value="__custom__">Custom…</option>
-                    </select>
-                    {gender !== "" &&
-                      !["Woman", "Man", "Non-Binary", "Genderfluid", "Agender", "Prefer not to say"].includes(gender) && (
-                        <input
-                          type="text"
-                          aria-label="Custom gender"
-                          value={gender === "__custom__" ? "" : gender}
-                          onChange={(e) => setGender(e.target.value.trim() ? e.target.value : "__custom__")}
-                          placeholder="Type gender…"
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                        />
-                      )}
+                    />
+                    <datalist id="cpr-gender-list">
+                      <option value="Woman" />
+                      <option value="Man" />
+                      <option value="Non-Binary" />
+                      <option value="Genderfluid" />
+                      <option value="Agender" />
+                    </datalist>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Pronouns</label>

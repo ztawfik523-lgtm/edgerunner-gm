@@ -398,7 +398,7 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getAllByText(/Branch A outcome\./i).length).toBeGreaterThan(0);
     });
     expect(screen.getByText(/Branch State Differs/i)).toBeInTheDocument();
-    expect(screen.getByText(/No Corebook PDF/i)).toBeInTheDocument();
+    expect(screen.getByText(/No BYOC/i)).toBeInTheDocument();
     expect(screen.getAllByText("1/2").length).toBeGreaterThan(0);
 
     // Switch branch via next arrow
@@ -543,12 +543,12 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getAllByText(/Rain slicks the chrome\./i).length).toBeGreaterThan(0);
     });
 
-    // Open Co-op modal and verify LAN join URL renders
-    fireEvent.click(screen.getByTitle(/Co-op players/i));
+    // Open Party modal and verify LAN join URL renders
+    fireEvent.click(screen.getByTitle(/Party players/i));
     await waitFor(() => {
       expect(screen.getByText("http://192.168.1.42:8765/?campaign=camp-qol")).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByLabelText("Close co-op settings"));
+    fireEvent.click(screen.getByLabelText("Close party settings"));
 
     // Edit assistant message in place
     const editButtons = screen.getAllByLabelText("Edit text in-place");
@@ -1051,20 +1051,20 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByRole("dialog", { name: /Cyberpunk RED GM Access/i })).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("player"), { target: { value: "edge" } });
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "edge" } });
     fireEvent.change(screen.getByPlaceholderText(/Enter password/i), { target: { value: "player-pass" } });
     fireEvent.click(screen.getByRole("button", { name: /Sign In as Player/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("USER")).toBeInTheDocument();
+      expect(screen.getByText("edge")).toBeInTheDocument();
     });
-    // Regular User can open User Settings (Display & Font + My Account) without Admin tabs
+    // Regular User can open User Settings (Display + Account) without Admin tabs
     fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /User Settings/i })).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: /Display & Font/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /My Account/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Display$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Account$/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Prompts$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Network$/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Close settings/i }));
@@ -1074,37 +1074,45 @@ describe("Cyberpunk RED GM UI", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /Cyberpunk RED GM Access/i })).toBeInTheDocument();
     });
-    fireEvent.change(screen.getByPlaceholderText("admin"), { target: { value: "netwatch" } });
+    fireEvent.change(screen.getByPlaceholderText(/Enter admin username/i), { target: { value: "netwatch" } });
     fireEvent.change(screen.getByPlaceholderText(/Enter password/i), { target: { value: "admin-pass" } });
     fireEvent.click(screen.getByRole("button", { name: /Sign In as Admin/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("ADMIN")).toBeInTheDocument();
+      expect(screen.getByText("netwatch")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^Settings$/i })).toBeInTheDocument();
     });
 
-    // TopBar 2-mode toggle switches directly between GM Quality and GM Balanced
-    const balancedBtn = screen.getByRole("button", { name: /^GM Balanced$/i });
-    expect(screen.getByRole("button", { name: /^GM Quality$/i })).toHaveAttribute("aria-pressed", "true");
+    // Open Admin Control Center -> Turn & Tuning (with Turn Architecture + Chronicler + GM Mode), Prompts, & Network tabs
+    fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /AI Game Master Connection/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Turn & Tuning/i }));
+    expect(screen.getByText(/Turn Architecture & Chronicler/i)).toBeInTheDocument();
+    const balancedBtn = screen.getByRole("button", { name: /GM Balanced/i });
+    expect(screen.getByRole("button", { name: /GM Quality/i })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(balancedBtn);
+    expect(balancedBtn).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: /Save Turn Tuning/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/v1/settings/llm",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ gm_thinking_mode: "balanced" }),
+          body: expect.stringContaining('"gm_thinking_mode":"balanced"'),
         }),
       );
     });
-    expect(screen.getByRole("button", { name: /^GM Balanced$/i })).toHaveAttribute("aria-pressed", "true");
 
-    // Open Admin Control Center -> Prompts & Network tabs
     fireEvent.click(screen.getByRole("button", { name: /^Settings$/i }));
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /AI Game Master Connection/i })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /^Prompts$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /GM Voice & Persona/i }));
     const personaBox = await screen.findByDisplayValue("Default Night City persona");
     fireEvent.change(personaBox, { target: { value: "Gritty 2045 fixer tone" } });
     fireEvent.click(screen.getByRole("button", { name: /Save Prompts/i }));
@@ -1619,11 +1627,12 @@ describe("Cyberpunk RED GM UI", () => {
     });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Campaign$/i }));
     await waitFor(() => {
-      expect(screen.getByTitle(/Open Campaign Architect/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New Campaign/i })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTitle(/Open Campaign Architect/i));
+    fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
     expect(screen.getByRole("dialog", { name: /Campaign Creator/i })).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), {
@@ -1982,11 +1991,11 @@ describe("Cyberpunk RED GM UI", () => {
       void fetchMock;
 
       render(<App />);
-      const noCorebookBtn = await screen.findByRole("button", { name: /No Corebook PDF/i });
+      const noCorebookBtn = await screen.findByRole("button", { name: /No BYOC/i });
       fireEvent.click(noCorebookBtn);
 
       await waitFor(() => {
-        expect(screen.getByText(/Bring Your Own Corebook/i)).toBeInTheDocument();
+        expect(screen.getByText(/BYOC — Bring Your Own Corebook/i)).toBeInTheDocument();
       });
 
       const fileInput = screen.getByLabelText(/Upload Corebook PDF file/i) as HTMLInputElement;
@@ -1995,7 +2004,7 @@ describe("Cyberpunk RED GM UI", () => {
 
       await waitFor(() => {
         expect(screen.getByRole("progressbar")).toBeInTheDocument();
-        expect(screen.getAllByText(/Corebook Ready \(2 pages\)/i).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText(/BYOC Ready \(2 pages\)/i).length).toBeGreaterThanOrEqual(1);
       });
 
       // Open Prompts tab, verify separated sections + Chronicler toggle, and expand Advanced built-in prompts
@@ -2003,6 +2012,7 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByText(/Player Dialogue, Narration & Multi-Player Handling/i)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Chronicler: ON/i })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /Advanced: Full Built-In System Rules/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /Built-In World Realism, Fog-of-War/i }));
       expect(await screen.findByDisplayValue("Default Core Rules")).toBeInTheDocument();
     } finally {
       globalThis.XMLHttpRequest = OriginalXHR;
@@ -2182,17 +2192,13 @@ describe("Cyberpunk RED GM UI", () => {
 
     render(<App />);
 
-    // Startup screen: no tip, no 4 quick prompts, only Introductory First Message
-    const introBtn = await screen.findByRole("button", { name: /Introductory First Message/i });
-    expect(screen.queryByText(/Tip: Create and attach a character/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Look around the scene and assess threats/i)).not.toBeInTheDocument();
-
-    fireEvent.click(introBtn);
-    await waitFor(() => {
-      expect(screen.getByText(/Welcome to Cyberpunk RED in 2045\./i)).toBeInTheDocument();
-      expect(screen.getByText(/3\.4s · 42\.5 tok\/s/i)).toBeInTheDocument();
-    });
-    expect(turnBodies[0].is_intro).toBe(true);
+    // Introductory screen removed; Campaign tab holds Story & Rules & Roles, and GM mode button cycles cleanly
+    const smartGmBtn = await screen.findByRole("button", { name: /GM turn mode: Smart GM/i });
+    expect(screen.queryByRole("button", { name: /Introductory First Message/i })).not.toBeInTheDocument();
+    fireEvent.click(smartGmBtn);
+    expect(screen.getByRole("button", { name: /GM turn mode: Party Chat/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /GM turn mode: Party Chat/i }));
+    expect(screen.getByRole("button", { name: /GM turn mode: Force GM/i })).toBeInTheDocument();
 
     // Character Creator: closing preserves typed name across reopen
     fireEvent.click(screen.getByRole("button", { name: /Open Character Sheet Creator/i }));
@@ -2202,8 +2208,10 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.getByDisplayValue("Marek Kovic")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Close character creator/i }));
 
-    // Campaign Creator: Auto Generate picks district/style/factions + GM Secrets hidden until Unspoil + Draft persists across close
-    fireEvent.click(screen.getByTitle(/Open Campaign Architect/i));
+    // Campaign Creator (from Campaign sidepanel): Auto Generate picks district/style/factions + GM Secrets hidden until Unspoil + Draft persists across close
+    fireEvent.click(screen.getByRole("button", { name: /^Campaign$/i }));
+    expect(screen.getByRole("button", { name: /Rules & Roles/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^New Campaign$/i }));
     fireEvent.click(screen.getByRole("button", { name: /Generate from Scratch/i }));
     await waitFor(() => {
       expect(screen.getByDisplayValue("Combat Zone Courier")).toBeInTheDocument();
@@ -2234,10 +2242,11 @@ describe("Cyberpunk RED GM UI", () => {
 
     // Closing Campaign Creator preserves draft upon reopen (with GM secrets hidden again)
     fireEvent.click(screen.getByRole("button", { name: /Close Campaign Creator/i }));
-    fireEvent.click(screen.getByTitle(/Open Campaign Architect/i));
+    fireEvent.click(screen.getByRole("button", { name: /^New Campaign$/i }));
     expect(screen.getByDisplayValue("Fresh regenerated scene.")).toBeInTheDocument();
     expect(screen.getByText(/Draft Restored/i)).toBeInTheDocument();
     expect(screen.getByText(/CLASSIFIED \/\/ SPOILER SHIELDED/i)).toBeInTheDocument();
+    void turnBodies;
   });
 
   it("supports Orientation Briefing, Admin-only GM Ops submenu, Admin-to-Player switch, Handle vs Hidden Real Name, and Selected Only gear filter", async () => {
@@ -2405,19 +2414,23 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(gmOpsBtn);
     expect(screen.getByText(/Kabuki Rooftop/i)).toBeInTheDocument();
 
-    // 2. Orientation Screamsheet can be opened at any time from the chat header and skipped
-    fireEvent.click(screen.getByRole("button", { name: /Screamsheet & Briefing/i }));
-    expect(screen.getByText(/N54 SCREAMSHEET \/\/ DISPATCH 2045/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Skip Briefing/i }));
-    expect(screen.queryByText(/N54 SCREAMSHEET \/\/ DISPATCH 2045/i)).not.toBeInTheDocument();
+    // 2. Campaign tab displays Story, Objectives, and Rules & Roles for Admin, then Read-Only view for Player
+    fireEvent.click(screen.getByRole("button", { name: /^Campaign$/i }));
+    expect(screen.getByText(/World Clocks & Heat/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Rules & Roles/i }));
+    expect(screen.getByText(/The 10 Iconic Roles/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Story & Briefing/i }));
 
-    // 3. Instant Admin -> Player Mode switch hides GM Ops and enforces character ownership
-    fireEvent.click(screen.getByRole("button", { name: /Admin ⇄ Player/i }));
+    // 3. Instant icon-only Admin -> Player Mode switch hides GM Ops, Campaign editors, Clocks, and enforces character ownership
+    fireEvent.click(screen.getByRole("button", { name: /Switch to Player Mode/i }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Player Mode \(Switch to Admin\)/i })).toBeInTheDocument();
     });
-    // GM Ops button is completely hidden from normal players
+    // GM Ops button and Campaign Admin controls are completely hidden from normal players
     expect(screen.queryByRole("button", { name: /GM Ops/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/World Clocks & Heat/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unresolved Threads/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^New Campaign$/i })).not.toBeInTheDocument();
     // Since "admin" in User View does not own "Ghostwire" (owned by "alice"), speaking is locked until creating/claiming a character
     expect(screen.getByText(/Admin requires an active Edgerunner sheet to speak in chat/i)).toBeInTheDocument();
   });
@@ -2699,11 +2712,11 @@ describe("Cyberpunk RED GM UI", () => {
 
     render(<App />);
 
-    // 1. Objective names are rendered cleanly in Screamsheet without truncation
-    fireEvent.click(await screen.findByRole("button", { name: /Screamsheet & Briefing/i }));
-    expect(screen.getByText(/• Clear Sibling Debt/)).toBeInTheDocument();
-    expect(screen.getByText(/• Fence Prototype Rig/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Skip Briefing/i }));
+    // 1. Objective names are rendered cleanly in Campaign tab without truncation
+    fireEvent.click(await screen.findByRole("button", { name: /^Campaign$/i }));
+    expect(screen.getByText(/Clear Sibling Debt/)).toBeInTheDocument();
+    expect(screen.getByText(/Fence Prototype Rig/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Character$/i }));
 
     // 2. Split Scene channel bar appears
     expect(screen.getByText(/Scene Channels:/i)).toBeInTheDocument();

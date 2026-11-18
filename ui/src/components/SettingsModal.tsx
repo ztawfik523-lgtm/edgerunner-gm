@@ -191,6 +191,40 @@ function saveStoredList<T>(key: string, items: T[]): void {
   }
 }
 
+function AutoSizeTextarea({
+  value,
+  onChange,
+  minRows = 3,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  minRows?: number;
+  ariaLabel?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, minRows * 20)}px`;
+  }, [value, minRows]);
+
+  const estimatedRows = Math.max(minRows, value ? value.split("\n").length : minRows);
+
+  return (
+    <textarea
+      ref={ref}
+      aria-label={ariaLabel}
+      rows={estimatedRows}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ overflow: "hidden" }}
+      className="w-full resize-none rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100 focus:border-cyan-400 focus:outline-none"
+    />
+  );
+}
+
 const EMPTY_PROMPTS: PromptSettings = {
   system_persona: "",
   intro_prompt: "",
@@ -252,7 +286,7 @@ const PROMPT_FIELDS: Array<{
     key: "multiplayer_rules",
     group: "player",
     sentTo: "Sent to: Rules Planner & GM Narrator",
-    label: "How Multiple Players / Co-op Turns Are Handled",
+    label: "How Multiple Players / Party Turns Are Handled",
     hint: "Defines how the AI handles active speaker attribution, keeps idle party members' agency intact, and tracks separate PC gear/HP/knowledge.",
     rows: 4,
   },
@@ -267,9 +301,9 @@ const PROMPT_FIELDS: Array<{
   {
     key: "intro_prompt",
     group: "narrator",
-    sentTo: "Sent to: Introductory First Message",
-    label: "Introductory First Message Prompt",
-    hint: "System prompt used when clicking the Introductory First Message button on the startup screen (explaining Cyberpunk RED, stats, rules, and roles).",
+    sentTo: "Sent to: Introductory Briefing API",
+    label: "Introductory Briefing Prompt",
+    hint: "System prompt used when generating an introductory Cyberpunk RED rules & roles overview via API.",
     rows: 5,
   },
   {
@@ -426,6 +460,8 @@ export function SettingsModal({
   const [runSemanticOnUpload, setRunSemanticOnUpload] = useState(false);
   const [selectedPdfName, setSelectedPdfName] = useState<string | null>(null);
   const [showAdvancedPrompts, setShowAdvancedPrompts] = useState(false);
+  const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({});
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Saved Presets
   const [customProviderPresets, setCustomProviderPresets] = useState<CustomProviderPreset[]>(() =>
@@ -462,9 +498,9 @@ export function SettingsModal({
   const [newUserPass, setNewUserPass] = useState("");
   const [newUserRole, setNewUserRole] = useState<"user" | "admin">("user");
   const [sharedPasscode, setSharedPasscode] = useState("");
-  const [bootAdminUser, setBootAdminUser] = useState("admin");
+  const [bootAdminUser, setBootAdminUser] = useState("");
   const [bootAdminPass, setBootAdminPass] = useState("");
-  const [bootPlayerUser, setBootPlayerUser] = useState("player");
+  const [bootPlayerUser, setBootPlayerUser] = useState("");
   const [bootPlayerPass, setBootPlayerPass] = useState("");
 
   // Shared UI status
@@ -833,12 +869,17 @@ export function SettingsModal({
 
   const handleBootstrapAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanAdmin = bootAdminUser.trim();
+    if (!cleanAdmin) {
+      setError("Choose an Admin username.");
+      return;
+    }
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
       await setupInitialAuth({
-        admin_username: bootAdminUser.trim() || "admin",
+        admin_username: cleanAdmin,
         admin_password: bootAdminPass,
         user_username: bootPlayerPass.trim() ? (bootPlayerUser.trim() || "player") : "",
         user_password: bootPlayerPass.trim(),
@@ -935,6 +976,27 @@ export function SettingsModal({
     }
   };
 
+  const handleToggleAccountRole = async (username: string, currentRole: "admin" | "user") => {
+    const nextRole = currentRole === "admin" ? "user" : "admin";
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await updateAuthAccounts({
+        action: "upsert_account",
+        username,
+        role: nextRole,
+      });
+      setAccounts(res.accounts);
+      await onAuthChanged?.();
+      setNotice(`Updated '${username}' to ${nextRole === "admin" ? "Admin" : "User"}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update account role");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeleteAccount = async (username: string) => {
     setSaving(true);
     setError(null);
@@ -993,20 +1055,32 @@ export function SettingsModal({
     }
   };
 
+  const togglePromptExpanded = (key: string, btnEl: HTMLButtonElement | null) => {
+    const scrollEl = bodyScrollRef.current;
+    const prevTop = btnEl ? btnEl.getBoundingClientRect().top : null;
+    setExpandedPrompts((prev) => ({ ...prev, [key]: !prev[key] }));
+    if (scrollEl && btnEl && prevTop !== null) {
+      requestAnimationFrame(() => {
+        const nextTop = btnEl.getBoundingClientRect().top;
+        scrollEl.scrollTop += nextTop - prevTop;
+      });
+    }
+  };
+
   const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = isAdmin
     ? [
         { id: "connection", label: "Connection", icon: Cpu },
-        { id: "corebook", label: "Corebook PDF", icon: BookOpen },
+        { id: "corebook", label: "BYOC", icon: BookOpen },
         { id: "tuning", label: "Turn & Tuning", icon: Sliders },
         { id: "prompts", label: "Prompts", icon: FileText },
         { id: "network", label: "Network", icon: Globe },
-        { id: "access", label: "Access & Auth", icon: Shield },
-        { id: "display", label: "Display & Font", icon: Type },
-        ...(authStatus?.username ? [{ id: "account" as SettingsTab, label: "My Account", icon: User }] : []),
+        { id: "access", label: "Access", icon: Shield },
+        { id: "display", label: "Display", icon: Type },
+        ...(authStatus?.username ? [{ id: "account" as SettingsTab, label: "Account", icon: User }] : []),
       ]
     : [
-        { id: "display", label: "Display & Font", icon: Type },
-        { id: "account", label: "My Account", icon: User },
+        { id: "display", label: "Display", icon: Type },
+        { id: "account", label: "Account", icon: User },
       ];
 
   const isIndexing = corebookStatus?.job?.status === "running";
@@ -1018,18 +1092,18 @@ export function SettingsModal({
 
   const dialogHeading = isAdmin ? "AI Game Master Connection" : "User Settings";
   const dialogSubtitle = isAdmin
-    ? "Connect your AI model, upload your Corebook PDF, customize GM behavior & prompts, display readability, and manage players."
+    ? "Connect your AI model, upload your Corebook (BYOC), customize GM behavior & prompts, display readability, and manage players."
     : "Customize HUD text size & readability, or update your account username and password.";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
       aria-label={dialogHeading}
     >
-      <div className="cyber-cut cyber-panel-glow flex max-h-[92vh] w-full max-w-3xl flex-col border border-cyan-500/30 bg-[#0b1019] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
+      <div className="cyber-cut cyber-panel-glow flex max-h-[92dvh] w-full max-w-4xl flex-col border border-cyan-500/30 bg-[#0b1019] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 sm:px-5 sm:py-3.5">
           <div>
             <h2
               data-text={dialogHeading}
@@ -1052,34 +1126,40 @@ export function SettingsModal({
         </div>
 
         {/* Navigation tabs */}
-        <div className="flex flex-wrap gap-1 border-b border-slate-800 bg-slate-950/70 px-5 py-2">
-          {tabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => {
-                setActiveTab(id);
-                setError(null);
-                setNotice(null);
-              }}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                activeTab === id
-                  ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-1 overflow-x-auto border-b border-slate-800 bg-slate-950/70 px-4 py-2">
+          <div className="flex items-center gap-1">
+            {tabs.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(id);
+                  setError(null);
+                  setNotice(null);
+                }}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                  activeTab === id
+                    ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                    : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
           {loadingAll && (
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-slate-400">
+            <span className="ml-2 inline-flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
               <Loader2 className="h-3 w-3 animate-spin" /> Syncing...
             </span>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div
+          ref={bodyScrollRef}
+          style={{ overflowAnchor: "none" }}
+          className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4"
+        >
           {notice && (
             <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
               {notice}
@@ -1225,48 +1305,22 @@ export function SettingsModal({
                 />
               </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label
-                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                    title="Exact model identifier expected by your provider (e.g. nvidia/nemotron-3-ultra-550b-a55b, gpt-4o-mini, llama3)."
-                  >
-                    Model ID
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="llama3"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label
-                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                    title="Two-Pass runs a dedicated JSON rules/dice Planner before streaming prose (most accurate). Single-Pass streams prose + <gm_ops> in one call (faster, fewer API calls)."
-                  >
-                    Turn Architecture
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
-                  </label>
-                  <select
-                    value={mode}
-                    onChange={(e) =>
-                      setMode(e.target.value === "single_pass_tagged" ? "single_pass_tagged" : "two_pass")
-                    }
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  >
-                    <option value="two_pass">Two-Pass Planner + Streamed GM</option>
-                    <option value="single_pass_tagged">Single-Pass Streamed GM</option>
-                  </select>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    {mode === "two_pass"
-                      ? "Best rules/dice accuracy: resolves checks & state before writing prose."
-                      : "Faster single request: streams prose and embeds state ops at the end."}
-                  </p>
-                </div>
+              <div>
+                <label
+                  className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                  title="Exact model identifier expected by your provider (e.g. nvidia/nemotron-3-ultra-550b-a55b, gpt-4o-mini, llama3)."
+                >
+                  Model ID
+                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="llama3"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
               </div>
 
               <div>
@@ -1402,10 +1456,10 @@ export function SettingsModal({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-100">
-                      Bring Your Own Corebook (Optional)
+                      BYOC — Bring Your Own Corebook (Optional)
                     </h3>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      Your Cyberpunk RED Corebook PDF stays private on your own server. Upload it once to unlock official Roles, Streetrat/Edgerunner/Complete Package character builders, gear catalogs, and exact page lookup.
+                      Upload your own Cyberpunk RED Corebook PDF to unlock official Roles, character builders, gear catalogs, and exact page citations. The file stays locally on your server.
                     </p>
                   </div>
                   <span
@@ -1416,8 +1470,8 @@ export function SettingsModal({
                     }`}
                   >
                     {corebookStatus?.rules_indexed
-                      ? `Corebook Ready (${corebookStatus.indexed_pages} pages)`
-                      : "No Corebook Yet (Freeform Mode)"}
+                      ? `BYOC Ready (${corebookStatus.indexed_pages} pages)`
+                      : "No BYOC Yet (Freeform Mode)"}
                   </span>
                 </div>
 
@@ -1431,7 +1485,7 @@ export function SettingsModal({
                     </div>
                     <div className="text-[11px] text-slate-400">
                       {corebookStatus.indexed_pages} pages indexed
-                      {corebookStatus.semantic_indexed ? " · AI meaning search active" : ""}
+                      {corebookStatus.semantic_indexed ? " · topic meaning search active" : ""}
                     </div>
                   </div>
                 )}
@@ -1456,7 +1510,7 @@ export function SettingsModal({
                       disabled={uploadingPdf || isIndexing}
                       onChange={(e) => setRunSemanticOnUpload(e.target.checked)}
                     />
-                    <span>Also build AI meaning search after indexing (slower on CPU, optional)</span>
+                    <span>Also index rule meanings so search finds rules by topic, not just exact words (optional)</span>
                   </label>
                 )}
 
@@ -1699,6 +1753,71 @@ export function SettingsModal({
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Unified Turn Architecture & Chronicler */}
+              <div className="rounded-lg border border-emerald-500/30 bg-slate-950/70 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    title="Controls how many AI passes run each turn: Pass 1 (Rules Planner), Pass 2 (Streamed GM), and optional Pass 3 (Chronicler note-taker)."
+                  >
+                    Turn Architecture &amp; Chronicler
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                      enableChronicler
+                        ? "bg-emerald-500/20 text-emerald-200"
+                        : "bg-slate-800 text-slate-400"
+                    }`}
+                  >
+                    Chronicler {enableChronicler ? "ON" : "OFF"}
+                  </span>
+                </div>
+
+                <div>
+                  <label
+                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    title="Two-Pass runs a dedicated JSON rules/dice Planner before streaming prose (most accurate). Single-Pass streams prose + <gm_ops> in one call (faster, fewer API calls)."
+                  >
+                    Turn Architecture
+                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                  </label>
+                  <select
+                    value={mode}
+                    onChange={(e) =>
+                      setMode(e.target.value === "single_pass_tagged" ? "single_pass_tagged" : "two_pass")
+                    }
+                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  >
+                    <option value="two_pass">Two-Pass Planner + Streamed GM</option>
+                    <option value="single_pass_tagged">Single-Pass Streamed GM</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {mode === "two_pass"
+                      ? "Best rules/dice accuracy: resolves checks & state before writing prose."
+                      : "Faster single request: streams prose and embeds state ops at the end."}
+                  </p>
+                </div>
+
+                <label
+                  className="flex items-start gap-2 rounded-md border border-emerald-500/25 bg-emerald-950/15 p-2.5 text-xs text-slate-200 cursor-pointer"
+                  title="Runs a background note-taker after each GM reply to log newly seen NPCs, clues, scene changes, and elapsed time."
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={enableChronicler}
+                    onChange={(e) => setEnableChronicler(e.target.checked)}
+                  />
+                  <span>
+                    Post-Turn Chronicler (Auto Note-Taker — Pass 3)
+                    <span className="block text-[11px] text-slate-400">
+                      Runs after narration to record newly seen NPCs, clues, scene moves, and elapsed time. Turn off to save 1 AI call per turn.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               {/* Group 1: GM Thinking & Style */}
@@ -2014,40 +2133,6 @@ export function SettingsModal({
                   </label>
                 </div>
 
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/15 p-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                      Post-Turn Chronicler (Auto Note-Taker — Pass 3)
-                    </span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
-                        enableChronicler
-                          ? "bg-emerald-500/20 text-emerald-200"
-                          : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      {enableChronicler ? "ENABLED" : "DISABLED"}
-                    </span>
-                  </div>
-                  <label
-                    className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer"
-                    title="Runs a background note-taker after each GM reply to log newly seen NPCs, clues, scene changes, and elapsed time."
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={enableChronicler}
-                      onChange={(e) => setEnableChronicler(e.target.checked)}
-                    />
-                    <span>
-                      Auto-track NPCs, clues &amp; time (Chronicler)
-                      <span className="block text-[11px] text-slate-400">
-                        Runs after narration to record newly seen NPCs, clues, scene moves, and elapsed time. Turn off to save 1 AI call per turn.
-                      </span>
-                    </span>
-                  </label>
-                </div>
-
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <label
                     className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
@@ -2116,34 +2201,56 @@ export function SettingsModal({
           )}
 
           {activeTab === "prompts" && (
-            <form onSubmit={handleSavePrompts} className="space-y-4">
+            <form onSubmit={handleSavePrompts} className="space-y-5">
               {/* Pipeline Overview Banner */}
-              <div className="rounded-lg border border-cyan-500/25 bg-slate-950/80 p-3 text-[11px] text-slate-300">
-                <div className="mb-1.5 font-semibold uppercase tracking-wider text-cyan-300">
-                  How AI Prompts Flow Each Turn
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/25 bg-slate-950/80 p-3 text-[11px] text-slate-300">
+                <div>
+                  <div className="mb-1.5 font-semibold uppercase tracking-wider text-cyan-300">
+                    How AI Prompts Flow Each Turn
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+                    <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-cyan-200">
+                      Player Turn Format
+                    </span>
+                    <span className="text-slate-500">→</span>
+                    <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                      1. Rules &amp; Dice Planner
+                    </span>
+                    <span className="text-slate-500">→</span>
+                    <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                      2. GM Story Narrator
+                    </span>
+                    <span className="text-slate-500">→</span>
+                    <span
+                      className={`rounded border px-2 py-0.5 ${
+                        enableChronicler
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                          : "border-slate-700 bg-slate-900 text-slate-500 line-through"
+                      }`}
+                    >
+                      3. Post-Turn Chronicler ({enableChronicler ? "ON" : "OFF"})
+                    </span>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
-                  <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-cyan-200">
-                    Player Turn Format
-                  </span>
-                  <span className="text-slate-500">→</span>
-                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-200">
-                    1. Rules &amp; Dice Planner
-                  </span>
-                  <span className="text-slate-500">→</span>
-                  <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-rose-200">
-                    2. GM Story Narrator
-                  </span>
-                  <span className="text-slate-500">→</span>
-                  <span
-                    className={`rounded border px-2 py-0.5 ${
-                      enableChronicler
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                        : "border-slate-700 bg-slate-900 text-slate-500 line-through"
-                    }`}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next: Record<string, boolean> = {};
+                      for (const f of PROMPT_FIELDS) next[f.key] = true;
+                      setExpandedPrompts(next);
+                    }}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500/50 hover:text-cyan-200"
                   >
-                    3. Post-Turn Chronicler ({enableChronicler ? "ON" : "OFF"})
-                  </span>
+                    Expand All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPrompts({})}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                  >
+                    Collapse All
+                  </button>
                 </div>
               </div>
 
@@ -2152,7 +2259,7 @@ export function SettingsModal({
                   {
                     id: "player" as PromptGroupId,
                     title: "Player Dialogue, Narration & Multi-Player Handling",
-                    desc: "Controls how player text/speech is formatted when sent to the AI, how the GM narrates your character without puppeting you, and how multiple Co-op players share the spotlight.",
+                    desc: "Controls how player text/speech is formatted when sent to the AI, how the GM narrates your character without puppeting you, and how multiple Party players share the spotlight.",
                     border: "border-cyan-500/30",
                     heading: "text-cyan-300",
                   },
@@ -2200,9 +2307,9 @@ export function SettingsModal({
                 return (
                   <div
                     key={section.id}
-                    className={`rounded-lg border ${section.border} bg-slate-950/65 p-3.5 space-y-3`}
+                    className={`rounded-lg border ${section.border} bg-slate-950/65 p-4 space-y-3.5`}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-800/80 pb-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-800/80 pb-2.5">
                       <div>
                         <div className={`text-xs font-bold uppercase tracking-wider ${section.heading}`}>
                           {section.title}
@@ -2225,68 +2332,104 @@ export function SettingsModal({
                       )}
                     </div>
 
-                    {sectionFields.map((field) => {
-                      const val = prompts[field.key] ?? "";
-                      const defVal = promptDefaults[field.key] ?? "";
-                      const previewSample =
-                        field.key === "player_message_template"
-                          ? (val.trim() || "[{speaker}]: {message}")
-                              .replace(/\{speaker\}/g, "Vee")
-                              .replace(/\{message\}/g, '"How much for the shard?"')
-                          : null;
-                      return (
-                        <label key={field.key} className="block">
-                          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs font-semibold text-slate-200">{field.label}</span>
-                              <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                                {field.sentTo}
-                              </span>
-                            </div>
-                            {val !== defVal && (
+                    <div className="space-y-3">
+                      {sectionFields.map((field) => {
+                        const val = prompts[field.key] ?? "";
+                        const defVal = promptDefaults[field.key] ?? "";
+                        const isExpanded = Boolean(expandedPrompts[field.key]);
+                        const isModified = val !== defVal;
+                        const previewSample =
+                          field.key === "player_message_template"
+                            ? (val.trim() || "[{speaker}]: {message}")
+                                .replace(/\{speaker\}/g, "Vee")
+                                .replace(/\{message\}/g, '"How much for the shard?"')
+                            : null;
+                        return (
+                          <div
+                            key={field.key}
+                            className="rounded-md border border-slate-800 bg-slate-900/55 transition"
+                          >
+                            <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setPrompts((prev) => ({
-                                    ...prev,
-                                    [field.key]: defVal,
-                                  }))
-                                }
-                                className="text-[11px] text-cyan-300 hover:underline"
+                                aria-expanded={isExpanded}
+                                onClick={(e) => togglePromptExpanded(field.key, e.currentTarget)}
+                                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
                               >
-                                Revert field
+                                <div className="min-w-0 space-y-0.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-semibold text-slate-100">
+                                      {field.label}
+                                    </span>
+                                    <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                                      {field.sentTo}
+                                    </span>
+                                    {isModified && (
+                                      <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-200">
+                                        Modified
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-slate-400">{field.hint}</p>
+                                </div>
+                                <span className="shrink-0 text-slate-400">
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </span>
                               </button>
+                              {isModified && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPrompts((prev) => ({
+                                      ...prev,
+                                      [field.key]: defVal,
+                                    }))
+                                  }
+                                  className="shrink-0 text-[11px] text-cyan-300 hover:underline"
+                                >
+                                  Revert
+                                </button>
+                              )}
+                            </div>
+
+                            {isExpanded && (
+                              <div className="border-t border-slate-800/80 px-3 pb-3 pt-2.5 space-y-2">
+                                {field.singleLine ? (
+                                  <input
+                                    type="text"
+                                    aria-label={field.label}
+                                    value={val}
+                                    onChange={(e) =>
+                                      setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
+                                    }
+                                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                                  />
+                                ) : (
+                                  <AutoSizeTextarea
+                                    ariaLabel={field.label}
+                                    minRows={field.rows}
+                                    value={val}
+                                    onChange={(nextVal) =>
+                                      setPrompts((prev) => ({ ...prev, [field.key]: nextVal }))
+                                    }
+                                  />
+                                )}
+                                {previewSample && (
+                                  <div className="rounded border border-slate-800 bg-slate-900/70 px-2.5 py-1 font-mono text-[11px] text-slate-300">
+                                    <span className="text-slate-500">Preview sent to AI: </span>
+                                    {previewSample}
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
-                          <p className="mb-1.5 text-[11px] text-slate-400">{field.hint}</p>
-                          {field.singleLine ? (
-                            <input
-                              type="text"
-                              value={val}
-                              onChange={(e) =>
-                                setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                            />
-                          ) : (
-                            <textarea
-                              rows={field.rows}
-                              value={val}
-                              onChange={(e) =>
-                                setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                            />
-                          )}
-                          {previewSample && (
-                            <div className="mt-1 rounded border border-slate-800 bg-slate-900/70 px-2.5 py-1 font-mono text-[11px] text-slate-300">
-                              <span className="text-slate-500">Preview sent to AI: </span>
-                              {previewSample}
-                            </div>
-                          )}
-                        </label>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}
@@ -2303,43 +2446,74 @@ export function SettingsModal({
                 {showAdvancedPrompts && (
                   <div className="space-y-3 border-t border-slate-800 p-3.5">
                     <p className="text-[11px] text-amber-200/80">
-                      These are the full default system rules sent to each pass. You can tweak banned NPC names, economy pacing, Fog-of-War rules, or anything else here—and click Revert field or Reset All Prompts anytime.
+                      These are the full default system rules sent to each pass. You can tweak banned NPC names, economy pacing, Fog-of-War rules, or anything else here—and click Revert or Reset All Prompts anytime.
                     </p>
-                    {PROMPT_FIELDS.filter((f) => f.advanced).map((field) => (
-                      <label key={field.key} className="block">
-                        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-200">{field.label}</span>
-                            <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
-                              {field.sentTo}
-                            </span>
-                          </div>
-                          {(prompts[field.key] ?? "") !== (promptDefaults[field.key] ?? "") && (
+                    {PROMPT_FIELDS.filter((f) => f.advanced).map((field) => {
+                      const val = prompts[field.key] ?? "";
+                      const defVal = promptDefaults[field.key] ?? "";
+                      const isExpanded = Boolean(expandedPrompts[field.key]);
+                      const isModified = val !== defVal;
+                      return (
+                        <div key={field.key} className="rounded-md border border-slate-800 bg-slate-900/55">
+                          <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                             <button
                               type="button"
-                              onClick={() =>
-                                setPrompts((prev) => ({
-                                  ...prev,
-                                  [field.key]: promptDefaults[field.key] ?? "",
-                                }))
-                              }
-                              className="text-[11px] text-cyan-300 hover:underline"
+                              aria-expanded={isExpanded}
+                              onClick={(e) => togglePromptExpanded(field.key, e.currentTarget)}
+                              className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
                             >
-                              Revert field
+                              <div className="min-w-0 space-y-0.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-semibold text-slate-200">{field.label}</span>
+                                  <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                                    {field.sentTo}
+                                  </span>
+                                  {isModified && (
+                                    <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-200">
+                                      Modified
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-400">{field.hint}</p>
+                              </div>
+                              <span className="shrink-0 text-slate-400">
+                                {isExpanded ? (
+                                  <ChevronUp className="h-4 w-4" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4" />
+                                )}
+                              </span>
                             </button>
+                            {isModified && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPrompts((prev) => ({
+                                    ...prev,
+                                    [field.key]: defVal,
+                                  }))
+                                }
+                                className="shrink-0 text-[11px] text-cyan-300 hover:underline"
+                              >
+                                Revert
+                              </button>
+                            )}
+                          </div>
+                          {isExpanded && (
+                            <div className="border-t border-slate-800/80 px-3 pb-3 pt-2.5">
+                              <AutoSizeTextarea
+                                ariaLabel={field.label}
+                                minRows={field.rows}
+                                value={val}
+                                onChange={(nextVal) =>
+                                  setPrompts((prev) => ({ ...prev, [field.key]: nextVal }))
+                                }
+                              />
+                            </div>
                           )}
                         </div>
-                        <p className="mb-1 text-[11px] text-slate-400">{field.hint}</p>
-                        <textarea
-                          rows={field.rows}
-                          value={prompts[field.key] ?? ""}
-                          onChange={(e) =>
-                            setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
-                          }
-                          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                        />
-                      </label>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2446,7 +2620,7 @@ export function SettingsModal({
 
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-slate-300">
-                  Public URL (for reverse-proxied Co-op join links, optional)
+                  Public URL (for reverse-proxied Party join links, optional)
                 </span>
                 <input
                   type="url"
@@ -2525,6 +2699,7 @@ export function SettingsModal({
                         required
                         value={bootAdminUser}
                         onChange={(e) => setBootAdminUser(e.target.value)}
+                        placeholder="e.g. fixer_boss"
                         className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
                       />
                     </label>
@@ -2579,34 +2754,60 @@ export function SettingsModal({
                       <p className="text-xs text-slate-400">No file-backed accounts listed (using env or PIN).</p>
                     ) : (
                       <div className="divide-y divide-slate-800/80">
-                        {accounts.map((acc) => (
-                          <div key={acc.username} className="flex items-center justify-between py-2 text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-semibold text-slate-100">{acc.username}</span>
-                              <span
-                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                                  acc.role === "admin"
-                                    ? "bg-rose-500/20 text-rose-300"
-                                    : "bg-cyan-500/20 text-cyan-300"
-                                }`}
-                              >
-                                {acc.role}
-                              </span>
-                              <span className="text-[11px] text-slate-500">({acc.source})</span>
+                        {accounts.map((acc) => {
+                          const adminCount = accounts.filter((a) => a.role === "admin").length;
+                          const isLastAdmin = acc.role === "admin" && adminCount <= 1;
+                          return (
+                            <div key={acc.username} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-semibold text-slate-100">{acc.username}</span>
+                                <span
+                                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                    acc.role === "admin"
+                                      ? "bg-rose-500/20 text-rose-300"
+                                      : "bg-cyan-500/20 text-cyan-300"
+                                  }`}
+                                >
+                                  {acc.role}
+                                </span>
+                                <span className="text-[11px] text-slate-500">({acc.source})</span>
+                              </div>
+                              {acc.source !== "env" && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={saving || isLastAdmin}
+                                    title={
+                                      isLastAdmin
+                                        ? "At least one Admin account is required"
+                                        : acc.role === "admin"
+                                          ? "Demote to normal Player user"
+                                          : "Grant Admin privileges"
+                                    }
+                                    onClick={() => void handleToggleAccountRole(acc.username, acc.role)}
+                                    className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition disabled:opacity-40 ${
+                                      acc.role === "admin"
+                                        ? "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/60 hover:text-amber-200"
+                                        : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                                    }`}
+                                  >
+                                    <Shield className="h-3 w-3" />
+                                    {acc.role === "admin" ? "Make User" : "Make Admin"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={saving || isLastAdmin}
+                                    onClick={() => void handleDeleteAccount(acc.username)}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                    Remove
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                            {acc.source !== "env" && (
-                              <button
-                                type="button"
-                                disabled={saving}
-                                onClick={() => void handleDeleteAccount(acc.username)}
-                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                                Remove
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

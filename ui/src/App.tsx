@@ -3,7 +3,6 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { BookOpen, Compass, GripVertical, MessageSquare, User } from "lucide-react";
 import {
   compressCampaignMemory,
-  createCampaign,
   deleteCampaign,
   deleteChatMessage,
   exportChatBranch,
@@ -19,7 +18,6 @@ import {
   listCampaigns,
   logoutAuth,
   regenerateChatTurn,
-  saveLLMSettings,
   sendPresence,
   setPrimaryCampaign,
   setStoredPlayerName,
@@ -140,6 +138,9 @@ export function App() {
   const [peerStreaming, setPeerStreaming] = useState<StreamingTurnState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [viewAsUser, setViewAsUser] = useState<boolean>(() => getStoredViewRoleOverride() === "user");
+  const requireCharacterToSpeak = Boolean(
+    llmSettings?.require_character_to_speak ?? authStatus?.require_character_to_speak ?? true,
+  );
   const [uiScale, setUiScale] = useState<UiTextScale>(() => {
     const raw = safeStorageGet("redgm:uiScale");
     return raw === "large" || raw === "xl" ? raw : "standard";
@@ -171,6 +172,7 @@ export function App() {
   const [playerName, setPlayerName] = useState<string>(getStoredPlayerName);
   const [claimedCharId, setClaimedCharId] = useState<string>(() => safeStorageGet(STORAGE_CLAIMED_CHAR_KEY) || "");
   const [speakerId, setSpeakerId] = useState<string>(() => safeStorageGet(STORAGE_CLAIMED_CHAR_KEY) || "");
+  const [overclock, setOverclock] = useState(false);
   const [protectOthers, setProtectOthers] = useState(false);
   const [compressingMemory, setCompressingMemory] = useState(false);
   const [roster, setRoster] = useState<CoopPlayer[]>([]);
@@ -182,12 +184,14 @@ export function App() {
   const activeChannelIdRef = useRef<string>(activeChannelId);
   const lastSyncSeqRef = useRef<number>(0);
   const userPinnedMainRef = useRef<boolean>(false);
+  const speakerPinnedGeneralRef = useRef<boolean>(false);
   const selfClientId = getClientId();
 
   useEffect(() => {
     activeCampaignIdRef.current = activeCampaignId;
     lastSyncSeqRef.current = 0;
     userPinnedMainRef.current = false;
+    speakerPinnedGeneralRef.current = false;
   }, [activeCampaignId]);
 
   useEffect(() => {
@@ -303,6 +307,11 @@ export function App() {
         })
       : chars;
 
+    if (speakerPinnedGeneralRef.current && (!isUserView || !requireCharacterToSpeak)) {
+      setSpeakerId("");
+      return;
+    }
+
     const scopedClaim = activeCampaignId
       ? safeStorageGet(userClaimedCharStorageKey(authStatus?.username, activeCampaignId)) || ""
       : "";
@@ -312,21 +321,21 @@ export function App() {
 
     if (effectiveClaim) {
       if (effectiveClaim !== claimedCharId) setClaimedCharId(effectiveClaim);
-      setSpeakerId(effectiveClaim);
+      setSpeakerId((prev) => (prev && allowedChars.some((c) => c.id === prev) ? prev : effectiveClaim));
     } else if (isUserView) {
       const myOwned = me
         ? chars.find((c) => String(c.detail?.owner_username ?? "").trim().toLowerCase() === me)
         : undefined;
       if (myOwned) {
         setClaimedCharId(myOwned.id);
-        setSpeakerId(myOwned.id);
+        setSpeakerId((prev) => (prev && allowedChars.some((c) => c.id === prev) ? prev : myOwned.id));
       } else {
         setSpeakerId((prev) => (prev && allowedChars.some((c) => c.id === prev) ? prev : ""));
       }
-    } else if (!speakerId || !chars.some((c) => c.id === speakerId)) {
-      setSpeakerId(chars[0].id);
+    } else {
+      setSpeakerId((prev) => (prev && chars.some((c) => c.id === prev) ? prev : chars[0].id));
     }
-  }, [campaignContext?.characters, claimedCharId, speakerId, activeCampaignId, authStatus?.username, authStatus?.authenticated, authStatus?.role, viewAsUser]);
+  }, [campaignContext?.characters, claimedCharId, activeCampaignId, authStatus?.username, authStatus?.authenticated, authStatus?.role, viewAsUser, requireCharacterToSpeak]);
 
   // Keep activeChannelId aligned when party splits or reunites (without trapping clicks on Main Table)
   useEffect(() => {
@@ -529,6 +538,7 @@ export function App() {
     activeChannelIdRef.current = "main";
     setActiveChannelId("main");
     setPeerStreaming(null);
+    setOverclock(false);
     setActiveCampaignId(id);
     setSelectedLibraryEntry((cur) => (cur?.source === "homebrew" ? null : cur));
     safeStorageSet(userCampaignStorageKey(authStatus?.username), id);
@@ -585,18 +595,6 @@ export function App() {
       notify(`Deleted campaign "${res.name}".`);
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not delete campaign");
-    }
-  };
-
-  const handleCreateCampaign = async (name: string) => {
-    try {
-      const created = await createCampaign(name);
-      const updatedList = await listCampaigns();
-      setCampaigns(updatedList);
-      await handleSelectCampaign(created.id);
-      notify(`Created campaign "${created.name}".`);
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Could not create campaign");
     }
   };
 
@@ -748,24 +746,6 @@ export function App() {
     );
   };
 
-  const handleSendIntro = async () => {
-    if (!activeCampaignId) return;
-    const introPromptText =
-      "Give me an introductory first message explaining what Cyberpunk RED is, how the rules and stats work, and what roles or characters I can play.";
-    await runStreamedAction(introPromptText, false, undefined, (callbacks, signal) =>
-      streamChatTurn(
-        {
-          campaign_id: activeCampaignId,
-          user_text: introPromptText,
-          channel_id: activeChannelId,
-          is_intro: true,
-        },
-        callbacks,
-        signal,
-      ),
-    );
-  };
-
   const handleEditUserMessage = async (
     msg: ChatMessageNode,
     newText: string,
@@ -883,9 +863,6 @@ export function App() {
     !authStatus || !authStatus.auth_enabled || authStatus.role === "admin" || authStatus.role === "open";
   const isEffectiveAdmin = isTrueAdmin && !viewAsUser;
   const canManageCampaigns = isEffectiveAdmin;
-  const requireCharacterToSpeak = Boolean(
-    llmSettings?.require_character_to_speak ?? authStatus?.require_character_to_speak ?? true,
-  );
 
   const handleToggleViewAsUser = async () => {
     const next = !viewAsUser;
@@ -934,7 +911,7 @@ export function App() {
   };
 
   const dashboardContent = (
-    <div className="flex h-full flex-col bg-[#0c101a]/88 backdrop-blur-[2px]">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-[#0c101a]/88 backdrop-blur-[2px]">
       <div className="flex border-b border-slate-800/90 bg-[#0d111a]/95 px-2 pt-1.5">
         {(
           [
@@ -959,7 +936,7 @@ export function App() {
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {rightTab === "character" && campaignContext && (
           <CharacterPanel
             campaignId={campaignContext.campaign.id}
@@ -972,6 +949,14 @@ export function App() {
             isAdmin={isEffectiveAdmin}
             currentUsername={authStatus?.username}
             activeChannelId={activeChannelId}
+            overclock={overclock}
+            onToggleOverclock={() => setOverclock((v) => !v)}
+            selectedSpeakerId={speakerId}
+            onSelectSpeakerId={(id) => {
+              speakerPinnedGeneralRef.current = id === "";
+              setSpeakerId(id);
+            }}
+            requireCharacterToSpeak={requireCharacterToSpeak}
             protectOthers={protectOthers}
             preferredSelectedId={preferredCharacterId}
             onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
@@ -985,7 +970,7 @@ export function App() {
           </div>
         )}
 
-        {rightTab === "campaign" && campaignContext && (
+        {rightTab === "campaign" && (
           <CampaignPanel
             context={campaignContext}
             campaigns={campaigns}
@@ -1000,20 +985,21 @@ export function App() {
               setCampaignCreatorEdit(null);
               setCampaignCreatorOpen(true);
             }}
-            onOpenEditCampaign={() => {
-              setCampaignCreatorEdit(campaignContext.campaign);
-              setCampaignCreatorOpen(true);
-            }}
+            onOpenEditCampaign={
+              campaignContext
+                ? () => {
+                    setCampaignCreatorEdit(campaignContext.campaign);
+                    setCampaignCreatorOpen(true);
+                  }
+                : undefined
+            }
+            onStartSession={handleStartSession}
+            onExportChat={handleExportChat}
             onCompressMemory={handleCompressMemory}
             compressingMemory={compressingMemory}
             onRefresh={refreshActiveCampaign}
             onNotify={notify}
           />
-        )}
-        {rightTab === "campaign" && !campaignContext && (
-          <div className="p-6 text-center text-xs text-slate-400">
-            Select or create a campaign to view scene notes.
-          </div>
         )}
 
         {rightTab === "library" && (
@@ -1035,7 +1021,6 @@ export function App() {
     <ChatPane
       campaignId={activeCampaignId}
       campaign={activeCampaign}
-      npcProfiles={campaignContext?.npc_profiles}
       partyGrouping={campaignContext?.party_grouping}
       activeChannelId={activeChannelId}
       onChangeChannelId={handleSelectChannel}
@@ -1044,16 +1029,16 @@ export function App() {
       isPeerStreaming={!streaming && Boolean(peerStreaming)}
       characters={campaignContext?.characters ?? []}
       selectedSpeakerId={speakerId}
+      overclock={overclock}
+      onClearOverclock={() => setOverclock(false)}
       activeTurn={channelActiveTurn}
       selfClientId={selfClientId}
       isAdmin={isEffectiveAdmin}
       currentUsername={authStatus?.username}
       requireCharacterToSpeak={requireCharacterToSpeak}
-      onChangeSpeakerId={setSpeakerId}
       onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
       onUpdateCharacterColor={handleUpdateCharacterColor}
       onSend={handleSendTurn}
-      onSendIntro={handleSendIntro}
       onEditUserMessage={handleEditUserMessage}
       onUpdateMessageInPlace={handleUpdateMessageInPlace}
       onDeleteMessage={handleDeleteMessage}
@@ -1073,7 +1058,7 @@ export function App() {
     "";
 
   return (
-    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[#07090f] text-slate-100">
+    <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-[#07090f] text-slate-100">
       {/* Atmospheric Night City Backdrop */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <img
@@ -1086,11 +1071,9 @@ export function App() {
         <div className="cyber-scanlines absolute inset-0 opacity-55" />
       </div>
 
-      <div className="relative z-10 flex h-full w-full flex-col overflow-hidden">
+      <div className="relative z-10 flex h-full min-h-0 w-full flex-col overflow-hidden">
       <TopBar
         health={health}
-        campaigns={campaigns}
-        activeCampaign={activeCampaign}
         llmSettings={llmSettings}
         revisionMismatch={Boolean(chatTree?.revision_mismatch)}
         coopCount={roster.length}
@@ -1098,14 +1081,6 @@ export function App() {
         viewAsUser={viewAsUser}
         onToggleViewAsUser={() => void handleToggleViewAsUser()}
         onSyncRevisions={handleSyncRevisions}
-        onSelectCampaign={handleSelectCampaign}
-        onCreateCampaign={handleCreateCampaign}
-        onOpenNewCampaign={() => {
-          setCampaignCreatorEdit(null);
-          setCampaignCreatorOpen(true);
-        }}
-        onStartSession={handleStartSession}
-        onExportChat={handleExportChat}
         onOpenCoop={() => setCoopOpen(true)}
         onOpenSettings={() => {
           setSettingsInitialTab(isEffectiveAdmin ? "connection" : "display");
@@ -1115,26 +1090,12 @@ export function App() {
           setSettingsInitialTab("corebook");
           setSettingsOpen(true);
         }}
-        onToggleThinkingMode={async (nextMode) => {
-          try {
-            const updated = await saveLLMSettings({ gm_thinking_mode: nextMode });
-            setLlmSettings(updated);
-            notify(
-              nextMode === "balanced"
-                ? "Switched to GM Balanced (same writing, less waiting)."
-                : "Switched to GM Quality (full thinking on all passes).",
-            );
-          } catch (err) {
-            notify(err instanceof Error ? err.message : "Failed to switch GM mode");
-          }
-        }}
-        onOpenSearch={() => setSearchOpen(true)}
         onOpenAuth={() => setAuthModalOpen(true)}
         onSignOut={() => void handleSignOut()}
       />
 
       {/* Mobile pane switcher */}
-      <div className="flex border-b border-slate-800 bg-[#0d111a] md:hidden">
+      <div className="flex shrink-0 border-b border-slate-800 bg-[#0d111a] md:hidden">
         <button
           type="button"
           onClick={() => setMobilePane("chat")}
@@ -1158,7 +1119,7 @@ export function App() {
       </div>
 
       {isDesktop ? (
-        <main className="flex flex-1 overflow-hidden">
+        <main className="flex min-h-0 flex-1 overflow-hidden">
           <PanelGroup direction="horizontal" autoSaveId="redgm-split-layout">
             <Panel defaultSize={58} minSize={32}>
               {chatPaneNode}
@@ -1174,7 +1135,7 @@ export function App() {
           </PanelGroup>
         </main>
       ) : (
-        <main className="flex flex-1 overflow-hidden">
+        <main className="flex min-h-0 flex-1 overflow-hidden">
           {mobilePane === "chat" ? chatPaneNode : dashboardContent}
         </main>
       )}
