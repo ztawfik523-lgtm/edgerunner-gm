@@ -1066,12 +1066,10 @@ export function CharacterPanel({
         >
           {STAT_NAMES.map((stat) => {
             const selectedStat = sheetTab === "skills" && checkStat === stat;
-            const guide = STAT_QUICK_GUIDE[stat];
             return (
               <button
                 key={stat}
                 type="button"
-                title={`${guide.full} (${stat} ${active.stats[stat]}): ${guide.desc}`}
                 onMouseEnter={() => setInspectedStat(stat)}
                 onFocus={() => setInspectedStat(stat)}
                 onBlur={() => setInspectedStat((prev) => (prev === stat ? null : prev))}
@@ -1091,18 +1089,21 @@ export function CharacterPanel({
             );
           })}
         </div>
-        {inspectedStat && (
-          <div className="flex items-start gap-2 rounded border border-cyan-500/30 bg-cyan-950/25 px-2.5 py-1.5 text-[11px] text-slate-200">
-            <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-400" />
-            <div>
-              <span className="font-semibold text-cyan-300">
-                {STAT_QUICK_GUIDE[inspectedStat].full} ({inspectedStat}{" "}
-                {active.stats[inspectedStat]})
-              </span>{" "}
-              — {STAT_QUICK_GUIDE[inspectedStat].desc}
+        {(() => {
+          const displayedStat = inspectedStat ?? checkStat;
+          return (
+            <div className="flex min-h-[52px] items-start gap-2 rounded border border-cyan-500/30 bg-cyan-950/25 px-2.5 py-1.5 text-[11px] leading-snug text-slate-200">
+              <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-400" />
+              <div>
+                <span className="font-semibold text-cyan-300">
+                  {STAT_QUICK_GUIDE[displayedStat].full} ({displayedStat}{" "}
+                  {active.stats[displayedStat]})
+                </span>{" "}
+                — {STAT_QUICK_GUIDE[displayedStat].desc}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Tab Navigation */}
@@ -1291,6 +1292,54 @@ export function CharacterPanel({
                 </div>
               )}
             </div>
+            {(() => {
+              const displayedSkill =
+                inspectedSkill && active.skills[inspectedSkill] !== undefined
+                  ? inspectedSkill
+                  : active.skills[checkSkill] !== undefined
+                    ? checkSkill
+                    : null;
+              if (!displayedSkill) {
+                return (
+                  <div className="flex min-h-[42px] items-center rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-500">
+                    Hover or select a trained skill to inspect roll math and IP upgrade cost.
+                  </div>
+                );
+              }
+              const lvl = active.skills[displayedSkill] ?? 0;
+              const meta = corebookSkills[displayedSkill];
+              const mStat = meta?.stat as StatName | undefined;
+              const sVal = mStat && STAT_NAMES.includes(mStat) ? active.stats[mStat] : null;
+              const nextRank = lvl + 1;
+              const ipCost = nextRank <= 10 ? (isDifficultSkill(displayedSkill) ? nextRank * 40 : nextRank * 20) : null;
+              return (
+                <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-300">
+                  <div>
+                    <span className="font-semibold text-cyan-300">{displayedSkill}</span>
+                    {mStat && sVal !== null ? (
+                      <span>
+                        {" "}
+                        — Roll <span className="font-mono">d10 + {mStat} ({sVal}) + Rank ({lvl})</span>{" "}
+                        = <span className="font-mono text-emerald-300">d10 + {sVal + lvl}</span>
+                        {meta?.cost === 2 ? " · Difficult (x2 cost)" : ""}
+                      </span>
+                    ) : (
+                      <span> — Rank +{lvl} (click to load into check roller)</span>
+                    )}
+                  </div>
+                  {ipCost !== null && (
+                    <button
+                      type="button"
+                      disabled={busy || sheetLocked || currentIp < ipCost}
+                      onClick={() => void handleSpendIpSkill(displayedSkill, lvl)}
+                      className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                    >
+                      Upgrade +1 ({ipCost} IP)
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             <div
               className="flex flex-wrap gap-1.5"
               onMouseLeave={() => setInspectedSkill(null)}
@@ -1341,45 +1390,6 @@ export function CharacterPanel({
                 );
               })}
             </div>
-            {inspectedSkill && active.skills[inspectedSkill] !== undefined && (
-              <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-300">
-                {(() => {
-                  const lvl = active.skills[inspectedSkill] ?? 0;
-                  const meta = corebookSkills[inspectedSkill];
-                  const mStat = meta?.stat as StatName | undefined;
-                  const sVal = mStat && STAT_NAMES.includes(mStat) ? active.stats[mStat] : null;
-                  const nextRank = lvl + 1;
-                  const ipCost = nextRank <= 10 ? (isDifficultSkill(inspectedSkill) ? nextRank * 40 : nextRank * 20) : null;
-                  return (
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <span className="font-semibold text-cyan-300">{inspectedSkill}</span>
-                        {mStat && sVal !== null ? (
-                          <span>
-                            {" "}
-                            — Roll <span className="font-mono">d10 + {mStat} ({sVal}) + Rank ({lvl})</span>{" "}
-                            = <span className="font-mono text-emerald-300">d10 + {sVal + lvl}</span>
-                            {meta?.cost === 2 ? " · Difficult (x2 cost)" : ""}
-                          </span>
-                        ) : (
-                          <span> — Rank +{lvl} (click to load into check roller)</span>
-                        )}
-                      </div>
-                      {ipCost !== null && (
-                        <button
-                          type="button"
-                          disabled={busy || sheetLocked || currentIp < ipCost}
-                          onClick={() => void handleSpendIpSkill(inspectedSkill, lvl)}
-                          className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
-                        >
-                          Upgrade +1 ({ipCost} IP)
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
           </div>
         </div>
       )}
