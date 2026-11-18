@@ -49,28 +49,29 @@ export function TopBar({
   const canAdminSettings = isTrueAdmin && !viewAsUser;
 
   return (
-    <header className="border-b border-rose-500/25 bg-[#0b0f18]/92 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.45)]">
-      <div className="flex flex-wrap items-center justify-between gap-1.5 px-2.5 py-1.5 lg:px-3">
+    <header className="shrink-0 border-b border-rose-500/25 bg-[#0b0f18]/92 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.45)]">
+      <div className="flex flex-nowrap items-center justify-between gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5">
         {/* Left: Compact Brand */}
-        <div className="flex items-center gap-2">
-          <div className="cyber-cut-sm cyber-brand-badge flex items-center gap-1.5 border border-rose-500/50 bg-gradient-to-r from-rose-600/25 via-rose-950/35 to-cyan-950/30 px-2 py-0.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
+        <div className="flex shrink-0 items-center gap-1.5">
+          <div className="cyber-cut-sm cyber-brand-badge flex items-center gap-1.5 border border-rose-500/50 bg-gradient-to-r from-rose-600/25 via-rose-950/35 to-cyan-950/30 px-1.5 py-0.5 sm:px-2">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
             <span
               data-text="Cyberpunk RED"
               className="cyber-glitch-title font-cyber-display text-[10px] font-bold tracking-[0.12em] text-rose-200 uppercase"
             >
-              Cyberpunk RED
+              <span className="sm:hidden">CP:RED</span>
+              <span className="hidden sm:inline">Cyberpunk RED</span>
             </span>
           </div>
         </div>
 
         {/* Right: Utilities & Status */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto sm:gap-1.5">
           <button
             type="button"
             onClick={onOpenCoop}
             title="Party players & LAN hosting"
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition ${
+            className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:gap-1.5 sm:px-2 sm:text-xs ${
               health?.lan_enabled
                 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
                 : "border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-500/60"
@@ -95,7 +96,7 @@ export function TopBar({
                   : "Settings"
                 : "Display & Account Settings"
             }
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200 sm:px-2"
           >
             <Settings className="h-3.5 w-3.5 text-cyan-400" />
             <span className="font-cyber-hud tracking-wide hidden sm:inline">Settings</span>
@@ -115,7 +116,7 @@ export function TopBar({
                   ? "Currently previewing as a Player (GM secrets & admin controls hidden). Click to switch back to Admin."
                   : "Switch to Player view without signing out (hides GM secrets & admin controls)."
               }
-              className={`inline-flex items-center justify-center rounded-md border p-1.5 transition ${
+              className={`inline-flex shrink-0 items-center justify-center rounded-md border p-1 transition sm:p-1.5 ${
                 viewAsUser
                   ? "border-amber-400/70 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
                   : "border-rose-500/45 bg-rose-500/10 text-rose-200 hover:border-rose-400 hover:bg-rose-500/20"
@@ -130,13 +131,13 @@ export function TopBar({
           )}
 
           {authStatus?.auth_enabled && (authStatus.role === "admin" || authStatus.role === "user") && (
-            <div className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px]">
+            <div className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1 text-[11px] sm:px-2">
               {authStatus.role === "admin" && !viewAsUser ? (
-                <Shield className="h-3 w-3 text-rose-400" aria-hidden="true" />
+                <Shield className="h-3 w-3 shrink-0 text-rose-400" aria-hidden="true" />
               ) : (
-                <UserCheck className="h-3 w-3 text-cyan-400" aria-hidden="true" />
+                <UserCheck className="h-3 w-3 shrink-0 text-cyan-400" aria-hidden="true" />
               )}
-              <span className="max-w-[110px] truncate font-semibold text-slate-200">
+              <span className="max-w-[68px] truncate font-semibold text-slate-200 sm:max-w-[110px]">
                 {authStatus.username || (authStatus.role === "admin" ? "Admin" : "Player")}
               </span>
               {authStatus.role === "user" && onOpenAuth && (

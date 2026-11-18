@@ -788,9 +788,9 @@ export function ChatPane({
           ref={scrollContainerRef}
           onScroll={handleScroll}
           data-testid="chat-scroll-container"
-          className="flex-1 overflow-y-auto px-4 py-5"
+          className="flex-1 overflow-y-auto px-2.5 py-3 sm:px-4 sm:py-5"
         >
-          <div className="mx-auto max-w-3xl space-y-5">
+          <div className="mx-auto max-w-3xl space-y-3 sm:space-y-5">
             {visibleMessages.length === 0 && !streaming && (
               <div className="rounded-lg border border-slate-800/80 bg-[#0b101b]/75 px-4 py-6 text-center text-xs text-slate-400">
                 No messages yet. Check the <strong className="text-slate-200">Campaign</strong> tab for story &amp; rules, or describe your opening move below.
@@ -897,9 +897,9 @@ export function ChatPane({
                   className={`group flex flex-col ${isUser ? "items-end" : "items-start"}`}
                 >
                   <div
-                    className={`rounded-xl px-4 py-3 transition ${
+                    className={`rounded-xl px-3 py-2.5 transition sm:px-4 sm:py-3 ${
                       isUser
-                        ? `max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
+                        ? `max-w-[92%] sm:max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
                         : "w-full border border-slate-800/90 bg-[#0e1422] text-slate-100"
                     }`}
                     style={isUser ? speakerTheme.cardBorderStyle : undefined}
@@ -1432,11 +1432,11 @@ export function ChatPane({
         </div>
 
         {showJumpToLatest && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-4">
+          <div className="pointer-events-none absolute right-2.5 bottom-2.5 z-20 flex justify-end sm:inset-x-0 sm:bottom-3 sm:justify-center sm:px-4">
             <button
               type="button"
               onClick={() => scrollToBottom(true)}
-              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-cyan-500/50 bg-[#0d111a]/95 px-3 py-1.5 text-xs font-medium text-cyan-200 shadow-lg backdrop-blur hover:border-cyan-400 hover:bg-slate-900"
+              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-cyan-500/50 bg-[#0d111a]/95 px-2.5 py-1 text-[11px] font-medium text-cyan-200 shadow-lg backdrop-blur hover:border-cyan-400 hover:bg-slate-900 sm:px-3 sm:py-1.5 sm:text-xs"
             >
               <ArrowDown className="h-3.5 w-3.5" />
               Jump to latest
@@ -1448,9 +1448,9 @@ export function ChatPane({
       {/* Composer Dock */}
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="shrink-0 border-t border-slate-800/90 bg-[#0b0f19]/95 px-4 py-3 backdrop-blur-md"
+        className="shrink-0 border-t border-slate-800/90 bg-[#0b0f19]/95 px-2.5 py-2 backdrop-blur-md sm:px-4 sm:py-3"
       >
-        <div className="mx-auto max-w-3xl space-y-2">
+        <div className="mx-auto max-w-3xl space-y-1.5 sm:space-y-2">
           {lockedByPeer && (
             <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
               <Lock className="h-3.5 w-3.5 shrink-0" />
@@ -1482,8 +1482,8 @@ export function ChatPane({
 
           {/* Characterless Speaking Lock Banner */}
           {blockedByNoCharacter && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-500/45 bg-rose-950/25 px-3 py-2 text-xs text-rose-200">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-500/45 bg-rose-950/25 px-2.5 py-1.5 text-[11px] text-rose-200 sm:px-3 sm:py-2 sm:text-xs">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
                 <Lock className="h-3.5 w-3.5 shrink-0 text-rose-400" />
                 <span>
                   Admin requires an active Edgerunner sheet to speak in chat. Create or claim your character first.
@@ -1493,7 +1493,7 @@ export function ChatPane({
                 <button
                   type="button"
                   onClick={onOpenCreateCharacter}
-                  className="inline-flex items-center gap-1 rounded bg-cyan-600 px-2.5 py-1 font-semibold text-white hover:bg-cyan-500"
+                  className="inline-flex shrink-0 items-center gap-1 rounded bg-cyan-600 px-2.5 py-1 font-semibold text-white hover:bg-cyan-500"
                 >
                   <UserPlus className="h-3.5 w-3.5" />
                   <span>Create Character</span>
@@ -1584,8 +1584,8 @@ export function ChatPane({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1.5 sm:grid-cols-[1fr_auto_auto] sm:gap-y-2">
+            <div className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-1 sm:gap-1.5">
               {luckChar && (
                 <div
                   title={`Commit LUCK before the roll (only spent if a check runs this turn; ${maxLuck} available)`}
@@ -1623,7 +1623,7 @@ export function ChatPane({
               <button
                 type="button"
                 onClick={() => setDiceOpen((v) => !v)}
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
+                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
                   diceOpen
                     ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
                     : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
@@ -1637,7 +1637,7 @@ export function ChatPane({
                 type="button"
                 onClick={() => setColorBarOpen((v) => !v)}
                 title="Highlight text or pick your character's Name Tag Color"
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
+                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
                   colorBarOpen
                     ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
                     : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
@@ -1658,12 +1658,10 @@ export function ChatPane({
               )}
             </div>
 
-            <span className="hidden sm:inline text-[11px] text-slate-500">
+            <span className="hidden text-[11px] text-slate-500 sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:inline sm:justify-self-end">
               Enter to send · Shift+Enter for new line · <code className="text-slate-400">/roll 3d6</code>
             </span>
-          </div>
 
-          <div className="flex items-end gap-2">
             <textarea
               ref={composerRef}
               value={input}
@@ -1683,7 +1681,7 @@ export function ChatPane({
               }
               rows={2}
               disabled={busy || lockedByPeer || blockedByNoCharacter}
-              className="min-w-0 flex-1 resize-none rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-60"
+              className="col-start-1 row-start-2 min-h-[40px] w-full min-w-0 resize-none rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-60 max-sm:h-10 sm:px-3 sm:py-2"
             />
 
             <button
@@ -1691,7 +1689,7 @@ export function ChatPane({
               onClick={cycleGmMode}
               aria-label={`GM turn mode: ${currentGmMode.label}`}
               title={currentGmMode.tip}
-              className={`inline-flex h-10 shrink-0 items-center rounded-lg border px-2.5 text-[11px] font-semibold transition ${currentGmMode.cls}`}
+              className={`col-start-2 row-start-1 inline-flex h-7 shrink-0 items-center justify-self-end rounded-md border px-2 text-[11px] font-semibold transition sm:col-start-2 sm:row-start-2 sm:h-10 sm:self-end sm:rounded-lg sm:px-2.5 ${currentGmMode.cls}`}
             >
               {currentGmMode.label}
             </button>
@@ -1700,7 +1698,7 @@ export function ChatPane({
               <button
                 type="button"
                 onClick={onStopStream}
-                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-semibold text-white hover:bg-rose-500 sm:px-4"
+                className="col-start-2 row-start-2 inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-500 sm:col-start-3 sm:px-4"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
                 Stop
@@ -1709,7 +1707,7 @@ export function ChatPane({
               <button
                 type="submit"
                 disabled={!input.trim() || lockedByPeer || blockedByNoCharacter}
-                className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold text-white disabled:opacity-40 sm:px-4 ${
+                className={`col-start-2 row-start-2 inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded-lg px-3 text-xs font-semibold text-white disabled:opacity-40 sm:col-start-3 sm:px-4 ${
                   gmMode === "hold_gm"
                     ? "bg-amber-600 hover:bg-amber-500"
                     : "bg-cyan-600 hover:bg-cyan-500"

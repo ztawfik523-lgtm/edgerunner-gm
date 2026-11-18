@@ -912,7 +912,7 @@ export function App() {
 
   const dashboardContent = (
     <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-[#0c101a]/88 backdrop-blur-[2px]">
-      <div className="flex border-b border-slate-800/90 bg-[#0d111a]/95 px-2 pt-1.5">
+      <div className="flex border-b border-slate-800/90 bg-[#0d111a]/95 px-2 pt-1 sm:pt-1.5">
         {(
           [
             { id: "character", label: "Character", icon: User },
@@ -924,7 +924,7 @@ export function App() {
             key={id}
             type="button"
             onClick={() => setRightTab(id)}
-            className={`inline-flex items-center gap-1.5 border-b-2 px-3.5 py-2 text-xs font-semibold transition ${
+            className={`inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2.5 py-1.5 text-xs font-semibold transition sm:flex-none sm:justify-start sm:px-3.5 sm:py-2 ${
               rightTab === id
                 ? "border-rose-500 text-slate-100"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -1099,7 +1099,7 @@ export function App() {
         <button
           type="button"
           onClick={() => setMobilePane("chat")}
-          className={`flex-1 py-2 text-xs font-semibold ${
+          className={`flex-1 py-1.5 text-xs font-semibold ${
             mobilePane === "chat" ? "border-b-2 border-cyan-400 text-cyan-300" : "text-slate-400"
           }`}
         >
@@ -1109,7 +1109,7 @@ export function App() {
         <button
           type="button"
           onClick={() => setMobilePane("dashboard")}
-          className={`flex-1 py-2 text-xs font-semibold ${
+          className={`flex-1 py-1.5 text-xs font-semibold ${
             mobilePane === "dashboard" ? "border-b-2 border-rose-500 text-rose-300" : "text-slate-400"
           }`}
         >
