@@ -1044,7 +1044,14 @@ export function CharacterPanel({
                 Seriously Wounded: <span className="text-slate-200">{threshold}</span>
               </span>
               <span className="font-mono text-[10px] text-slate-400">
-                Death Save: <span className="text-slate-200">{active.stats.BODY}</span>
+                Death Save:{" "}
+                <span className="text-slate-200">
+                  {Number(
+                    (active.detail as { creation?: { effective_body?: number }; death_save?: number } | undefined)?.creation?.effective_body ??
+                      (active.detail as { death_save?: number } | undefined)?.death_save ??
+                      active.stats.BODY,
+                  )}
+                </span>
               </span>
               <span
                 className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold ${

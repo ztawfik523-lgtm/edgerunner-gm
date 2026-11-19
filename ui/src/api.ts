@@ -405,6 +405,10 @@ export async function listCampaigns(): Promise<CampaignRecord[]> {
   return gameAction<CampaignRecord[]>("list_campaigns", {});
 }
 
+export async function listCharacters(): Promise<CharacterRecord[]> {
+  return gameAction<CharacterRecord[]>("list_characters", {});
+}
+
 export async function createCampaign(name: string): Promise<CampaignRecord> {
   return gameAction<CampaignRecord>("create_campaign", {
     name,
@@ -488,6 +492,7 @@ export async function assistCharacterCreation(
 }
 
 export interface CampaignBootstrapPayload {
+  name?: string;
   scene?: string;
   summary?: string;
   npcs?: Record<string, string>;
@@ -500,6 +505,42 @@ export interface CampaignBootstrapPayload {
     segments: number;
     note?: string;
   };
+  clocks?: Array<{
+    id?: string;
+    name: string;
+    segments: number;
+    filled?: number;
+    category?: string;
+    visibility?: "public" | "secret";
+    note?: string;
+  }>;
+  district?: string;
+  zone_type?: string;
+  threat_rating?: string;
+  caper_style?: string;
+  factions?: string[];
+  screamsheet_hook?: string;
+  campaign_meta?: Record<string, unknown>;
+  clear_missing?: boolean;
+  npc_identities?: Record<
+    string,
+    {
+      handle?: string;
+      real_name?: string;
+      real_name_hidden?: boolean;
+      personality?: string;
+      speech_style?: string;
+    }
+  >;
+  world_entities?: {
+    factions?: Array<{ name: string; disposition?: string; turf?: string; notes?: string }>;
+    locations?: Array<{ name: string; district?: string; security?: string; notes?: string }>;
+    gig?: { title?: string; client?: string; target?: string; payout_eb?: number; deadline?: string; notes?: string };
+    screamsheet?: { headline: string; body?: string };
+  };
+  session_zero?: Record<string, unknown>;
+  starting_clock_minutes?: number;
+  attach_character_ids?: string[];
 }
 
 export async function bootstrapCampaign(
@@ -563,6 +604,12 @@ export async function createRulesPlayerCharacter(
     specializations?: Record<string, string>;
     role_choices?: Record<string, unknown>;
     cultural_language?: string;
+    housing?: string;
+    lifestyle?: string;
+    trauma_team?: string;
+    reputation?: number;
+    reputation_note?: string;
+    starting_hooks?: Record<string, string>;
     lifepath: Record<string, unknown>;
     backstory?: Record<string, unknown>;
     starting_gear?: Record<string, unknown>;

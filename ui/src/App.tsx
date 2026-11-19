@@ -645,6 +645,7 @@ export function App() {
       signal: AbortSignal,
     ) => Promise<void>,
     truncateFromId?: string,
+    targetCampaignId?: string,
   ) => {
     const controller = new AbortController();
     abortRef.current = controller;
@@ -709,8 +710,9 @@ export function App() {
         notify(err instanceof Error ? err.message : "Turn failed");
       }
     } finally {
-      if (activeCampaignId) {
-        await refreshActiveCampaign().catch(() => {});
+      const refreshCampId = targetCampaignId ?? activeCampaignId;
+      if (refreshCampId) {
+        await loadCampaignData(refreshCampId).catch(() => {});
       }
       abortRef.current = null;
       setStreaming(null);
@@ -1147,11 +1149,33 @@ export function App() {
           setCampaignCreatorOpen(false);
           setCampaignCreatorEdit(null);
         }}
-        onCreated={async (id, name) => {
+        onCreated={async (id, name, options) => {
           const updatedList = await listCampaigns();
           setCampaigns(updatedList);
           await handleSelectCampaign(id);
           notify(`Created campaign "${name}".`);
+          if (options?.launchIntro) {
+            setCampaignCreatorOpen(false);
+            setCampaignCreatorEdit(null);
+            await runStreamedAction(
+              "Begin the opening scene and welcome the crew.",
+              false,
+              undefined,
+              (callbacks, signal) =>
+                streamChatTurn(
+                  {
+                    campaign_id: id,
+                    user_text: "Begin the opening scene and welcome the crew.",
+                    is_intro: true,
+                  },
+                  callbacks,
+                  signal,
+                ),
+              undefined,
+              id,
+            );
+            await loadCampaignData(id, "main");
+          }
         }}
         onUpdated={async (id, name) => {
           const updatedList = await listCampaigns();

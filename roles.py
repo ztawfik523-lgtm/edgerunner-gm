@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import secrets
 from typing import Any, Callable
 from mechanics import skill_check
@@ -53,15 +54,47 @@ def validate_role_choices(role: str, rank: int, choices: Any):
     elif role == "Exec":
         team = choices.get("team_member") if isinstance(choices, dict) else None
         if rank >= 3 and not isinstance(team, dict): raise ValueError("Exec team member choice required from rank 3")
-        out["requires_human_ruling"] = True
-        out["reason"] = "Team member's job-chart results and GM-controlled character details require adjudication."
+        if isinstance(team, dict) and str(team.get("name") or "").strip() and str(team.get("role") or "").strip():
+            raw_loy = team.get("loyalty", 4)
+            loyalty = max(1, min(10, int(raw_loy))) if isinstance(raw_loy, int) and not isinstance(raw_loy, bool) else 4
+            out["initial_team"] = [{
+                "id": "exec-team-1",
+                "name": str(team["name"]).strip(),
+                "role": str(team["role"]).strip(),
+                "loyalty": loyalty,
+            }]
+        else:
+            out["requires_human_ruling"] = True
+            out["reason"] = "Team member's job-chart results and GM-controlled character details require adjudication."
     elif role == "Fixer":
         if not isinstance(choices, dict) or not isinstance(choices.get("language"), str) or not isinstance(choices.get("culture"), str): raise ValueError("Fixer choice requires language and culture")
     elif role == "Nomad":
         selected = choices.get("moto", []) if isinstance(choices, dict) else choices
         if not isinstance(selected, list) or len(selected) != rank or any(not isinstance(x, (str, dict)) for x in selected): raise ValueError("Nomad must select one Moto vehicle/upgrade option per rank")
-        out["requires_human_ruling"] = True
-        out["reason"] = "Vehicle and upgrade catalog validation is not available in this extract."
+        upgrade_keywords = ("armored", "smuggling", "heavy chassis", "nos", "nitrous", "bulletproof", "upgrade", "seating", "housing", "comms", "communications", "amphibious", "ram", "stealth", "weapon mount")
+        motorpool: list[dict[str, Any]] = []
+        upgrades: list[str] = []
+        for idx, item in enumerate(selected):
+            label = item.get("name", "") if isinstance(item, dict) else item
+            label_clean = str(label).strip()
+            if not label_clean:
+                continue
+            low = label_clean.lower()
+            if any(kw in low for kw in upgrade_keywords):
+                upgrades.append(label_clean)
+            else:
+                slug = re.sub(r"[^a-z0-9]+", "-", low).strip("-") or f"moto-{idx + 1}"
+                motorpool.append({"id": slug, "name": label_clean, "verified": True, "upgrades": []})
+        if not motorpool and upgrades:
+            motorpool.append({"id": "nomad-family-vehicle", "name": "Nomad Family Groundcar", "verified": True, "upgrades": []})
+        if motorpool:
+            if upgrades:
+                motorpool[0]["upgrades"] = list(upgrades)
+            out["initial_motorpool"] = motorpool
+            out["active_vehicle"] = motorpool[0]["id"]
+        else:
+            out["requires_human_ruling"] = True
+            out["reason"] = "Vehicle and upgrade catalog validation is not available in this extract."
     return out
 
 

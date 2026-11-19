@@ -146,7 +146,10 @@ class CampaignStore:
             resolved_humanity = _integer(humanity, "humanity", 0, max(100, stats["EMP"] * 10))
         if operation_id is not None and (not isinstance(operation_id, str) or not operation_id):
             raise ValueError("operation_id must be a nonempty string")
-        max_hp = 10 + 5 * ((stats["BODY"] + stats["WILL"] + 1) // 2)
+        creation_det = validated_detail.get("creation") if isinstance(validated_detail.get("creation"), dict) else {}
+        eff_body = creation_det.get("effective_body")
+        body_for_hp = eff_body if isinstance(eff_body, int) and eff_body >= stats["BODY"] else stats["BODY"]
+        max_hp = 10 + 5 * ((body_for_hp + stats["WILL"] + 1) // 2)
         character_id = str(uuid.uuid4())
         record = dict(
             id=character_id,
@@ -291,12 +294,18 @@ class CampaignStore:
             "equipped_weapon",
             "equipped_armor",
             "equipped_head_armor",
+            "housing",
+            "lifestyle",
+            "trauma_team",
+            "reputation",
+            "reputation_note",
         }
         if not profile or set(profile) - allowed_keys:
             raise ValueError(
                 "profile may contain only backstory, lifepath, appearance, roles, handle, real_name, "
                 "real_name_hidden, gender, pronouns, portrait_url, color, owner_username, "
-                "equipped_weapon, equipped_armor, and equipped_head_armor"
+                "equipped_weapon, equipped_armor, equipped_head_armor, housing, lifestyle, "
+                "trauma_team, reputation, and reputation_note"
             )
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("reason must be a nonempty string")
@@ -325,13 +334,28 @@ class CampaignStore:
             before = self._record(row)
             updated = dict(before)
             new_detail = dict(before.get("detail") or {})
-            string_detail_keys = {"handle", "real_name", "gender", "pronouns", "portrait_url", "color", "owner_username", "equipped_weapon"}
+            string_detail_keys = {
+                "handle",
+                "real_name",
+                "gender",
+                "pronouns",
+                "portrait_url",
+                "color",
+                "owner_username",
+                "equipped_weapon",
+                "housing",
+                "lifestyle",
+                "trauma_team",
+                "reputation_note",
+            }
             armor_detail_keys = {"equipped_armor", "equipped_head_armor"}
             for key, val in profile.items():
                 if key == "roles":
                     if not isinstance(val, list):
                         raise ValueError("profile roles must be a list")
                     new_detail["roles"] = val
+                elif key == "reputation":
+                    new_detail["reputation"] = _integer(val, "profile reputation", 0, 10)
                 elif key == "appearance":
                     if not isinstance(val, (str, dict)):
                         raise ValueError("profile appearance must be a string or object")

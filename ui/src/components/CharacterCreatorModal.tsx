@@ -53,6 +53,7 @@ import {
 } from "../utils/weaponQuality";
 import {
   STAT_NAMES,
+  type CreationFashionItem,
   type CreationMethodInfo,
   type CreationReference,
   type CreationRoleInfo,
@@ -173,16 +174,49 @@ const MAKER_SPECIALTIES = [
 
 const PHARMA_RECIPES = ["Speedheal", "Rapidetox", "Stim", "Surge", "Antibiotic"] as const;
 
-const NOMAD_MOTO_PRESETS = [
+const NOMAD_BASE_VEHICLES = [
   "Compact Groundcar",
   "High Performance Groundcar",
   "Superbike",
+  "Gyrocopter",
+  "AV-4 (Rank 7+)",
+  "Aerozep (Rank 7+)",
+] as const;
+
+const NOMAD_VEHICLE_UPGRADES = [
   "Armored Chassis",
   "Smuggling Compartment",
   "Heavy Chassis",
   "NOS (Nitrous Boost)",
   "Bulletproof Glass",
-];
+  "Seating Upgrade",
+  "Onboard Housing",
+  "Communications Center",
+] as const;
+
+const NOMAD_MOTO_PRESETS = [...NOMAD_BASE_VEHICLES, ...NOMAD_VEHICLE_UPGRADES];
+
+const EXEC_TEAM_ROLES = [
+  "Covert Operative / Driver",
+  "Bodyguard",
+  "Company Driver",
+  "Covert Operative",
+  "Netrunner",
+  "Technician",
+] as const;
+
+const COREBOOK_FASHION_STYLES = [
+  "Bag Lady Chic",
+  "Gang Colors",
+  "Generic Chic",
+  "Bohemian",
+  "Leisurewear",
+  "Nomad Leathers",
+  "Asia Pop",
+  "Urban Flash",
+  "Businesswear",
+  "High Fashion",
+] as const;
 
 const SPECIALIZATION_SUGGESTIONS: Record<string, string[]> = {
   Language: ["English", "Spanish", "Japanese", "Mandarin Chinese", "Arabic", "Russian", "French", "German", "Korean"],
@@ -369,6 +403,10 @@ export function CharacterCreatorModal({
   ]);
   const [execTeamName, setExecTeamName] = useState("Kaito Reyes");
   const [execTeamRole, setExecTeamRole] = useState("Covert Operative / Driver");
+  const [execTeamLoyalty, setExecTeamLoyalty] = useState(4);
+  const [housing, setHousing] = useState("cargo_container");
+  const [lifestyle, setLifestyle] = useState("Kibble");
+  const [traumaTeam, setTraumaTeam] = useState<"None" | "Silver" | "Executive">("None");
 
   // STATs & template dice
   const [streetratRoll, setStreetratRoll] = useState<number>(1);
@@ -379,6 +417,8 @@ export function CharacterCreatorModal({
   const [edgerunnerSkills, setEdgerunnerSkills] = useState<Record<string, number>>({});
   const [customSkills, setCustomSkills] = useState<Record<string, number>>({ ...BASIC_SKILL_DEFAULTS, Handgun: 6, Perception: 6 });
   const [specializations, setSpecializations] = useState<Record<string, string>>({
+    Language: "Spanish",
+    "Local Expert": "Watson",
     "Play Instrument": "Electric Guitar",
     Science: "Biology",
     "Martial Arts": "Karate",
@@ -392,18 +432,18 @@ export function CharacterCreatorModal({
   // Lifepath, Backstory & Established History
   const [culturalRegion, setCulturalRegion] = useState("North American");
   const [culturalLanguage, setCulturalLanguage] = useState("Spanish");
-  const [personality, setPersonality] = useState("Stable and serious");
-  const [clothingStyle, setClothingStyle] = useState("Urban Flash (Flashy, Technological, Streetwear)");
+  const [personality, setPersonality] = useState("Steady and grounded");
+  const [clothingStyle, setClothingStyle] = useState("Urban Flash (Neon-accented techwear)");
   const [hairstyle, setHairstyle] = useState("Short and spiked");
   const [affectation, setAffectation] = useState("Mirrorshades");
-  const [valueMost, setValueMost] = useState("Your word");
-  const [feelingsAboutPeople, setFeelingsAboutPeople] = useState("People are untrustworthy. Don't depend on anyone.");
-  const [valuedPerson, setValuedPerson] = useState("A friend");
-  const [valuedPossession, setValuedPossession] = useState("A weapon");
-  const [familyBackground, setFamilyBackground] = useState("Edgerunners (Always moving based on parents' latest gig)");
-  const [childhoodEnv, setChildhoodEnv] = useState("Ran on The Street, with no adult supervision");
-  const [familyCrisis, setFamilyCrisis] = useState("Your family lost everything through betrayal.");
-  const [lifeGoal, setLifeGoal] = useState("Get off The Street no matter what it takes.");
+  const [valueMost, setValueMost] = useState("Keeping your word");
+  const [feelingsAboutPeople, setFeelingsAboutPeople] = useState("Relies on nobody—trust gets you killed.");
+  const [valuedPerson, setValuedPerson] = useState("A close friend");
+  const [valuedPossession, setValuedPossession] = useState("A firearm or blade");
+  const [familyBackground, setFamilyBackground] = useState("Edgerunner Kids — Constant moves between safehouses and high-roller suites depending on gigs.");
+  const [childhoodEnv, setChildhoodEnv] = useState("Growing up unsupervised on the city streets.");
+  const [familyCrisis, setFamilyCrisis] = useState("Betrayal wiped out the family's assets.");
+  const [lifeGoal, setLifeGoal] = useState("Earn enough to escape street life for good.");
   const [roleLifepath, setRoleLifepath] = useState<Record<string, string>>({});
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [enemies, setEnemies] = useState<EnemyEntry[]>([]);
@@ -411,6 +451,13 @@ export function CharacterCreatorModal({
   const [backstorySummary, setBackstorySummary] = useState("");
   const [establishedHistory, setEstablishedHistory] = useState("");
   const [appearanceNotes, setAppearanceNotes] = useState("");
+  const [reputation, setReputation] = useState(0);
+  const [reputationNote, setReputationNote] = useState("");
+  const [traumaHook, setTraumaHook] = useState("");
+  const [addictionHook, setAddictionHook] = useState("");
+  const [debtHook, setDebtHook] = useState("");
+  const [showRepHooks, setShowRepHooks] = useState(false);
+  const [ammoCaliber, setAmmoCaliber] = useState("");
   const [aiBioGuidance, setAiBioGuidance] = useState("");
   const [aiContactsGuidance, setAiContactsGuidance] = useState("");
   const [aiBusyKey, setAiBusyKey] = useState<string | null>(null);
@@ -431,6 +478,7 @@ export function CharacterCreatorModal({
     "all" | "foundation" | "neural" | "cyberoptic" | "cyberaudio" | "cyberlimb" | "body" | "fashionware"
   >("all");
   const [programSubFilter, setProgramSubFilter] = useState<"all" | "booster" | "defender" | "attacker" | "black_ice">("all");
+  const [fashionStyleFilter, setFashionStyleFilter] = useState<string>("All");
   const [shopSort, setShopSort] = useState<"cost_asc" | "cost_desc" | "name_asc" | "sp_desc" | "hl_asc" | "tier_asc" | "tier_desc">("cost_asc");
   const [affordableOnly, setAffordableOnly] = useState(false);
   const [selectedOnly, setSelectedOnly] = useState(false);
@@ -489,30 +537,37 @@ export function CharacterCreatorModal({
     setNomadVehicles(["Compact Groundcar", "Superbike", "Smuggling Compartment", "Armored Chassis"]);
     setExecTeamName("Kaito Reyes");
     setExecTeamRole("Covert Operative / Driver");
+    setExecTeamLoyalty(4);
+    setHousing("cargo_container");
+    setLifestyle("Kibble");
+    setTraumaTeam("None");
+    setFashionStyleFilter("All");
     setStreetratRoll(1);
     setEdgerunnerRolls([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     setCustomStats({ ...FALLBACK_STATS });
     setEdgerunnerSkills(roleInfo && Object.keys(roleInfo.skills).length === 20 ? { ...roleInfo.skills } : {});
     setCustomSkills({ ...BASIC_SKILL_DEFAULTS, Handgun: 6, Perception: 6 });
     setSpecializations({
+      Language: "Spanish",
+      "Local Expert": "Watson",
       "Play Instrument": "Electric Guitar",
       Science: "Biology",
       "Martial Arts": "Karate",
     });
     setCulturalRegion("North American");
     setCulturalLanguage("Spanish");
-    setPersonality("Stable and serious");
-    setClothingStyle("Urban Flash (Flashy, Technological, Streetwear)");
+    setPersonality("Steady and grounded");
+    setClothingStyle("Urban Flash (Neon-accented techwear)");
     setHairstyle("Short and spiked");
     setAffectation("Mirrorshades");
-    setValueMost("Your word");
-    setFeelingsAboutPeople("People are untrustworthy. Don't depend on anyone.");
-    setValuedPerson("A friend");
-    setValuedPossession("A weapon");
-    setFamilyBackground("Edgerunners (Always moving based on parents' latest gig)");
-    setChildhoodEnv("Ran on The Street, with no adult supervision");
-    setFamilyCrisis("Your family lost everything through betrayal.");
-    setLifeGoal("Get off The Street no matter what it takes.");
+    setValueMost("Keeping your word");
+    setFeelingsAboutPeople("Relies on nobody—trust gets you killed.");
+    setValuedPerson("A close friend");
+    setValuedPossession("A firearm or blade");
+    setFamilyBackground("Edgerunner Kids — Constant moves between safehouses and high-roller suites depending on gigs.");
+    setChildhoodEnv("Growing up unsupervised on the city streets.");
+    setFamilyCrisis("Betrayal wiped out the family's assets.");
+    setLifeGoal("Earn enough to escape street life for good.");
     setRoleLifepath({});
     setFriends([]);
     setEnemies([]);
@@ -520,6 +575,12 @@ export function CharacterCreatorModal({
     setBackstorySummary("");
     setEstablishedHistory("");
     setAppearanceNotes("");
+    setReputation(0);
+    setReputationNote("");
+    setTraumaHook("");
+    setAddictionHook("");
+    setDebtHook("");
+    setAmmoCaliber("");
     setAiBioGuidance("");
     setAiContactsGuidance("");
     setWeaponChoices({});
@@ -564,6 +625,10 @@ export function CharacterCreatorModal({
       if (Array.isArray(saved.nomadVehicles)) setNomadVehicles(saved.nomadVehicles as string[]);
       if (typeof saved.execTeamName === "string") setExecTeamName(saved.execTeamName);
       if (typeof saved.execTeamRole === "string") setExecTeamRole(saved.execTeamRole);
+      if (typeof saved.execTeamLoyalty === "number") setExecTeamLoyalty(saved.execTeamLoyalty);
+      if (typeof saved.housing === "string") setHousing(saved.housing);
+      if (typeof saved.lifestyle === "string") setLifestyle(saved.lifestyle);
+      if (saved.traumaTeam === "None" || saved.traumaTeam === "Silver" || saved.traumaTeam === "Executive") setTraumaTeam(saved.traumaTeam);
       if (typeof saved.streetratRoll === "number") setStreetratRoll(saved.streetratRoll);
       if (Array.isArray(saved.edgerunnerRolls)) setEdgerunnerRolls(saved.edgerunnerRolls as number[]);
       if (saved.customStats && typeof saved.customStats === "object") setCustomStats(saved.customStats as Record<StatName, number>);
@@ -591,6 +656,11 @@ export function CharacterCreatorModal({
       if (typeof saved.backstorySummary === "string") setBackstorySummary(saved.backstorySummary);
       if (typeof saved.establishedHistory === "string") setEstablishedHistory(saved.establishedHistory);
       if (typeof saved.appearanceNotes === "string") setAppearanceNotes(saved.appearanceNotes);
+      if (typeof saved.reputation === "number") setReputation(saved.reputation);
+      if (typeof saved.reputationNote === "string") setReputationNote(saved.reputationNote);
+      if (typeof saved.traumaHook === "string") setTraumaHook(saved.traumaHook);
+      if (typeof saved.addictionHook === "string") setAddictionHook(saved.addictionHook);
+      if (typeof saved.debtHook === "string") setDebtHook(saved.debtHook);
       if (typeof saved.aiBioGuidance === "string") setAiBioGuidance(saved.aiBioGuidance);
       if (typeof saved.aiContactsGuidance === "string") setAiContactsGuidance(saved.aiContactsGuidance);
       if (saved.weaponChoices && typeof saved.weaponChoices === "object") setWeaponChoices(saved.weaponChoices as Record<string, string>);
@@ -651,6 +721,10 @@ export function CharacterCreatorModal({
       nomadVehicles,
       execTeamName,
       execTeamRole,
+      execTeamLoyalty,
+      housing,
+      lifestyle,
+      traumaTeam,
       streetratRoll,
       edgerunnerRolls,
       customStats,
@@ -678,6 +752,11 @@ export function CharacterCreatorModal({
       backstorySummary,
       establishedHistory,
       appearanceNotes,
+      reputation,
+      reputationNote,
+      traumaHook,
+      addictionHook,
+      debtHook,
       aiBioGuidance,
       aiContactsGuidance,
       weaponChoices,
@@ -711,6 +790,10 @@ export function CharacterCreatorModal({
     nomadVehicles,
     execTeamName,
     execTeamRole,
+    execTeamLoyalty,
+    housing,
+    lifestyle,
+    traumaTeam,
     streetratRoll,
     edgerunnerRolls,
     customStats,
@@ -738,6 +821,11 @@ export function CharacterCreatorModal({
     backstorySummary,
     establishedHistory,
     appearanceNotes,
+    reputation,
+    reputationNote,
+    traumaHook,
+    addictionHook,
+    debtHook,
     aiBioGuidance,
     aiContactsGuidance,
     weaponChoices,
@@ -828,6 +916,14 @@ export function CharacterCreatorModal({
       }
       setRoleLifepath(nextRoleLp);
     }
+    if (roleChanged) {
+      if (selectedRole === "Exec") {
+        if (housing === "cargo_container") setHousing("corporate");
+        if (traumaTeam === "None") setTraumaTeam("Silver");
+      } else {
+        if (housing === "corporate") setHousing("cargo_container");
+      }
+    }
   }, [selectedRole, roleInfo?.name]);
 
   // Compute active STAT block
@@ -916,8 +1012,15 @@ export function CharacterCreatorModal({
     const cyberware: Array<{ name: string; hl: number; install?: string; notes?: string; cost_eb?: number }> = [];
     let equippedWeapon: string | undefined;
     let equippedArmor: { name: string; sp: number } | undefined;
+    let equippedHeadArmor: { name: string; sp: number } | undefined;
     let money = freeformMoney;
     let fashionSpent = 0;
+    let spent = 0;
+
+    const parseSp = (label: string, fallback = 11) => {
+      const m = label.match(/SP\s*(\d+)/i);
+      return m ? Number(m[1]) : fallback;
+    };
 
     if ((method === "streetrat" || method === "edgerunner") && roleInfo) {
       money = 500;
@@ -933,8 +1036,13 @@ export function CharacterCreatorModal({
       }
       for (const a of roleInfo.starting_armor) {
         inventory[a] = (inventory[a] ?? 0) + 1;
-        if (!equippedArmor && /Body/i.test(a)) {
-          equippedArmor = { name: a, sp: 11 };
+        if (/head|helmet|cowl/i.test(a)) {
+          const sp = parseSp(a, 11);
+          if (!equippedHeadArmor || sp > equippedHeadArmor.sp) {
+            equippedHeadArmor = { name: a, sp };
+          }
+        } else if (!/shield/i.test(a) && (!equippedArmor || /Body/i.test(a))) {
+          equippedArmor = { name: a, sp: parseSp(a, 11) };
         }
       }
       for (const o of roleInfo.starting_outfit) {
@@ -955,7 +1063,6 @@ export function CharacterCreatorModal({
         if (found) cyberware.push({ ...found });
       }
     } else {
-      let spent = 0;
       for (const item of cartItems) {
         if (item.category === "cyberware") {
           for (let q = 0; q < item.qty; q += 1) {
@@ -976,9 +1083,18 @@ export function CharacterCreatorModal({
           if (item.category === "armor") {
             const loc = (item.location ?? "").toLowerCase();
             const isShield = loc === "shield" || /shield/i.test(item.name);
-            const itemSp = typeof item.sp === "number" && item.sp > 0 ? item.sp : 11;
-            if (!isShield && (loc !== "head" || !equippedArmor) && (!equippedArmor || itemSp > equippedArmor.sp)) {
-              equippedArmor = { name: item.name, sp: itemSp };
+            const isHead = loc.includes("head") || /head|helmet|cowl|bodyweight/i.test(item.name);
+            const isBody = !loc || loc.includes("body") || (!isHead && !isShield);
+            const itemSp = typeof item.sp === "number" && item.sp > 0 ? item.sp : parseSp(item.name, 11);
+            if (!isShield && isHead) {
+              if (!equippedHeadArmor || itemSp > equippedHeadArmor.sp) {
+                equippedHeadArmor = { name: item.name, sp: itemSp };
+              }
+            }
+            if (!isShield && isBody) {
+              if (!equippedArmor || itemSp > equippedArmor.sp) {
+                equippedArmor = { name: item.name, sp: itemSp };
+              }
             }
           }
         }
@@ -997,15 +1113,37 @@ export function CharacterCreatorModal({
       cyberware,
       equippedWeapon,
       equippedArmor,
+      equippedHeadArmor,
       money,
       fashionSpent,
-      spentEb: method === "complete_package" ? 2550 - money : 0,
+      spentEb: method === "complete_package" ? spent : 0,
       totalHl,
     };
   }, [method, roleInfo, weaponChoices, outfitChoice, cyberwareChoice, cyberwareChoice2, cartItems, selectedFashion, freeformMoney]);
 
-  const maxHp = 10 + 5 * Math.ceil((activeStats.BODY + activeStats.WILL) / 2);
+  const { effectiveBody, subdermalSp, subdermalName } = useMemo(() => {
+    const graftedCount = gearSummary.cyberware.filter((c) => /grafted muscle/i.test(c.name)).length;
+    let body = graftedCount > 0 ? Math.min(10, activeStats.BODY + 2 * graftedCount) : activeStats.BODY;
+    let sp = 0;
+    let armorName = "";
+    for (const cw of gearSummary.cyberware) {
+      const low = cw.name.toLowerCase();
+      if (/linear frame.*(beta|β)/i.test(low)) body = Math.max(body, 14);
+      else if (/linear frame.*(sigma|σ)/i.test(low)) body = Math.max(body, 12);
+      if (low.includes("subdermal armor") && sp < 11) {
+        sp = 11;
+        armorName = "Subdermal Armor";
+      } else if (/skin\s*weave/i.test(low) && sp < 7) {
+        sp = 7;
+        armorName = "Skinweave";
+      }
+    }
+    return { effectiveBody: body, subdermalSp: sp, subdermalName: armorName };
+  }, [gearSummary.cyberware, activeStats.BODY]);
+
+  const maxHp = 10 + 5 * Math.ceil((effectiveBody + activeStats.WILL) / 2);
   const woundThreshold = Math.ceil(maxHp / 2);
+  const deathSave = effectiveBody;
   const maxHumanity = activeStats.EMP * 10;
   const startingHumanity = Math.max(0, maxHumanity - gearSummary.totalHl);
   const effectiveEmp = Math.floor(startingHumanity / 10);
@@ -1046,6 +1184,24 @@ export function CharacterCreatorModal({
         cost_eb: 500,
         hl: 7,
       },
+      {
+        foundation: "Cyberarm",
+        match: /big knucks|cyberdeck.*cyberarm|grapple hand|medscanner|popup|quick change mount|rippers|scratchers|shoulder cam|slice ['’]n dice|subdermal grip|techscanner|wolvers/i,
+        cost_eb: 500,
+        hl: 7,
+      },
+      {
+        foundation: "Cyberleg",
+        match: /grip foot|jump booster|skate foot|talon foot|web foot|tread unit/i,
+        cost_eb: 100,
+        hl: 3,
+      },
+      {
+        foundation: "Interface Plugs",
+        match: /linear frame|smartgun link/i,
+        cost_eb: 500,
+        hl: 7,
+      },
     ];
     for (const cw of gearSummary.cyberware) {
       for (const r of rules) {
@@ -1056,8 +1212,59 @@ export function CharacterCreatorModal({
         }
       }
     }
+    const eyeCount = gearSummary.cyberware.filter((c) => /^cybereye/i.test(c.name)).length;
+    if (eyeCount === 1 && gearSummary.cyberware.some((c) => /targeting scope|teleoptics|virtuality|low light|anti-dazzle/i.test(c.name))) {
+      warnings.push({ option: "Paired Cybereye Optics", foundation: "Cybereye (2nd Eye Recommended)", cost_eb: 100, hl: 7 });
+    }
     return warnings;
   }, [gearSummary.cyberware]);
+
+  const cyberdeckSlotSummary = useMemo(() => {
+    const isCyberdeckUnit = (rawName: string, subtype?: string) => {
+      if (subtype === "cyberdeck") return true;
+      return /cyberdeck/i.test(rawName) && !/\(\s*cyberdeck\s*[·:]/i.test(rawName);
+    };
+    const parseSlots = (rawName: string, statsObj?: Record<string, unknown>, summary?: string): number => {
+      if (typeof statsObj?.slots === "number" && statsObj.slots > 0) return statsObj.slots;
+      const m = `${rawName} ${summary ?? ""}`.match(/(\d+)\s*slots?/i);
+      return m ? Math.max(1, parseInt(m[1], 10)) : 1;
+    };
+    const deckCandidates = [
+      ...cartItems.filter((i) => {
+        if (i.category !== "hardware") return false;
+        const refHw = refData?.shop.hardware?.find((h) => h.name.toLowerCase() === i.name.toLowerCase());
+        return isCyberdeckUnit(i.name, typeof refHw?.stats?.subtype === "string" ? refHw.stats.subtype : undefined);
+      }),
+      ...gearSummary.cyberware.filter((c) => isCyberdeckUnit(c.name)).map((c) => ({ name: c.name, qty: 1 })),
+    ];
+    const hasDeck = deckCandidates.length > 0 || (method !== "complete_package" && method !== "freeform" && selectedRole === "Netrunner");
+    let capacity = 0;
+    if (deckCandidates.length > 0) {
+      for (const dItem of deckCandidates) {
+        if (/excellent/i.test(dItem.name)) capacity = Math.max(capacity, 9);
+        else if (/poor/i.test(dItem.name)) capacity = Math.max(capacity, 5);
+        else capacity = Math.max(capacity, 7);
+      }
+    } else if (selectedRole === "Netrunner") {
+      capacity = 7;
+    }
+    const hasBodyweight = Object.keys(gearSummary.inventory).some((n) => /bodyweight suit/i.test(n));
+    if (capacity > 0 && hasBodyweight) capacity += 1;
+
+    let usedSlots = 0;
+    for (const item of cartItems) {
+      if (item.category === "program") {
+        const refProg = refData?.shop.program?.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
+        usedSlots += parseSlots(item.name, refProg?.stats, refProg?.summary) * item.qty;
+      } else if (item.category === "hardware") {
+        const refHw = refData?.shop.hardware?.find((h) => h.name.toLowerCase() === item.name.toLowerCase());
+        if (!isCyberdeckUnit(item.name, typeof refHw?.stats?.subtype === "string" ? refHw.stats.subtype : undefined)) {
+          usedSlots += parseSlots(item.name, refHw?.stats, refHw?.summary) * item.qty;
+        }
+      }
+    }
+    return { hasDeck, capacity, usedSlots, overCapacity: capacity > 0 && usedSlots > capacity };
+  }, [cartItems, gearSummary.cyberware, gearSummary.inventory, method, selectedRole, refData]);
 
   // Cyberware Foundation Slot-Cap checks (Corebook pp. 111–116, 360–368)
   const cyberwareSlotWarnings = useMemo(() => {
@@ -1475,13 +1682,19 @@ export function CharacterCreatorModal({
       return { moto: nomadVehicles.slice(0, 4) };
     }
     if (selectedRole === "Exec") {
-      return { team_member: { name: execTeamName || "Kaito Reyes", role: execTeamRole || "Covert Operative" } };
+      return {
+        team_member: {
+          name: execTeamName || "Kaito Reyes",
+          role: execTeamRole || "Covert Operative",
+          loyalty: execTeamLoyalty,
+        },
+      };
     }
     return {};
   };
 
   const handleSubmit = async () => {
-    if (!name.trim() || busy || validationIssues.length > 0) return;
+    if (!(name.trim() || realName.trim()) || busy || validationIssues.length > 0) return;
     setBusy(true);
     try {
       const lifepathPayload = {
@@ -1505,6 +1718,14 @@ export function CharacterCreatorModal({
         tragic_love_affairs: loveAffairs,
       };
       const cleanGender = gender === "__custom__" ? "" : gender.trim();
+      const startingHooksPayload =
+        traumaHook.trim() || addictionHook.trim() || debtHook.trim()
+          ? {
+              ...(traumaHook.trim() ? { trauma: traumaHook.trim() } : {}),
+              ...(addictionHook.trim() ? { addiction: addictionHook.trim() } : {}),
+              ...(debtHook.trim() ? { debt: debtHook.trim() } : {}),
+            }
+          : undefined;
       const backstoryPayload = {
         gender: cleanGender || undefined,
         pronouns: pronouns.trim() || undefined,
@@ -1513,6 +1734,7 @@ export function CharacterCreatorModal({
         summary: backstorySummary.trim() || undefined,
         established_history: establishedHistory.trim() || undefined,
         appearance: appearanceNotes.trim() || undefined,
+        ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
       };
 
       const primaryName = name.trim() || realName.trim();
@@ -1537,6 +1759,12 @@ export function CharacterCreatorModal({
           specializations,
           role_choices: buildRoleChoicesPayload(),
           cultural_language: culturalLanguage.trim().toLowerCase() === "streetslang" ? undefined : culturalLanguage.trim() || undefined,
+          housing,
+          lifestyle,
+          trauma_team: traumaTeam,
+          reputation,
+          ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
+          ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
           lifepath: lifepathPayload,
           backstory: backstoryPayload,
           starting_gear: {
@@ -1545,6 +1773,7 @@ export function CharacterCreatorModal({
             humanity_loss: gearSummary.totalHl,
             equipped_weapon: gearSummary.equippedWeapon,
             equipped_armor: gearSummary.equippedArmor,
+            ...(gearSummary.equippedHeadArmor ? { equipped_head_armor: gearSummary.equippedHeadArmor } : {}),
             fashion: selectedFashion,
             money_spent_eb: gearSummary.spentEb,
           },
@@ -1567,12 +1796,38 @@ export function CharacterCreatorModal({
             ...(portraitUrl.trim() ? { portrait_url: portraitUrl.trim() } : {}),
             color: characterColor,
             roles: [{ role: selectedRole, rank: 4, choices: buildRoleChoicesPayload() }],
-            creation: { method: "freeform", initial_emp: activeStats.EMP },
+            creation: {
+              method: "freeform",
+              initial_emp: activeStats.EMP,
+              ...(effectiveBody !== activeStats.BODY ? { effective_body: effectiveBody } : {}),
+              ...(effectiveBody !== activeStats.BODY || subdermalSp > 0
+                ? { cyberware_modifiers: { effective_body: effectiveBody, subdermal_sp: subdermalSp } }
+                : {}),
+            },
+            ...(effectiveBody !== activeStats.BODY ? { death_save: effectiveBody } : {}),
+            housing,
+            lifestyle,
+            ...(traumaTeam !== "None" ? { trauma_team: traumaTeam } : {}),
+            reputation,
+            ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
             lifepath: lifepathPayload,
             backstory: backstoryPayload,
             cyberware: gearSummary.cyberware,
             ...(gearSummary.equippedWeapon ? { equipped_weapon: gearSummary.equippedWeapon } : {}),
-            ...(gearSummary.equippedArmor ? { equipped_armor: gearSummary.equippedArmor } : {}),
+            ...((() => {
+              const bodyArm = gearSummary.equippedArmor;
+              if (subdermalSp > 0 && (!bodyArm || bodyArm.sp < subdermalSp)) {
+                return { equipped_armor: { name: subdermalName, sp: subdermalSp } };
+              }
+              return bodyArm ? { equipped_armor: bodyArm } : {};
+            })()),
+            ...((() => {
+              const headArm = gearSummary.equippedHeadArmor;
+              if (subdermalSp > 0 && (!headArm || headArm.sp < subdermalSp)) {
+                return { equipped_head_armor: { name: subdermalName, sp: subdermalSp } };
+              }
+              return headArm ? { equipped_head_armor: headArm } : {};
+            })()),
             ...(selectedFashion.length ? { fashion: selectedFashion } : {}),
           },
         });
@@ -1787,7 +2042,12 @@ export function CharacterCreatorModal({
       if (shopCategory === "program" && programSubFilter !== "all") {
         if (classifyProgramSubcategory(item) !== programSubFilter) return false;
       }
-      if (selectedOnly && !cartItems.some((c) => c.name === item.name && c.category === item.category)) {
+      if (
+        selectedOnly &&
+        !cartItems.some(
+          (c) => c.category === item.category && (c.name === item.name || c.name.startsWith(`${item.name} — `)),
+        )
+      ) {
         return false;
       }
       if (affordableOnly && method === "complete_package" && item.cost_eb > remainingGearEb) {
@@ -1824,7 +2084,18 @@ export function CharacterCreatorModal({
 
   const fashionItemsForDisplay = (() => {
     const q = shopSearch.trim().toLowerCase();
-    const list = (refData?.fashion ?? []).filter((f) => {
+    const outfits = refData?.fashion ?? [];
+    const matrix = refData?.fashion_matrix ?? [];
+    const mergedMap = new Map<string, CreationFashionItem & { isOutfit?: boolean }>();
+    for (const f of outfits) {
+      mergedMap.set(f.name, { ...f, isOutfit: !f.garment });
+    }
+    for (const f of matrix) {
+      if (!mergedMap.has(f.name)) mergedMap.set(f.name, { ...f, isOutfit: false });
+    }
+    const list = Array.from(mergedMap.values()).filter((f) => {
+      if (fashionStyleFilter === "Outfits" && !f.isOutfit) return false;
+      if (fashionStyleFilter !== "All" && fashionStyleFilter !== "Outfits" && f.style !== fashionStyleFilter) return false;
       if (selectedOnly && !selectedFashion.some((x) => x.name === f.name)) return false;
       if (affordableOnly && method === "complete_package" && f.cost_eb > remainingFashionEb) return false;
       if (!q) return true;
@@ -2380,9 +2651,16 @@ export function CharacterCreatorModal({
                           }}
                           className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
                         >
-                          {NOMAD_MOTO_PRESETS.map((v) => (
-                            <option key={v} value={v}>{v}</option>
-                          ))}
+                          <optgroup label="Base Vehicles">
+                            {NOMAD_BASE_VEHICLES.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Vehicle Upgrades">
+                            {NOMAD_VEHICLE_UPGRADES.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </optgroup>
                         </select>
                       ))}
                     </div>
@@ -2390,24 +2668,59 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Exec" && (
-                  <div className="grid grid-cols-1 gap-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-violet-200">Exec Team Member Name</label>
-                      <input
-                        type="text"
-                        value={execTeamName}
-                        onChange={(e) => setExecTeamName(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                      />
+                  <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-violet-200">Exec Team Member &amp; Corporate Perks (p. 153)</span>
+                      <span className="rounded border border-violet-400/40 bg-violet-500/15 px-2 py-0.5 font-mono text-[10px] text-violet-200">
+                        Includes Corporate Conapt + Trauma Team Silver
+                      </span>
                     </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-violet-200">Team Member Specialty</label>
-                      <input
-                        type="text"
-                        value={execTeamRole}
-                        onChange={(e) => setExecTeamRole(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                      />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Exec Team Member Name</label>
+                        <input
+                          type="text"
+                          value={execTeamName}
+                          onChange={(e) => setExecTeamName(e.target.value)}
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Team Member Specialty</label>
+                        <select
+                          aria-label="Exec Team Member Specialty Preset"
+                          value={(EXEC_TEAM_ROLES as readonly string[]).includes(execTeamRole) ? execTeamRole : "__custom__"}
+                          onChange={(e) => {
+                            if (e.target.value !== "__custom__") setExecTeamRole(e.target.value);
+                          }}
+                          className="mb-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        >
+                          {EXEC_TEAM_ROLES.map((r) => (
+                            <option key={r} value={r}>{r}</option>
+                          ))}
+                          {!(EXEC_TEAM_ROLES as readonly string[]).includes(execTeamRole) && (
+                            <option value="__custom__">{execTeamRole}</option>
+                          )}
+                        </select>
+                        <input
+                          type="text"
+                          value={execTeamRole}
+                          onChange={(e) => setExecTeamRole(e.target.value)}
+                          placeholder="Custom specialty…"
+                          className="w-full rounded border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Starting Loyalty (1–10)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={execTeamLoyalty}
+                          onChange={(e) => setExecTeamLoyalty(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 4)))}
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2653,22 +2966,34 @@ export function CharacterCreatorModal({
                       </p>
                     )}
                   </div>
-                  {(["Play Instrument", "Science"] as const).map((specBase) => (
-                    <div key={specBase}>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                        {specBase} Specialization
-                      </label>
-                      <select
-                        value={specializations[specBase] ?? ""}
-                        onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+                  {(() => {
+                    const sourceSkills =
+                      method === "streetrat" || method === "edgerunner"
+                        ? Object.keys(roleInfo?.skills ?? {})
+                        : Object.keys(customSkills);
+                    const bases = Object.keys(SPECIALIZATION_SUGGESTIONS).filter((base) =>
+                      sourceSkills.some((sk) => {
+                        const cleaned = sk.replace(/\s*\(choose\s*1\)\s*/i, "").trim();
+                        return cleaned.toLowerCase() === base.toLowerCase() && (method === "streetrat" || method === "edgerunner" ? sk.toLowerCase().includes("choose") || !sk.includes("(") : !sk.includes("("));
+                      }),
+                    );
+                    return bases.map((specBase) => (
+                      <div key={specBase}>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          {specBase} Specialization
+                        </label>
+                        <select
+                          value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
+                          onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                        >
+                          {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ));
+                  })()}
                 </div>
 
                 {/* Search & Group Filter */}
@@ -3176,6 +3501,13 @@ export function CharacterCreatorModal({
                               <option value="__custom__">{roleLifepath[f.key]}</option>
                             )}
                           </select>
+                          <input
+                            type="text"
+                            value={roleLifepath[f.key] ?? ""}
+                            onChange={(e) => setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }))}
+                            placeholder={`Custom ${f.label.toLowerCase()}…`}
+                            className="mt-1 w-full rounded border border-slate-800 bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300 focus:border-cyan-400 focus:outline-none"
+                          />
                         </div>
                       ))}
                     </div>
@@ -3426,6 +3758,84 @@ export function CharacterCreatorModal({
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* E. Street Reputation & Starting Trauma / Debt Hooks */}
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3.5 space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowRepHooks((v) => !v)}
+                    className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-200 hover:text-cyan-200"
+                  >
+                    <span>Street Reputation &amp; Starting Hooks (p. 193 · Optional)</span>
+                    <span className="font-mono text-[10px] text-cyan-400">{showRepHooks ? "▲ Hide" : "▼ Expand"}</span>
+                  </button>
+                  {showRepHooks && (
+                    <div className="grid grid-cols-1 gap-2.5 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          Starting Reputation (0–10, default 0)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          aria-label="Starting Reputation"
+                          value={reputation}
+                          onChange={(e) => setReputation(Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0)))}
+                          className="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          Reputation Reason / Word on the Street
+                        </label>
+                        <input
+                          type="text"
+                          value={reputationNote}
+                          onChange={(e) => setReputationNote(e.target.value)}
+                          placeholder="e.g. Survived the Watson tunnel collapse"
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          Trauma / Cyberpsychosis Scar
+                        </label>
+                        <input
+                          type="text"
+                          value={traumaHook}
+                          onChange={(e) => setTraumaHook(e.target.value)}
+                          placeholder="e.g. Haunted by 4th Corporate War clinic fire"
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          Addiction / Vice
+                        </label>
+                        <input
+                          type="text"
+                          value={addictionHook}
+                          onChange={(e) => setAddictionHook(e.target.value)}
+                          placeholder="e.g. Synthcoke or Smash habit"
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                          Starting Debt / Obligation
+                        </label>
+                        <input
+                          type="text"
+                          value={debtHook}
+                          onChange={(e) => setDebtHook(e.target.value)}
+                          placeholder="e.g. Owes 500 eb to a Kabuki ripperdoc"
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3753,6 +4163,21 @@ export function CharacterCreatorModal({
                               ))}
                             </div>
                           )}
+
+                          {cyberdeckSlotSummary.hasDeck && (
+                            <div
+                              className={`flex items-center justify-between rounded border px-2 py-1.5 text-[11px] ${
+                                cyberdeckSlotSummary.overCapacity
+                                  ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
+                                  : "border-cyan-500/30 bg-cyan-950/20 text-cyan-200"
+                              }`}
+                            >
+                              <span>Cyberdeck Program &amp; Hardware Slots:</span>
+                              <span className="font-mono font-bold">
+                                Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -3941,6 +4366,31 @@ export function CharacterCreatorModal({
                               );
                             })}
                           </div>
+                          {weaponGenres.includes("ammo") && (
+                            <div className="flex flex-wrap items-center gap-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px]">
+                              <span className="font-semibold text-slate-300">Ammo Caliber Tag:</span>
+                              <select
+                                aria-label="Ammo Caliber"
+                                value={ammoCaliber}
+                                onChange={(e) => setAmmoCaliber(e.target.value)}
+                                className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100"
+                              >
+                                <option value="">Standard / As Listed</option>
+                                {[
+                                  "Medium Pistol",
+                                  "Heavy Pistol",
+                                  "Very Heavy Pistol",
+                                  "Assault Rifle",
+                                  "Sniper Rifle",
+                                  "Shotgun Slug",
+                                  "Shotgun Shell",
+                                  "Arrow",
+                                ].map((cal) => (
+                                  <option key={cal} value={cal}>{cal}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -4000,28 +4450,62 @@ export function CharacterCreatorModal({
                         </div>
                       )}
 
-                      {shopCategory === "program" && (
+                      {(shopCategory === "program" || shopCategory === "hardware") && (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          {shopCategory === "program" && (
+                            <div className="flex flex-wrap gap-1">
+                              {(
+                                [
+                                  ["all", "All Programs"],
+                                  ["booster", "Boosters"],
+                                  ["defender", "Defenders"],
+                                  ["attacker", "Attackers"],
+                                  ["black_ice", "Black ICE"],
+                                ] as const
+                              ).map(([id, label]) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() => setProgramSubFilter(id)}
+                                  className={`rounded px-2 py-0.5 text-[11px] ${
+                                    programSubFilter === id
+                                      ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                                      : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {cyberdeckSlotSummary.hasDeck && (
+                            <span
+                              className={`rounded border px-2 py-0.5 font-mono text-[10px] ${
+                                cyberdeckSlotSummary.overCapacity
+                                  ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
+                                  : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
+                              }`}
+                            >
+                              Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {shopCategory === "fashion" && (
                         <div className="flex flex-wrap gap-1">
-                          {(
-                            [
-                              ["all", "All Programs"],
-                              ["booster", "Boosters"],
-                              ["defender", "Defenders"],
-                              ["attacker", "Attackers"],
-                              ["black_ice", "Black ICE"],
-                            ] as const
-                          ).map(([id, label]) => (
+                          {(["All", "Outfits", ...COREBOOK_FASHION_STYLES] as const).map((styleOpt) => (
                             <button
-                              key={id}
+                              key={styleOpt}
                               type="button"
-                              onClick={() => setProgramSubFilter(id)}
+                              onClick={() => setFashionStyleFilter(styleOpt)}
                               className={`rounded px-2 py-0.5 text-[11px] ${
-                                programSubFilter === id
-                                  ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                                fashionStyleFilter === styleOpt
+                                  ? "border border-cyan-500/50 bg-cyan-500/15 font-semibold text-cyan-200"
                                   : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
                               }`}
                             >
-                              {label}
+                              {styleOpt}
                             </button>
                           ))}
                         </div>
@@ -4099,7 +4583,11 @@ export function CharacterCreatorModal({
                           const weaponTierTheme = weaponTierInfo
                             ? getWeaponTierTheme(weaponTierInfo.primaryTier)
                             : null;
-                          const inCart = cartItems.find((x) => x.name === item.name && x.category === item.category);
+                          const isAmmoEntry = item.category === "ammo" || subtypeVal === "Ammo";
+                          const cartItemName =
+                            isAmmoEntry && ammoCaliber ? `${item.name} — ${ammoCaliber}` : item.name;
+                          const inCart = cartItems.find((x) => x.name === cartItemName && x.category === item.category);
+                          const isPrimaryWeapon = item.category === "weapon" && subtypeVal !== "Attachment" && subtypeVal !== "Ammo";
                           const overBudget = method === "complete_package" && item.cost_eb > remainingGearEb;
                           const inspectPayload: InspectorCard = {
                             title: `${item.name} (${item.cost_eb} eb)`,
@@ -4135,6 +4623,11 @@ export function CharacterCreatorModal({
                                   {dmgVal && (
                                     <span className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
                                       {dmgVal}
+                                    </span>
+                                  )}
+                                  {isPrimaryWeapon && (
+                                    <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                                      {qualityVal === "Poor" ? "2 Att. Slots" : "3 Att. Slots"}
                                     </span>
                                   )}
                                   {weaponTierInfo && weaponTierInfo.primaryTier !== "other" && (
@@ -4188,7 +4681,7 @@ export function CharacterCreatorModal({
                                         e.stopPropagation();
                                         setCartItems((p) =>
                                           p.flatMap((x) =>
-                                            x.name === item.name && x.category === item.category
+                                            x.name === cartItemName && x.category === item.category
                                               ? x.qty > 1
                                                 ? [{ ...x, qty: x.qty - 1 }]
                                                 : []
@@ -4208,7 +4701,7 @@ export function CharacterCreatorModal({
                                         e.stopPropagation();
                                         setCartItems((p) =>
                                           p.map((x) =>
-                                            x.name === item.name && x.category === item.category ? { ...x, qty: x.qty + 1 } : x,
+                                            x.name === cartItemName && x.category === item.category ? { ...x, qty: x.qty + 1 } : x,
                                           ),
                                         );
                                       }}
@@ -4225,7 +4718,7 @@ export function CharacterCreatorModal({
                                       setCartItems((p) => [
                                         ...p,
                                         {
-                                          name: item.name,
+                                          name: cartItemName,
                                           category: item.category,
                                           cost_eb: item.cost_eb,
                                           hl: hlVal,
@@ -4254,6 +4747,86 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
                 )}
+
+                {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
+                      Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Month 1 baseline rent paid; monthly upkeep applies from Month 2.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
+                      <select
+                        aria-label="Character Housing"
+                        value={housing}
+                        onChange={(e) => setHousing(e.target.value)}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        {(
+                          refData?.housing_tiers ?? [
+                            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
+                            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
+                            { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
+                            { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
+                            { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
+                            { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
+                            { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
+                            { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
+                            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
+                          ]
+                        )
+                          .filter((h) => !h.exec_only || selectedRole === "Exec")
+                          .map((h) => (
+                            <option key={h.id} value={h.id}>
+                              {h.name} ({h.monthly_eb} eb/mo)
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
+                      <select
+                        aria-label="Character Lifestyle"
+                        value={lifestyle}
+                        onChange={(e) => setLifestyle(e.target.value)}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        {(
+                          refData?.lifestyles ?? [
+                            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
+                            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
+                            { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
+                            { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
+                          ]
+                        ).map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name} ({l.monthly_eb} eb/mo)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
+                      <select
+                        aria-label="Trauma Team Plan"
+                        value={traumaTeam}
+                        onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        <option value="None">None (0 eb/mo)</option>
+                        <option value="Silver">
+                          Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
+                        </option>
+                        <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -4313,7 +4886,14 @@ export function CharacterCreatorModal({
                     </div>
                     <div className="flex flex-wrap gap-3 font-mono text-xs">
                       <span className="text-rose-300">HP {maxHp}</span>
+                      {effectiveBody !== activeStats.BODY && (
+                        <span className="text-amber-300">BODY {activeStats.BODY} → {effectiveBody}</span>
+                      )}
+                      {subdermalSp > 0 && (
+                        <span className="text-cyan-300">{subdermalName} SP {subdermalSp}</span>
+                      )}
                       <span className="text-cyan-300">HUM {startingHumanity}/{maxHumanity}</span>
+                      {reputation > 0 && <span className="text-violet-300">REP {reputation}</span>}
                       <span className="text-emerald-300">{gearSummary.money} eb</span>
                     </div>
                   </div>
@@ -4389,7 +4969,8 @@ export function CharacterCreatorModal({
                     )}
                     <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-400">
                       <strong className="text-slate-300">Starting Housing &amp; Lifestyle (pp. 377–378):</strong>{" "}
-                      Cargo Container + Kibble Lifestyle (Month 1 Rent Paid; 1,000 eb + 100 eb/mo starting Month 2 unless upgraded).
+                      {(refData?.housing_tiers ?? []).find((h) => h.id === housing)?.name ?? housing} + {lifestyle} Lifestyle
+                      {traumaTeam !== "None" ? ` · Trauma Team ${traumaTeam}` : ""} (Month 1 covered).
                     </div>
                   </div>
                 </div>
@@ -4446,7 +5027,7 @@ export function CharacterCreatorModal({
                     <Shield className="h-3 w-3 text-amber-400" /> Death / Dodge
                   </div>
                   <div className="mt-0.5 font-bold text-slate-100">
-                    Death Save: {activeStats.BODY} · {activeStats.REF >= 8 ? "Bullet Dodge" : "Melee Dodge"}
+                    Death Save: {deathSave} · {activeStats.REF >= 8 ? "Bullet Dodge" : "Melee Dodge"}
                   </div>
                 </div>
                 <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
@@ -4461,8 +5042,16 @@ export function CharacterCreatorModal({
 
               <div className="flex flex-wrap items-center justify-between gap-1 border-t border-slate-800/80 pt-2 font-mono text-[10px] text-slate-400">
                 <span>Seriously Wounded: &lt; {woundThreshold} HP</span>
-                <span>Death Save: {activeStats.BODY}</span>
+                <span>
+                  Death Save: {deathSave}
+                  {effectiveBody !== activeStats.BODY ? ` (BODY ${activeStats.BODY}→${effectiveBody})` : ""}
+                </span>
               </div>
+              {subdermalSp > 0 && (
+                <div className="rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-1 font-mono text-[10px] text-cyan-200">
+                  Passive Cyberware Armor: {subdermalName} (SP {subdermalSp})
+                </div>
+              )}
 
               <div className="grid grid-cols-5 gap-1 font-mono text-center text-[11px]">
                 {STAT_NAMES.map((s) => (

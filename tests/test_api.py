@@ -324,3 +324,141 @@ def test_campaign_ai_assist_auto_and_locked_plus_per_field_regen(tmp_path: Path)
     assert "completely fresh 'opening_scene' from scratch" in seen_user_payloads[2]["instruction"]
 
 
+def test_expanded_campaign_bootstrap_rename_library_clocks_and_session_zero(tmp_path: Path):
+    import asyncio
+    import httpx
+    from campaign import CampaignStore
+    from library import CampaignLibrary
+
+    async def run():
+        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # Create a standalone character first so we can attach via attach_character_ids
+            r_char = await client.post("/v1/game", json={
+                "action": "create_character",
+                "arguments": {
+                    "name": "Kira",
+                    "stats": {"INT": 6, "REF": 7, "DEX": 6, "TECH": 5, "COOL": 6, "WILL": 6, "LUCK": 6, "MOVE": 6, "BODY": 6, "EMP": 6},
+                    "skills": {"Handgun": 6},
+                    "operation_id": "char-attach-seed",
+                },
+            })
+            assert r_char.status_code == 200
+            char_id = r_char.json()["result"]["id"]
+
+            r_create = await client.post("/v1/game", json={
+                "action": "create_campaign",
+                "arguments": {"name": "Initial Title", "operation_id": "camp-exp-1"},
+            })
+            assert r_create.status_code == 200
+            camp_id = r_create.json()["result"]["id"]
+
+            r_boot = await client.post(f"/v1/campaigns/{camp_id}/bootstrap", json={
+                "name": "Neon Rain Over Heywood",
+                "district": "Heywood",
+                "zone_type": "Moderate Zone",
+                "threat_rating": "Moderate",
+                "caper_style": "Street Turf & Night Market Hustle",
+                "factions": ["6th Street", "Tyger Claws"],
+                "screamsheet_hook": "WATER MAIN SQUEEZE: Desalination valve locked.",
+                "summary": "Surviving a water blockade in Heywood.",
+                "scene": "Rancho Coronado pump yard at dusk.",
+                "npcs": {"Fixer Toma": "Local water broker — Neutral 0"},
+                "npc_identities": {
+                    "Fixer Toma": {
+                        "handle": "Fixer Toma",
+                        "real_name": "Tomasz Kowalski",
+                        "real_name_hidden": True,
+                        "personality": "Guarded",
+                        "speech_style": "Dry, brief",
+                    }
+                },
+                "objectives": {"Break Blockade": "Reopen Valve 3."},
+                "discoveries": {"Valve Blueprint": "Sub-level hatch is unguarded."},
+                "gm_secrets": {"Premise Secret": "Continental Brands bribed 6th Street.", "Mole": "Guard #2 works for Tyger Claws."},
+                "clocks": [
+                    {"name": "6th Street Sweep", "segments": 6, "filled": 2, "category": "heat", "visibility": "public", "note": "Patrols tighten."},
+                    {"name": "Water Tank Contamination", "segments": 4, "filled": 1, "category": "deadline", "visibility": "secret", "note": "Secret leak."},
+                ],
+                "world_entities": {
+                    "factions": [{"name": "6th Street", "disposition": "Hostile", "turf": "Rancho Coronado"}],
+                    "locations": [{"name": "Valve House 3", "district": "Heywood", "security": "Razorwire & drones", "notes": "Rusty pump room."}],
+                    "gig": {"title": "Water Main Break", "client": "Fixer Toma", "target": "Valve House 3", "payout_eb": 2500, "deadline": "Dawn"},
+                    "screamsheet": {"headline": "WATER MAIN SQUEEZE", "body": "Desalination valve locked down."},
+                },
+                "session_zero": {
+                    "gm_style": "grit_dark",
+                    "narrator_length": "concise",
+                    "lethality_dial": "Gritty / High Lethality",
+                    "lines_and_veils": "No harm to children",
+                },
+                "starting_clock_minutes": 1140,
+                "attach_character_ids": [char_id],
+                "clear_missing": True,
+            })
+            assert r_boot.status_code == 200
+            boot = r_boot.json()
+            assert boot["campaign"]["name"] == "Neon Rain Over Heywood"
+            assert boot["secrets_count"] == 2
+            assert len(boot["clocks"]) == 1  # public clock only in public response
+            assert boot["library_seeded"] == 4
+
+            # Verify CampaignContext (admin/open role) hydrates all fields
+            r_ctx = await client.post("/v1/game", json={
+                "action": "campaign_context",
+                "campaign_id": camp_id,
+                "arguments": {"campaign_id": camp_id},
+            })
+            ctx = r_ctx.json()["result"]
+            assert ctx["campaign"]["name"] == "Neon Rain Over Heywood"
+            assert ctx["campaign_meta"]["district"] == "Heywood"
+            assert ctx["campaign_meta"]["factions"] == ["6th Street", "Tyger Claws"]
+            assert ctx["session_zero"]["gm_style"] == "grit_dark"
+            assert ctx["session_zero"]["lines_and_veils"] == "No harm to children"
+            assert ctx["solo"]["runtime"]["clock_minutes"] == 1140
+            assert len(ctx["clocks"]) == 2
+            assert ctx["gm_secrets"]["Premise Secret"] == "Continental Brands bribed 6th Street."
+            assert ctx["campaign_meta"]["locations"][0]["security"] == "Razorwire & drones"
+            assert ctx["npc_profiles"]["Fixer Toma"]["real_name"] == "Tomasz Kowalski"
+            assert char_id in ctx["campaign"]["character_ids"]
+
+            # Re-bootstrapping with same world_entities upserts cleanly without duplicating library rows
+            r_boot2 = await client.post(f"/v1/campaigns/{camp_id}/bootstrap", json={
+                "world_entities": {
+                    "factions": [{"name": "6th Street", "disposition": "Wary", "turf": "Rancho Coronado"}],
+                },
+            })
+            assert r_boot2.status_code == 200
+            entries = CampaignLibrary(CampaignStore(tmp_path / "camp.sqlite")).list_entries(camp_id, category="faction")
+            assert len(entries) == 1
+            assert entries[0]["stats"]["disposition"] == "Wary"
+
+            # clear_missing removes stale locations/gig & flipping real_name_hidden preserves revealed name cleanly
+            r_boot3 = await client.post(f"/v1/campaigns/{camp_id}/bootstrap", json={
+                "district": "Heywood",
+                "clear_missing": True,
+                "world_entities": {"locations": [], "gig": None},
+                "npc_identities": {
+                    "Fixer Toma": {
+                        "handle": "Fixer Toma",
+                        "real_name_hidden": False,
+                    }
+                },
+            })
+            assert r_boot3.status_code == 200
+            r_ctx2 = await client.post("/v1/game", json={
+                "action": "campaign_context",
+                "campaign_id": camp_id,
+                "arguments": {"campaign_id": camp_id},
+            })
+            ctx2 = r_ctx2.json()["result"]
+            assert "locations" not in ctx2["campaign_meta"]
+            assert "gig" not in ctx2["campaign_meta"]
+            assert ctx2["npc_profiles"]["Fixer Toma"]["real_name"] == "Tomasz Kowalski"
+            assert ctx2["npc_profiles"]["Fixer Toma"]["real_name_hidden"] is False
+
+    asyncio.run(run())
+
+
+

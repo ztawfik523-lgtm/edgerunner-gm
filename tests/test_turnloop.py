@@ -1772,6 +1772,52 @@ def test_expanded_style_length_pacing_and_npc_personality_recall(tmp_path: Path)
     assert profs["Sadia Kouri"]["speech_style"] == "clipped"
 
 
+def test_session_zero_and_campaign_meta_flow_into_turnloop_prompts(tmp_path):
+    from turnloop import encode_campaign_meta_json, encode_session_zero_json
+
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    camp = svc.memory.get_campaign(camp_id)
+    svc.memory.update_campaign(
+        camp_id,
+        camp["revision"],
+        {
+            "discoveries": {
+                "__campaign_meta": encode_campaign_meta_json({
+                    "district": "Heywood",
+                    "zone_type": "Moderate Zone",
+                    "threat_rating": "Moderate",
+                    "caper_style": "Street Turf & Night Market Hustle",
+                    "factions": ["6th Street"],
+                }),
+                "__session_zero": encode_session_zero_json({
+                    "gm_style": "noir_mystery",
+                    "narrator_length": "concise",
+                    "narrator_pacing": "slow_burn",
+                    "lethality_dial": "Gritty / High Lethality",
+                    "crew_concept": "Ex-paramedic clinic crew",
+                    "lines_and_veils": "No torture",
+                }),
+            }
+        },
+        "Seed session zero and campaign meta",
+        "op-sz-1",
+    )
+    engine = TurnEngine(svc, None)
+    prep = engine.preprocess(camp_id, "Inspect the alley door")
+    planner_msgs = engine._build_planner_messages(prep, "Inspect the alley door", overclock=False)
+    narrator_msgs = engine._build_narrator_messages(prep, "Inspect the alley door", {"outcomes": {"rolls": []}})
+    intro_msgs = engine._build_intro_messages(prep, "Begin")
+
+    assert "Hardboiled investigation" in planner_msgs[0]["content"]
+    assert "No torture" in planner_msgs[0]["content"]
+    assert "Keep replies crisp (1-2 tight paragraphs)" in narrator_msgs[0]["content"]
+    assert "Slow burn and tension" in narrator_msgs[0]["content"]
+    assert "Ex-paramedic clinic crew" in narrator_msgs[0]["content"]
+    assert "Heywood" in intro_msgs[0]["content"]
+    assert "No torture" in intro_msgs[0]["content"]
+
+
+
 
 
 

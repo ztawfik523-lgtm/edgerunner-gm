@@ -146,8 +146,8 @@ class CampaignMemory:
             if before["revision"] != expected_revision:
                 raise ValueError(f"revision conflict: expected {expected_revision}, current {before['revision']}")
             result = action(conn, before)
-            conn.execute("UPDATE campaigns SET revision=?,state_json=?,session_number=? WHERE id=?",
-                         (result["revision"], _json(result["state"]), result["session_number"], result["id"]))
+            conn.execute("UPDATE campaigns SET name=?,revision=?,state_json=?,session_number=? WHERE id=?",
+                         (result["name"], result["revision"], _json(result["state"]), result["session_number"], result["id"]))
             conn.execute("INSERT INTO campaign_events(campaign_id,operation_id,payload,result,before_json,after_json,reason) VALUES(?,?,?,?,?,?,?)",
                          (result["id"], operation_id, payload, _json(result), _json(before), _json(result), reason))
             return result
@@ -178,6 +178,15 @@ class CampaignMemory:
         def apply(conn, before):
             state = dict(before["state"]); state.update(changes)
             return dict(before, revision=before["revision"] + 1, state=self._validate_state(state))
+        return self._mutate(campaign_id, expected_revision, reason, operation_id, payload, apply)
+
+    def rename_campaign(self, campaign_id, name, expected_revision, reason, operation_id):
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ValueError("name must be a nonempty string of at most 100 characters")
+        clean_name = name.strip()
+        payload = _json(dict(action="rename_campaign", campaign_id=str(campaign_id), name=clean_name, expected_revision=expected_revision, reason=reason))
+        def apply(conn, before):
+            return dict(before, name=clean_name, revision=before["revision"] + 1)
         return self._mutate(campaign_id, expected_revision, reason, operation_id, payload, apply)
 
     def attach_character(self, campaign_id, character_id, expected_revision, reason, operation_id):

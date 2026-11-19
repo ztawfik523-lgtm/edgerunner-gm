@@ -810,9 +810,69 @@ def build_campaign_presets() -> dict[str, Any]:
             "GHOST BROADCAST: An unlicensed rooftop transmitter hijacks district Data Pool feeds with corporate shipping manifests, drawing a rapid strike team response.",
             "CHROME RECALL: A back-alley ripperdoc asks for discreet armed escort after discovering a batch of salvaged implants carries active tracking beacons.",
         ],
-        "zone_types": [],
-        "threat_ratings": [],
-        "screamsheets": [],
+        "zone_types": [
+            {"name": "Corporate Center", "printed_page": 298, "summary": "Heavily patrolled glass-and-steel towers with rapid corporate security and armored checkpoints."},
+            {"name": "Executive Zone", "printed_page": 295, "summary": "Walled gated suburbs like Beaverville protected round-the-clock by private armies."},
+            {"name": "Rebuilding Urban Center", "printed_page": 298, "summary": "Dense reconstruction blocks, megabuildings, and thriving markets under uneven NCPD patrols."},
+            {"name": "Moderate Zone", "printed_page": 301, "summary": "Working-class neighborhoods where NCPD responds slowly and local gangs run protection rackets."},
+            {"name": "Combat Zones", "printed_page": 300, "summary": "Lawless urban warzones abandoned by NCPD where boostergangs and cyberpsychos set the rules."},
+            {"name": "Hot Zone", "printed_page": 298, "summary": "Irradiated 4th Corporate War blast ruins hiding high-value salvage, toxic ash, and scavvers."},
+            {"name": "The Open Road", "printed_page": 295, "summary": "Red-dust desert highways outside the city walls traveled by Nomad packs and Raffen Shiv raiders."},
+        ],
+        "threat_ratings": [
+            {"name": "Executive", "ncpd_response": "Immediate Private Security + MaxTac", "summary": "Extreme surveillance, biometric gates, and lethal corporate response within minutes."},
+            {"name": "Corporate", "ncpd_response": "Fast Corp & NCPD Tactical", "summary": "Visible cameras, armed lobby guards, and rapid Trauma Team / NCPD response."},
+            {"name": "Moderate", "ncpd_response": "Slow NCPD / Neighborhood Watch", "summary": "Everyday Night City streets where Fixers broker deals and gangs hold corners."},
+            {"name": "Outskirts", "ncpd_response": "None (Nomad Law)", "summary": "Desert highways, border checkpoints, and convoy ambushes beyond city grids."},
+            {"name": "Combat", "ncpd_response": "None (Trauma Team Refuses Unarmed Drop)", "summary": "Open warzone: no NCPD backup, constant scavver threats, and heavy iron required."},
+        ],
+        "screamsheets": [
+            {
+                "id": "kabuki-pier-blackout",
+                "headline": "BLACKOUT AT KABUKI PIER",
+                "district": "Watson Development",
+                "factions": ["Tyger Claws", "Maelstrom"],
+                "payout_eb": 2000,
+                "summary": "A neighborhood clinic loses backup generator fuel during a rolling grid brownout and hires runners to recover a hijacked tanker.",
+                "hook": "BLACKOUT AT KABUKI PIER: A neighborhood clinic loses backup generator fuel during a rolling grid brownout and hires runners for 2,000 eb to recover a hijacked tanker.",
+            },
+            {
+                "id": "dead-drop-line-4",
+                "headline": "DEAD DROP ON LINE 4",
+                "district": "Rebuilding Urban Center (Upper Marina & Little Europe)",
+                "factions": ["Arasaka", "Militech"],
+                "payout_eb": 3000,
+                "summary": "A nervous courier vanishes inside an abandoned maglev maintenance tunnel carrying an encrypted biometric case.",
+                "hook": "DEAD DROP ON LINE 4: A nervous courier vanishes inside an abandoned maglev maintenance tunnel carrying an encrypted biometric case worth 3,000 eb.",
+            },
+            {
+                "id": "water-main-squeeze",
+                "headline": "WATER MAIN SQUEEZE",
+                "district": "Heywood",
+                "factions": ["6th Street"],
+                "payout_eb": 2500,
+                "summary": "Rival street crews lock down a Rancho Coronado desalination valve; a local Night Market co-op pools funds to break the blockade.",
+                "hook": "WATER MAIN SQUEEZE: Rival street crews lock down a Rancho Coronado desalination valve; a local Night Market co-op pools 2,500 eb to break the blockade.",
+            },
+            {
+                "id": "ghost-broadcast",
+                "headline": "GHOST BROADCAST",
+                "district": "New Westbrook",
+                "factions": ["NetWatch", "Danger Gal"],
+                "payout_eb": 2500,
+                "summary": "An unlicensed rooftop transmitter hijacks district Data Pool feeds with corporate shipping manifests.",
+                "hook": "GHOST BROADCAST: An unlicensed rooftop transmitter hijacks district Data Pool feeds with corporate shipping manifests, drawing a rapid strike team response.",
+            },
+            {
+                "id": "chrome-recall",
+                "headline": "CHROME RECALL",
+                "district": "Old Combat Zone",
+                "factions": ["Maelstrom", "Inquisitors"],
+                "payout_eb": 2000,
+                "summary": "A back-alley ripperdoc asks for discreet armed escort after discovering salvaged implants carry active tracking beacons.",
+                "hook": "CHROME RECALL: A back-alley ripperdoc asks for discreet armed escort after discovering a batch of salvaged implants carries active tracking beacons.",
+            },
+        ],
     }
 
 
@@ -993,6 +1053,9 @@ _CAMPAIGN_FIELDS = {
     "beat_resolution",
     "npcs",
     "objectives",
+    "discoveries",
+    "locations",
+    "gig",
     "gm_secrets",
     "opening_clock",
 }
@@ -1305,6 +1368,9 @@ async def generate_creation_ai_assist(
             "opening_scene": "1 playable in-media-res opening moment right before Turn 1: what is actively happening, where the crew is, and the immediate hook",
             "npcs": {"NPC Name (Faction/Role)": "Who they are, motive, and immediate offer or threat"},
             "objectives": {"Objective Title": "What the crew needs to accomplish first"},
+            "discoveries": {"Starting Lead": "Concrete clue or intel the crew already holds at Session 1"},
+            "locations": [{"name": "Venue or Block Name", "district": "Neighborhood", "notes": "Layout, security, or atmosphere"}],
+            "gig": {"title": "Contract Title", "client": "Patron/Fixer", "target": "Objective site or asset", "payout_eb": 2000, "deadline": "48 hours", "notes": "Contract terms"},
             "beat_chart": {
                 "hook": "Inciting job/Screamsheet lead (p. 396)",
                 "developments": "1-2 complications or reveals mid-run (p. 397)",
@@ -1464,6 +1530,35 @@ async def generate_creation_ai_assist(
             for k, v in raw_obj.items()
             if str(k).strip() and str(v).strip()
         }
+        raw_disc = parsed.get("discoveries") if isinstance(parsed.get("discoveries"), dict) else {}
+        disc_out = {
+            str(k).strip(): str(v).strip()
+            for k, v in raw_disc.items()
+            if str(k).strip() and str(v).strip()
+        }
+        raw_locs = parsed.get("locations") if isinstance(parsed.get("locations"), list) else []
+        locs_out = [
+            {
+                "name": str(loc.get("name")).strip(),
+                "district": str(loc.get("district") or "").strip(),
+                "notes": str(loc.get("notes") or "").strip(),
+            }
+            for loc in raw_locs[:6]
+            if isinstance(loc, dict) and str(loc.get("name") or "").strip()
+        ]
+        raw_gig = parsed.get("gig") if isinstance(parsed.get("gig"), dict) else {}
+        gig_out = (
+            {
+                "title": str(raw_gig.get("title") or "").strip(),
+                "client": str(raw_gig.get("client") or "").strip(),
+                "target": str(raw_gig.get("target") or "").strip(),
+                "payout_eb": int(raw_gig["payout_eb"]) if isinstance(raw_gig.get("payout_eb"), (int, float)) else 2000,
+                "deadline": str(raw_gig.get("deadline") or "").strip(),
+                "notes": str(raw_gig.get("notes") or "").strip(),
+            }
+            if any(str(raw_gig.get(k) or "").strip() for k in ("title", "client", "target", "notes"))
+            else None
+        )
         raw_beats = parsed.get("beat_chart") if isinstance(parsed.get("beat_chart"), dict) else {}
         beat_chart_out = {
             "hook": str(raw_beats.get("hook") or "").strip(),
@@ -1496,6 +1591,12 @@ async def generate_creation_ai_assist(
                 out["npcs"] = npcs_out
             elif field == "objectives":
                 out["objectives"] = obj_out
+            elif field == "discoveries":
+                out["discoveries"] = disc_out
+            elif field == "locations":
+                out["locations"] = locs_out
+            elif field == "gig":
+                out["gig"] = gig_out
             elif field == "opening_clock":
                 out["opening_clock"] = opening_clock_out
             else:
@@ -1516,6 +1617,9 @@ async def generate_creation_ai_assist(
             "opening_scene": str(parsed.get("opening_scene") or "").strip(),
             "npcs": npcs_out,
             "objectives": obj_out,
+            **({"discoveries": disc_out} if disc_out else {}),
+            **({"locations": locs_out} if locs_out else {}),
+            **({"gig": gig_out} if gig_out else {}),
             "beat_chart": beat_chart_out,
             "gm_secrets": str(parsed.get("gm_secrets") or "").strip(),
             "opening_clock": opening_clock_out,

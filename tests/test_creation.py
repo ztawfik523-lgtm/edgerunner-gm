@@ -384,3 +384,268 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     assert "Old repetitive Trauma Team story." in seen_prompts[-1]["avoid_repeating"]
 
 
+def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules):
+    import economy
+    import roles
+    from creation_reference import build_creation_reference
+
+    # 1. Creation Reference includes full ammo, attachments, services, housing, 90-item fashion_matrix, housing_tiers, lifestyles
+    ref = build_creation_reference(rules)
+    assert len(ref["shop"]["ammo"]) >= 3
+    assert len(ref["shop"]["attachment"]) >= 3
+    assert len(ref["shop"]["service"]) >= 5
+    assert len(ref["shop"]["housing"]) >= 4
+    assert len(ref["fashion_matrix"]) == 90
+    assert any(h["id"] == "corporate" and h.get("exec_only") for h in ref["housing_tiers"])
+    assert any(l["id"] == "Kibble" for l in ref["lifestyles"])
+
+    basics = [
+        "Athletics", "Brawling", "Concentration", "Conversation", "Education",
+        "Evasion", "First Aid", "Human Perception", "Language (Streetslang)",
+        "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth",
+    ]
+    base_skills = dict.fromkeys(basics, 2)
+    base_skills.update({f"Skill {i}": 5 for i in range(1, 13)})
+    stats = dict(zip(STATS, [6, 7, 6, 8, 6, 6, 6, 6, 5, 6]))
+
+    # 2. Tech maker_ranks persisted & usable by roles.tech_project_begin; Head Armor auto-equipped; Reputation & hooks stored
+    tech = build_character(
+        {
+            "name": "Wrench",
+            "method": "complete_package",
+            "role": "Tech",
+            "stats": stats,
+            "skills": base_skills,
+            "lifepath": {"cultural_origin": "North American"},
+            "role_choices": {
+                "maker": [
+                    "Field Expertise", "Upgrade Expertise",
+                    "Upgrade Expertise", "Fabrication Expertise",
+                    "Fabrication Expertise", "Invention Expertise",
+                    "Field Expertise", "Upgrade Expertise",
+                ],
+            },
+            "housing": "cube",
+            "lifestyle": "Generic Prepak",
+            "reputation": 3,
+            "reputation_note": "Known in Kabuki salvage yards",
+            "starting_hooks": {"debt": "Owes 500 eb to Fixer Mara"},
+            "starting_gear": {
+                "inventory": {
+                    "Heavy Pistol": 1,
+                    "Light Armorjack Body (SP 11)": 1,
+                    "Light Armorjack Head Armor (SP 11)": 1,
+                },
+                "cyberware": [
+                    {"name": "Linear Frame Sigma", "hl": 14, "cost_eb": 1000},
+                    {"name": "Skinweave", "hl": 7, "cost_eb": 500},
+                ],
+                "equipped_weapon": "Heavy Pistol",
+                "equipped_armor": {"name": "Light Armorjack Body (SP 11)", "sp": 11},
+                "money_spent_eb": 1700,
+                "fashion": [{"name": "Urban Flash Outfit", "cost_eb": 320, "style": "Urban Flash"}],
+            },
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert tech["detail"]["roles"][0]["choices"]["maker_ranks"]["Upgrade Expertise"] == 3
+    assert tech["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head Armor (SP 11)", "sp": 11}
+    assert tech["detail"]["housing"] == "cube"
+    assert tech["detail"]["lifestyle"] == "Generic Prepak"
+    assert tech["detail"]["reputation"] == 3
+    assert tech["detail"]["reputation_note"] == "Known in Kabuki salvage yards"
+    assert tech["detail"]["backstory"]["starting_hooks"]["debt"] == "Owes 500 eb to Fixer Mara"
+    # Linear Frame Sigma raises effective BODY from 5 -> 12 => HP = 10 + 5 * ceil((12+6)/2) = 55, death_save = 12
+    assert tech["stats"]["BODY"] == 5
+    assert tech["max_hp"] == 55
+    assert tech["death_save"] == 12
+    assert tech["detail"]["creation"]["cyberware_modifiers"]["subdermal_sp"] == 7
+
+    # Tech project invention works immediately using persisted maker_ranks
+    proj = roles.apply_action(
+        tech,
+        "tech_project_begin",
+        {
+            "project_kind": "invent",
+            "project_id": "custom-optic",
+            "gm_approved": True,
+            "category": "Expensive",
+            "gm_repair_skill": "Skill 1",
+        },
+        lambda s: 0,
+    )
+    assert proj["result"]["project_id"] == "custom-optic"
+
+    # Economy pay_month works immediately with persisted housing & lifestyle
+    paid = economy.apply_action(tech, "pay_month", {"month": 2}, lambda s: 0)
+    assert paid["result"]["paid"] == 800
+
+    # 3. Fashion budget > 800 eb rejected on complete_package
+    with pytest.raises(ValueError, match="fashion spending exceeds 800 eb"):
+        build_character(
+            {
+                "name": "Overdressed",
+                "method": "complete_package",
+                "role": "Rockerboy",
+                "stats": stats,
+                "skills": base_skills,
+                "lifepath": {"cultural_origin": "North American"},
+                "starting_gear": {
+                    "inventory": {"Heavy Pistol": 1},
+                    "fashion": [{"name": "High Fashion Contact Lenses", "cost_eb": 1000}],
+                    "money_spent_eb": 100,
+                },
+            },
+            rules,
+            lambda s: 0,
+        )
+
+    # 4. Exec, Nomad & Fixer role parity
+    exec_char = build_character(
+        {
+            "name": "Director Vance",
+            "method": "complete_package",
+            "role": "Exec",
+            "stats": stats,
+            "skills": base_skills,
+            "role_choices": {"team_member": {"name": "Kaito Reyes", "role": "Bodyguard", "loyalty": 5}},
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {"inventory": {"Very Heavy Pistol": 1}},
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert exec_char["detail"]["creation"]["status"] == "validated"
+    assert exec_char["detail"]["housing"] == "corporate"
+    assert exec_char["detail"]["trauma_team"] == "Silver"
+    assert exec_char["detail"]["team"][0]["loyalty"] == 5
+
+    nomad_char = build_character(
+        {
+            "name": "Dusty",
+            "method": "complete_package",
+            "role": "Nomad",
+            "stats": stats,
+            "skills": base_skills,
+            "role_choices": {"moto": ["Compact Groundcar", "Superbike", "Armored Chassis", "NOS (Nitrous Boost)"]},
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {"inventory": {"Heavy Pistol": 1}},
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert nomad_char["detail"]["creation"]["status"] == "validated"
+    assert nomad_char["detail"]["active_vehicle"] == "compact-groundcar"
+    swapped = roles.apply_action(
+        nomad_char,
+        "nomad_vehicle",
+        {"mode": "swap", "vehicle_id": "superbike", "family_close": True, "now_minutes": 100},
+        lambda s: 0,
+    )
+    assert swapped["result"]["pending_vehicle"] == "superbike"
+
+    fixer_char = build_character(
+        {
+            "name": "Broker",
+            "method": "complete_package",
+            "role": "Fixer",
+            "stats": stats,
+            "skills": base_skills,
+            "role_choices": {"culture": "Kabuki Night Market", "language": "Japanese"},
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {"inventory": {"Heavy Pistol": 1}},
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert fixer_char["skills"].get("Language (Japanese)") == 4
+
+    # 5. Reviewer hardening: Skin Weave (with space), Bodyweight Suit dual coverage, Communications Center, budget bypass guards
+    skin_bw = build_character(
+        {
+            "name": "Mesh",
+            "method": "complete_package",
+            "role": "Nomad",
+            "stats": stats,
+            "skills": base_skills,
+            "role_choices": {"moto": ["Compact Groundcar", "Communications Center", "Armored Chassis", "Smuggling Compartment"]},
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {
+                "inventory": {"Heavy Pistol": 1, "Bodyweight Suit (Head & Body SP 11)": 1},
+                "cyberware": [{"name": "Skin Weave", "hl": 7, "cost_eb": 500}],
+            },
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert skin_bw["detail"]["creation"]["cyberware_modifiers"]["subdermal_sp"] == 7
+    assert "Bodyweight Suit" in skin_bw["detail"]["equipped_armor"]["name"]
+    assert skin_bw["detail"]["equipped_armor"]["sp"] == 11
+    assert "Bodyweight Suit" in skin_bw["detail"]["equipped_head_armor"]["name"]
+    assert skin_bw["detail"]["equipped_head_armor"]["sp"] == 11
+    assert "Communications Center" in skin_bw["detail"]["family_motorpool"][0]["upgrades"]
+    assert len(skin_bw["detail"]["family_motorpool"]) == 1
+
+    skin_only = build_character(
+        {
+            "name": "Derm",
+            "method": "complete_package",
+            "role": "Solo",
+            "stats": stats,
+            "skills": base_skills,
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {
+                "inventory": {"Heavy Pistol": 1},
+                "cyberware": [{"name": "Skin Weave", "hl": 7, "cost_eb": 500}],
+            },
+        },
+        rules,
+        lambda s: 0,
+    )
+    assert skin_only["detail"]["equipped_armor"] == {"name": "Skinweave", "sp": 7}
+    assert skin_only["detail"]["equipped_head_armor"] == {"name": "Skinweave", "sp": 7}
+
+    # Omitted money_spent_eb still enforces 2550 eb catalog gear cap
+    with pytest.raises(ValueError, match="exceeds 2550 eb budget"):
+        build_character(
+            {
+                "name": "Heavyspender",
+                "method": "complete_package",
+                "role": "Solo",
+                "stats": stats,
+                "skills": base_skills,
+                "lifepath": {"cultural_origin": "North American"},
+                "starting_gear": {
+                    "cyberware": [
+                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
+                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
+                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
+                    ],
+                },
+            },
+            rules,
+            lambda s: 0,
+        )
+
+    # Spoofed cost_eb=0 on catalog fashion still resolves real catalog price against 800 eb fashion cap
+    with pytest.raises(ValueError, match="fashion spending exceeds 800 eb budget"):
+        build_character(
+            {
+                "name": "Spoofer",
+                "method": "complete_package",
+                "role": "Rockerboy",
+                "stats": stats,
+                "skills": base_skills,
+                "lifepath": {"cultural_origin": "North American"},
+                "starting_gear": {
+                    "inventory": {"Heavy Pistol": 1},
+                    "fashion": [{"name": "High Fashion Jacket", "cost_eb": 0}],
+                },
+            },
+            rules,
+            lambda s: 0,
+        )
+
+
+

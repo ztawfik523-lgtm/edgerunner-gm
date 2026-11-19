@@ -72,6 +72,7 @@ class GameplayService:
             "delete_campaign": self.memory.delete_campaign,
             "campaign_context": self.campaign_context,
             "update_campaign": self.memory.update_campaign,
+            "rename_campaign": self.memory.rename_campaign,
             "attach_character": self.memory.attach_character,
             "start_session": self.memory.start_session,
             "campaign_history": self.memory.history,

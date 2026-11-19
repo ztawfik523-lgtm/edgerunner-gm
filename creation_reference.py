@@ -1641,10 +1641,12 @@ def build_creation_reference(rules_path: str | Path | None) -> dict[str, Any]:
         prog_items.sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
         shop_items["program"] = prog_items
 
-    if not shop_items["ammo"] or not shop_items["attachment"]:
+    need_ammo = not shop_items["ammo"]
+    need_attachment = not shop_items["attachment"]
+    if need_ammo or need_attachment:
         for entry in build_corebook_ammo_attachments_exotics():
             cat = entry.get("category")
-            if cat in ("ammo", "attachment") and not shop_items[cat]:
+            if (cat == "ammo" and need_ammo) or (cat == "attachment" and need_attachment):
                 stats = dict(entry.get("stats") or {})
                 cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else stats.get("cost_eb", 0)
                 shop_items[cat].append({
@@ -1660,24 +1662,54 @@ def build_creation_reference(rules_path: str | Path | None) -> dict[str, Any]:
         shop_items["ammo"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
         shop_items["attachment"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
 
-    if not shop_items["service"] or not shop_items["housing"]:
-        for entry in build_corebook_services_housing_fashion():
-            cat = entry.get("category")
-            if cat in ("service", "housing") and not shop_items[cat]:
-                stats = dict(entry.get("stats") or {})
-                cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else stats.get("cost_eb", 0)
-                shop_items[cat].append({
-                    "id": entry.get("id", f"corebook:{cat}:{entry['name'].lower().replace(' ', '_')}"),
-                    "name": entry["name"],
-                    "category": cat,
-                    "cost_eb": cost_eb,
-                    "summary": entry.get("summary") or "",
-                    "description": entry.get("description") or "",
-                    "printed_page": entry.get("printed_page"),
-                    "stats": stats,
-                })
-        shop_items["service"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
-        shop_items["housing"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
+    need_service = not shop_items["service"]
+    need_housing = not shop_items["housing"]
+    fashion_matrix: list[dict[str, Any]] = []
+    for entry in build_corebook_services_housing_fashion():
+        cat = entry.get("category")
+        stats = dict(entry.get("stats") or {})
+        cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else stats.get("cost_eb", 0)
+        if (cat == "service" and need_service) or (cat == "housing" and need_housing):
+            shop_items[cat].append({
+                "id": entry.get("id", f"corebook:{cat}:{entry['name'].lower().replace(' ', '_')}"),
+                "name": entry["name"],
+                "category": cat,
+                "cost_eb": cost_eb,
+                "summary": entry.get("summary") or "",
+                "description": entry.get("description") or "",
+                "printed_page": entry.get("printed_page"),
+                "stats": stats,
+            })
+        elif cat == "fashion":
+            fashion_matrix.append({
+                "id": entry.get("id", f"corebook:fashion:{entry['name'].lower().replace(' ', '_')}"),
+                "name": entry["name"],
+                "cost_eb": cost_eb,
+                "style": str(stats.get("style") or "Generic Chic"),
+                "garment": str(stats.get("garment") or ""),
+                "summary": entry.get("summary") or "",
+            })
+    shop_items["service"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
+    shop_items["housing"].sort(key=lambda item: (item["cost_eb"], item["name"].casefold()))
+    fashion_matrix.sort(key=lambda item: (item["style"].casefold(), item["cost_eb"], item["name"].casefold()))
+
+    housing_tiers = [
+        {"id": "cargo_container", "name": "Cargo Container", "monthly_eb": 1000, "summary": "Standard starting studio container (Month 1 rent paid at creation, p. 377)."},
+        {"id": "cube", "name": "Cube Hotel", "monthly_eb": 500, "summary": "Tiny rented sleeping pod in a crowded megabuilding stack."},
+        {"id": "street", "name": "Living on The Street", "monthly_eb": 0, "summary": "No rent, sleeping rough or in squats with constant hazard."},
+        {"id": "vehicle", "name": "Living in a Vehicle", "monthly_eb": 0, "summary": "Nomad or compact road setup; requires an owned or clan vehicle."},
+        {"id": "studio", "name": "Studio Apartment", "monthly_eb": 1500, "summary": "Private one-room apartment in a Moderate Zone block."},
+        {"id": "two_bedroom", "name": "Two-Bedroom Apartment", "monthly_eb": 2500, "summary": "Spacious apartment suitable for crew ops or gear storage."},
+        {"id": "upscale_conapt", "name": "Upscale Conapt", "monthly_eb": 7500, "summary": "Guarded corporate-grade condo with amenities and privacy."},
+        {"id": "luxury_penthouse", "name": "Luxury Penthouse", "monthly_eb": 15000, "summary": "Top-floor Night City elite residence with private security."},
+        {"id": "corporate", "name": "Corporate Conapt (Exec Perk)", "monthly_eb": 0, "summary": "Complimentary Exec corporate housing (requires Exec Role, p. 153).", "exec_only": True},
+    ]
+    lifestyles = [
+        {"id": "Kibble", "name": "Kibble", "monthly_eb": 100, "summary": "Dry packaged nutrition; cheap survival baseline (Month 1 included, p. 377)."},
+        {"id": "Generic Prepak", "name": "Generic Prepak", "monthly_eb": 300, "summary": "Microwavable prepak meals and basic street coffee."},
+        {"id": "Good Prepak", "name": "Good Prepak", "monthly_eb": 600, "summary": "Decent restaurant takeout, nightlife drinks, and clean groceries."},
+        {"id": "Fresh Food", "name": "Fresh Food", "monthly_eb": 1500, "summary": "Rare real produce, fresh meat, and high-society dining."},
+    ]
 
     roles_payload = []
     for role in ROLES:
@@ -1700,6 +1732,9 @@ def build_creation_reference(rules_path: str | Path | None) -> dict[str, Any]:
         "lifepath_tables": LIFEPATH_TABLES,
         "shop": shop_items,
         "fashion": FASHION_ITEMS,
+        "fashion_matrix": fashion_matrix,
+        "housing_tiers": housing_tiers,
+        "lifestyles": lifestyles,
         "campaign_presets": campaign_presets,
         "difficult_skills": [
             "Autofire",

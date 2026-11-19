@@ -22,18 +22,21 @@ import {
   assistCharacterCreation,
   bootstrapCampaign,
   createCampaign,
+  fetchCampaignContext,
   fetchCreationReference,
+  listCampaigns,
+  listCharacters,
   type CampaignBootstrapPayload,
 } from "../api";
 import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
-import type { CampaignPresets, CampaignRecord } from "../types";
+import type { CampaignPresets, CampaignRecord, CharacterRecord } from "../types";
 import { FieldAiActions } from "./FieldAiActions";
 
 interface CampaignCreatorModalProps {
   open: boolean;
   editCampaign?: CampaignRecord | null;
   onClose: () => void;
-  onCreated: (campaignId: string, name: string) => Promise<void>;
+  onCreated: (campaignId: string, name: string, options?: { launchIntro?: boolean }) => Promise<void>;
   onUpdated?: (campaignId: string, name: string) => Promise<void>;
   onNotify: (msg: string) => void;
 }
@@ -48,60 +51,60 @@ const FALLBACK_PRESETS: CampaignPresets = {
       summary: "Irradiated nuclear ground zero in central Night City, filled with twisted skyscrapers, radioactive ruins, and deadly scavvers.",
     },
     {
-      name: "Rebuilding Urban Center",
+      name: "Rebuilding Urban Center (Upper Marina & Little Europe)",
       zone_type: "Rebuilding Urban Center",
       threat_rating: "Corporate",
-      printed_page: 299,
-      summary: "Surviving metropolitan sector under relentless Corporate reconstruction, featuring City Hall, corporate plazas, and mega-construction.",
+      printed_page: 298,
+      summary: "Densely packed city sectors escaping the worst destruction where new Corporate towers, marinas, and megabuildings rise.",
     },
     {
       name: "Watson Development",
       zone_type: "Rebuilding Urban Center",
       threat_rating: "Moderate",
-      printed_page: 301,
-      summary: "Densely packed sprawl housing Little China, Kabuki markets, rising megabuildings, and diverse immigrant communities.",
+      printed_page: 298,
+      summary: "Sprawling high-density reconstruction sector housing thousands of war refugees in rising megabuildings and Kabuki.",
     },
     {
       name: "Old Combat Zone",
-      zone_type: "Combat Zone",
+      zone_type: "Combat Zones",
       threat_rating: "Combat",
-      printed_page: 301,
-      summary: "Lawless urban combat sector long abandoned to boostergangs and cyberpsychos with zero NCPD presence.",
+      printed_page: 300,
+      summary: "Lawless urban warzone south of the Hot Zone ruled by violent boostergangs where NCPD never patrols.",
     },
     {
       name: "Heywood",
-      zone_type: "Overpacked Suburbs",
+      zone_type: "Moderate Zone",
       threat_rating: "Moderate",
-      printed_page: 302,
-      summary: "Vast overpacked residential sprawl divided into wealthier northern blocks and refugee-crowded Santo Domingo container camps.",
+      printed_page: 301,
+      summary: "Sprawling working-class residential sprawl south of Downtown, packed with cargo container blocks and street markets.",
     },
     {
       name: "New Westbrook",
-      zone_type: "Overpacked Suburbs",
+      zone_type: "Moderate Zone",
       threat_rating: "Moderate",
       printed_page: 302,
-      summary: "Glitz-and-glam suburb built among former executive ruins, housing displaced citizens alongside Network 54 studios.",
+      summary: "Entertainment and residential sector encompassing Japantown nightlife, capsule hotels, and luxury executive hill estates.",
     },
     {
       name: "Pacifica Playground",
-      zone_type: "Rebuilding Urban Center",
-      threat_rating: "Moderate",
-      printed_page: 300,
-      summary: "Corporate-backed coastal vacation and amusement district built around the active Playland by the Sea resort complex.",
+      zone_type: "Combat Zones",
+      threat_rating: "Combat",
+      printed_page: 299,
+      summary: "Bankrupt half-finished vacation paradise turned combat playground for combat gangers, private mercs, and scavvers.",
     },
     {
       name: "Executive Zone (Beaverville)",
       zone_type: "Executive Zone",
       threat_rating: "Executive",
-      printed_page: 300,
-      summary: "Gated and heavily guarded enclave in the hills with luxury mansions, private spas, and round-the-clock Lazarus security.",
+      printed_page: 295,
+      summary: "Walled, gated suburban enclave reserved exclusively for corporate executives, guarded by private military forces.",
     },
     {
       name: "The Open Road / Badlands",
-      zone_type: "Open Road",
+      zone_type: "The Open Road",
       threat_rating: "Outskirts",
-      printed_page: 303,
-      summary: "Wide red-dust desert highways connecting to regional hubs, patrolled by Nomad convoys and threatened by gogangs.",
+      printed_page: 295,
+      summary: "Vast red-dust desert highways and ruins outside Night City traveled by Nomad convoys and hunted by gogangs.",
     },
   ],
   factions: [
@@ -161,6 +164,19 @@ const FALLBACK_PRESETS: CampaignPresets = {
         resolution: "Delivery to Nomad Pack camp, vehicle repairs, and family Standing reward.",
       },
     },
+    {
+      id: "corp-intrigue",
+      name: "Megacorp Extraction & Black Ops",
+      printed_page: 402,
+      summary: "Espionage, defector extractions, dirty Media leaks, and double-crosses in Westbrook & Corporate Center.",
+      default_beats: {
+        hook: "A nervous junior Exec wants extraction plus wiping their lab's prototype backups before midnight.",
+        developments: "Extraction window shifts to a crowded Masquerade club; Black ICE guards the lab subnet.",
+        cliffhanger: "The defector isn't fleeing—they are bait for a Militech wetwork squad.",
+        climax: "Negotiate, betray, or fight through elite mercenaries to a waiting Gyrocopter.",
+        resolution: "Huge eddie payout or explosive Media Screamsheet fallout across Night City.",
+      },
+    },
   ],
   screamsheet_hooks: [
     "BLACKOUT AT KABUKI PIER: A neighborhood clinic loses backup generator fuel during a rolling grid brownout and hires runners for 2,000 eb to recover a hijacked tanker.",
@@ -175,11 +191,47 @@ function pickOne<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+interface NpcDraftEntry {
+  key: string;
+  val: string;
+  realName?: string;
+  realNameHidden?: boolean;
+  personality?: string;
+  speechStyle?: string;
+  showIdentity?: boolean;
+}
+
+interface ExtraClockDraft {
+  name: string;
+  segments: number;
+  filled: number;
+  category: "heat" | "obligation" | "deadline" | "faction" | "recovery";
+  visibility: "public" | "secret";
+  note: string;
+}
+
+interface LocationDraft {
+  name: string;
+  district: string;
+  security: string;
+  notes: string;
+}
+
+interface GigDraft {
+  title: string;
+  client: string;
+  target: string;
+  payoutEb: string;
+  deadline: string;
+  notes: string;
+}
+
 interface CampaignDraftData {
   name: string;
   district: string;
   caperStyle: string;
   selectedFactions: string[];
+  factionMeta?: Record<string, { disposition: string; turf: string }>;
   screamsheetHook: string;
   summary: string;
   openingScene: string;
@@ -188,12 +240,31 @@ interface CampaignDraftData {
   beatCliff: string;
   beatClimax: string;
   beatRes: string;
-  npcPairs: Array<{ key: string; val: string }>;
+  npcPairs: NpcDraftEntry[];
   objectivePairs: Array<{ key: string; val: string }>;
+  discoveryPairs?: Array<{ key: string; val: string }>;
+  locations?: LocationDraft[];
+  gig?: GigDraft;
   gmSecrets: string;
+  secretPairs?: Array<{ key: string; val: string }>;
   clockName: string;
   clockSegments: number;
+  clockFilled?: number;
+  clockCategory?: "heat" | "obligation" | "deadline" | "faction" | "recovery";
+  clockVisibility?: "public" | "secret";
   clockNote: string;
+  extraClocks?: ExtraClockDraft[];
+  sessionZero?: {
+    gmStyle: string;
+    narratorLength: string;
+    narratorPacing: string;
+    lethalityDial: string;
+    economyDial: string;
+    campaignScope: string;
+    startingClockMinutes: number;
+    crewConcept: string;
+    linesAndVeils: string;
+  };
   aiGuidance: string;
   lockChoices: boolean;
   targetNpcCount: number;
@@ -210,11 +281,13 @@ export function CampaignCreatorModal({
 }: CampaignCreatorModalProps) {
   const draftKey = editCampaign ? `campaign:edit:${editCampaign.id}` : "campaign:new";
   const hydratedRef = useRef(false);
+  const hadSavedDraftRef = useRef(false);
   const [presets, setPresets] = useState<CampaignPresets>(FALLBACK_PRESETS);
   const [name, setName] = useState("");
   const [district, setDistrict] = useState("Watson Development");
   const [caperStyle, setCaperStyle] = useState("Corporate Data / Cargo Heist");
   const [selectedFactions, setSelectedFactions] = useState<string[]>(["Arasaka", "Tyger Claws"]);
+  const [factionMeta, setFactionMeta] = useState<Record<string, { disposition: string; turf: string }>>({});
   const [screamsheetHook, setScreamsheetHook] = useState("");
   const [summary, setSummary] = useState("");
   const [openingScene, setOpeningScene] = useState("");
@@ -223,13 +296,35 @@ export function CampaignCreatorModal({
   const [beatCliff, setBeatCliff] = useState("");
   const [beatClimax, setBeatClimax] = useState("");
   const [beatRes, setBeatRes] = useState("");
-  const [npcPairs, setNpcPairs] = useState<Array<{ key: string; val: string }>>([]);
+  const [npcPairs, setNpcPairs] = useState<NpcDraftEntry[]>([]);
   const [objectivePairs, setObjectivePairs] = useState<Array<{ key: string; val: string }>>([]);
+  const [discoveryPairs, setDiscoveryPairs] = useState<Array<{ key: string; val: string }>>([]);
+  const [locations, setLocations] = useState<LocationDraft[]>([]);
+  const [gig, setGig] = useState<GigDraft>({ title: "", client: "", target: "", payoutEb: "", deadline: "", notes: "" });
   const [gmSecrets, setGmSecrets] = useState("");
+  const [secretPairs, setSecretPairs] = useState<Array<{ key: string; val: string }>>([]);
   const [revealGmSecrets, setRevealGmSecrets] = useState(false);
   const [clockName, setClockName] = useState("");
   const [clockSegments, setClockSegments] = useState(4);
+  const [clockFilled, setClockFilled] = useState(0);
+  const [clockCategory, setClockCategory] = useState<"heat" | "obligation" | "deadline" | "faction" | "recovery">("heat");
+  const [clockVisibility, setClockVisibility] = useState<"public" | "secret">("public");
   const [clockNote, setClockNote] = useState("");
+  const [extraClocks, setExtraClocks] = useState<ExtraClockDraft[]>([]);
+  const [showWorldEntities, setShowWorldEntities] = useState(false);
+  const [showSessionZero, setShowSessionZero] = useState(false);
+  const [szGmStyle, setSzGmStyle] = useState("inherit");
+  const [szNarratorLength, setSzNarratorLength] = useState("inherit");
+  const [szNarratorPacing, setSzNarratorPacing] = useState("inherit");
+  const [szLethality, setSzLethality] = useState("Standard RED");
+  const [szEconomy, setSzEconomy] = useState("Standard RED");
+  const [szScope, setSzScope] = useState("Mini-Arc");
+  const [szStartMinutes, setSzStartMinutes] = useState(1320);
+  const [szCrewConcept, setSzCrewConcept] = useState("");
+  const [szLinesVeils, setSzLinesVeils] = useState("");
+  const [unattachedChars, setUnattachedChars] = useState<CharacterRecord[]>([]);
+  const [attachCharIds, setAttachCharIds] = useState<string[]>([]);
+  const [launchIntroOnCreate, setLaunchIntroOnCreate] = useState(false);
   const [aiGuidance, setAiGuidance] = useState("");
   const [lockChoices, setLockChoices] = useState(false);
   const [targetNpcCount, setTargetNpcCount] = useState(3);
@@ -242,7 +337,9 @@ export function CampaignCreatorModal({
   const applyEditDefaults = (camp: CampaignRecord | null | undefined) => {
     if (camp) {
       setName(camp.name);
-      setDistrict("Watson Development");
+      const distUnres = camp.state.unresolved?.["District & Threat"] || "";
+      const parsedDist = distUnres ? distUnres.split("[")[0].split("(")[0].trim() : "";
+      setDistrict(parsedDist || "Watson Development");
       setCaperStyle("Corporate Data / Cargo Heist");
       setSelectedFactions(["Arasaka", "Tyger Claws"]);
       setScreamsheetHook("");
@@ -250,6 +347,14 @@ export function CampaignCreatorModal({
       setOpeningScene(camp.state.scene || "");
       setNpcPairs(Object.entries(camp.state.npcs ?? {}).map(([key, val]) => ({ key, val })));
       setObjectivePairs(Object.entries(camp.state.objectives ?? {}).map(([key, val]) => ({ key, val })));
+      setDiscoveryPairs(
+        Object.entries(camp.state.discoveries ?? {})
+          .filter(([k]) => !k.startsWith("__"))
+          .map(([key, val]) => ({ key, val })),
+      );
+      setFactionMeta({});
+      setLocations([]);
+      setGig({ title: "", client: "", target: "", payoutEb: "", deadline: "", notes: "" });
       const beatStr = camp.state.unresolved?.["Beat Chart"] || "";
       const extractBeat = (label: string) => {
         const re = new RegExp(`(?:^|\\|\\s*)${label}:\\s*([^|]+)`, "i");
@@ -262,9 +367,25 @@ export function CampaignCreatorModal({
       setBeatClimax(extractBeat("Climax"));
       setBeatRes(extractBeat("Resolution"));
       setGmSecrets("");
+      setSecretPairs([]);
       setClockName("");
       setClockSegments(4);
+      setClockFilled(0);
+      setClockCategory("heat");
+      setClockVisibility("public");
       setClockNote("");
+      setExtraClocks([]);
+      setSzGmStyle("inherit");
+      setSzNarratorLength("inherit");
+      setSzNarratorPacing("inherit");
+      setSzLethality("Standard RED");
+      setSzEconomy("Standard RED");
+      setSzScope("Mini-Arc");
+      setSzStartMinutes(1320);
+      setSzCrewConcept("");
+      setSzLinesVeils("");
+      setAttachCharIds([]);
+      setLaunchIntroOnCreate(false);
       setAiGuidance("");
       setLockChoices(false);
       setTargetNpcCount(3);
@@ -274,6 +395,7 @@ export function CampaignCreatorModal({
       setDistrict("Watson Development");
       setCaperStyle("Corporate Data / Cargo Heist");
       setSelectedFactions(["Arasaka", "Tyger Claws"]);
+      setFactionMeta({});
       setScreamsheetHook("");
       setSummary("");
       setOpeningScene("");
@@ -284,10 +406,29 @@ export function CampaignCreatorModal({
       setBeatRes("");
       setNpcPairs([]);
       setObjectivePairs([]);
+      setDiscoveryPairs([]);
+      setLocations([]);
+      setGig({ title: "", client: "", target: "", payoutEb: "", deadline: "", notes: "" });
       setGmSecrets("");
+      setSecretPairs([]);
       setClockName("");
       setClockSegments(4);
+      setClockFilled(0);
+      setClockCategory("heat");
+      setClockVisibility("public");
       setClockNote("");
+      setExtraClocks([]);
+      setSzGmStyle("inherit");
+      setSzNarratorLength("inherit");
+      setSzNarratorPacing("inherit");
+      setSzLethality("Standard RED");
+      setSzEconomy("Standard RED");
+      setSzScope("Mini-Arc");
+      setSzStartMinutes(1320);
+      setSzCrewConcept("");
+      setSzLinesVeils("");
+      setAttachCharIds([]);
+      setLaunchIntroOnCreate(false);
       setAiGuidance("");
       setLockChoices(false);
       setTargetNpcCount(3);
@@ -298,14 +439,17 @@ export function CampaignCreatorModal({
   useEffect(() => {
     if (!open) {
       hydratedRef.current = false;
+      hadSavedDraftRef.current = false;
       return;
     }
     const existing = loadDraft<CampaignDraftData>(draftKey);
+    hadSavedDraftRef.current = Boolean(existing);
     if (existing) {
       setName(existing.name ?? "");
       setDistrict(existing.district ?? "Watson Development");
       setCaperStyle(existing.caperStyle ?? "Corporate Data / Cargo Heist");
       setSelectedFactions(Array.isArray(existing.selectedFactions) ? existing.selectedFactions : ["Arasaka", "Tyger Claws"]);
+      setFactionMeta(existing.factionMeta && typeof existing.factionMeta === "object" ? existing.factionMeta : {});
       setScreamsheetHook(existing.screamsheetHook ?? "");
       setSummary(existing.summary ?? "");
       setOpeningScene(existing.openingScene ?? "");
@@ -316,10 +460,33 @@ export function CampaignCreatorModal({
       setBeatRes(existing.beatRes ?? "");
       setNpcPairs(Array.isArray(existing.npcPairs) ? existing.npcPairs : []);
       setObjectivePairs(Array.isArray(existing.objectivePairs) ? existing.objectivePairs : []);
+      setDiscoveryPairs(Array.isArray(existing.discoveryPairs) ? existing.discoveryPairs : []);
+      setLocations(Array.isArray(existing.locations) ? existing.locations : []);
+      setGig(existing.gig ?? { title: "", client: "", target: "", payoutEb: "", deadline: "", notes: "" });
       setGmSecrets(existing.gmSecrets ?? "");
+      setSecretPairs(Array.isArray(existing.secretPairs) ? existing.secretPairs : []);
       setClockName(existing.clockName ?? "");
       setClockSegments(typeof existing.clockSegments === "number" ? existing.clockSegments : 4);
+      setClockFilled(typeof existing.clockFilled === "number" ? existing.clockFilled : 0);
+      setClockCategory(existing.clockCategory ?? "heat");
+      setClockVisibility(existing.clockVisibility ?? "public");
       setClockNote(existing.clockNote ?? "");
+      setExtraClocks(Array.isArray(existing.extraClocks) ? existing.extraClocks : []);
+      if (existing.sessionZero) {
+        setSzGmStyle(existing.sessionZero.gmStyle || "inherit");
+        setSzNarratorLength(existing.sessionZero.narratorLength || "inherit");
+        setSzNarratorPacing(existing.sessionZero.narratorPacing || "inherit");
+        setSzLethality(existing.sessionZero.lethalityDial || "Standard RED");
+        setSzEconomy(existing.sessionZero.economyDial || "Standard RED");
+        setSzScope(existing.sessionZero.campaignScope || "Mini-Arc");
+        setSzStartMinutes(
+          typeof existing.sessionZero.startingClockMinutes === "number"
+            ? existing.sessionZero.startingClockMinutes
+            : 1320,
+        );
+        setSzCrewConcept(existing.sessionZero.crewConcept || "");
+        setSzLinesVeils(existing.sessionZero.linesAndVeils || "");
+      }
       setAiGuidance(existing.aiGuidance ?? "");
       setLockChoices(Boolean(existing.lockChoices));
       setTargetNpcCount(typeof existing.targetNpcCount === "number" ? existing.targetNpcCount : 3);
@@ -329,6 +496,10 @@ export function CampaignCreatorModal({
       applyEditDefaults(editCampaign);
       setDraftRestored(false);
     }
+    setShowWorldEntities(false);
+    setShowSessionZero(false);
+    setAttachCharIds([]);
+    setLaunchIntroOnCreate(false);
     setRevealGmSecrets(false);
     setError("");
     hydratedRef.current = true;
@@ -348,8 +519,18 @@ export function CampaignCreatorModal({
         beatRes.trim() ||
         npcPairs.length > 0 ||
         objectivePairs.length > 0 ||
+        discoveryPairs.length > 0 ||
+        locations.length > 0 ||
+        Boolean(gig.title.trim() || gig.client.trim() || gig.target.trim()) ||
         gmSecrets.trim() ||
+        secretPairs.length > 0 ||
         clockName.trim() ||
+        extraClocks.length > 0 ||
+        szGmStyle !== "inherit" ||
+        szNarratorLength !== "inherit" ||
+        szNarratorPacing !== "inherit" ||
+        szCrewConcept.trim() ||
+        szLinesVeils.trim() ||
         aiGuidance.trim() ||
         lockChoices,
     );
@@ -359,6 +540,7 @@ export function CampaignCreatorModal({
       district,
       caperStyle,
       selectedFactions,
+      factionMeta,
       screamsheetHook,
       summary,
       openingScene,
@@ -369,10 +551,29 @@ export function CampaignCreatorModal({
       beatRes,
       npcPairs,
       objectivePairs,
+      discoveryPairs,
+      locations,
+      gig,
       gmSecrets,
+      secretPairs,
       clockName,
       clockSegments,
+      clockFilled,
+      clockCategory,
+      clockVisibility,
       clockNote,
+      extraClocks,
+      sessionZero: {
+        gmStyle: szGmStyle,
+        narratorLength: szNarratorLength,
+        narratorPacing: szNarratorPacing,
+        lethalityDial: szLethality,
+        economyDial: szEconomy,
+        campaignScope: szScope,
+        startingClockMinutes: szStartMinutes,
+        crewConcept: szCrewConcept,
+        linesAndVeils: szLinesVeils,
+      },
       aiGuidance,
       lockChoices,
       targetNpcCount,
@@ -386,6 +587,7 @@ export function CampaignCreatorModal({
     district,
     caperStyle,
     selectedFactions,
+    factionMeta,
     screamsheetHook,
     summary,
     openingScene,
@@ -396,10 +598,27 @@ export function CampaignCreatorModal({
     beatRes,
     npcPairs,
     objectivePairs,
+    discoveryPairs,
+    locations,
+    gig,
     gmSecrets,
+    secretPairs,
     clockName,
     clockSegments,
+    clockFilled,
+    clockCategory,
+    clockVisibility,
     clockNote,
+    extraClocks,
+    szGmStyle,
+    szNarratorLength,
+    szNarratorPacing,
+    szLethality,
+    szEconomy,
+    szScope,
+    szStartMinutes,
+    szCrewConcept,
+    szLinesVeils,
     aiGuidance,
     lockChoices,
     targetNpcCount,
@@ -418,10 +637,122 @@ export function CampaignCreatorModal({
       .catch(() => {
         // Fallback presets work seamlessly offline/in tests
       });
+    if (editCampaign && !hadSavedDraftRef.current) {
+      fetchCampaignContext(editCampaign.id)
+        .then((ctx) => {
+          if (cancelled || !ctx) return;
+          const meta = ctx.campaign_meta;
+          if (meta?.district) setDistrict(meta.district);
+          if (meta?.caper_style) setCaperStyle(meta.caper_style);
+          if (Array.isArray(meta?.factions)) setSelectedFactions(meta.factions.slice(0, 4));
+          if (Array.isArray(meta?.faction_details)) {
+            const fdMap: Record<string, { disposition: string; turf: string }> = {};
+            for (const item of meta.faction_details) {
+              if (item?.name) fdMap[item.name] = { disposition: item.disposition || "Neutral", turf: item.turf || "" };
+            }
+            setFactionMeta(fdMap);
+          }
+          if (Array.isArray(meta?.locations)) {
+            setLocations(
+              meta.locations.map((l) => ({
+                name: l.name || "",
+                district: l.district || "",
+                security: l.security || "",
+                notes: l.notes || "",
+              })),
+            );
+          }
+          if (meta?.gig) {
+            setGig({
+              title: meta.gig.title || "",
+              client: meta.gig.client || "",
+              target: meta.gig.target || "",
+              payoutEb: typeof meta.gig.payout_eb === "number" ? String(meta.gig.payout_eb) : "",
+              deadline: meta.gig.deadline || "",
+              notes: meta.gig.notes || "",
+            });
+          }
+          if (meta?.screamsheet_hook !== undefined) setScreamsheetHook(meta.screamsheet_hook);
+          if (ctx.npc_profiles) {
+            setNpcPairs(
+              Object.entries(editCampaign.state.npcs ?? {}).map(([key, val]) => {
+                const prof = ctx.npc_profiles?.[key];
+                return {
+                  key,
+                  val,
+                  realName: prof?.real_name || "",
+                  realNameHidden: Boolean(prof?.real_name_hidden ?? false),
+                  personality: prof?.personality || "",
+                  speechStyle: prof?.speech_style || "",
+                };
+              }),
+            );
+          }
+          if (ctx.gm_secrets && Object.keys(ctx.gm_secrets).length > 0) {
+            const premise = ctx.gm_secrets["Premise Secret"] ?? "";
+            setGmSecrets(premise);
+            const extras = Object.entries(ctx.gm_secrets)
+              .filter(([k]) => k !== "Premise Secret")
+              .map(([key, val]) => ({ key, val }));
+            setSecretPairs(extras);
+          }
+          if (Array.isArray(ctx.clocks) && ctx.clocks.length > 0) {
+            const first = ctx.clocks[0];
+            setClockName(first.name ?? "");
+            setClockSegments(typeof first.segments === "number" ? first.segments : 4);
+            setClockFilled(typeof first.filled === "number" ? first.filled : 0);
+            setClockCategory((first.category as ExtraClockDraft["category"]) || "heat");
+            setClockVisibility(first.visibility === "secret" ? "secret" : "public");
+            setClockNote(first.note ?? "");
+            setExtraClocks(
+              ctx.clocks.slice(1).map((c) => ({
+                name: c.name ?? "",
+                segments: typeof c.segments === "number" ? c.segments : 4,
+                filled: typeof c.filled === "number" ? c.filled : 0,
+                category: (c.category as ExtraClockDraft["category"]) || "heat",
+                visibility: c.visibility === "secret" ? "secret" : "public",
+                note: c.note ?? "",
+              })),
+            );
+          }
+          const sz = ctx.session_zero;
+          if (sz) {
+            if (sz.gm_style) setSzGmStyle(sz.gm_style);
+            if (sz.narrator_length) setSzNarratorLength(sz.narrator_length);
+            if (sz.narrator_pacing) setSzNarratorPacing(sz.narrator_pacing);
+            if (sz.lethality_dial) setSzLethality(sz.lethality_dial);
+            if (sz.economy_dial) setSzEconomy(sz.economy_dial);
+            if (sz.campaign_scope) setSzScope(sz.campaign_scope);
+            if (sz.crew_concept !== undefined) setSzCrewConcept(sz.crew_concept);
+            if (sz.lines_and_veils !== undefined) setSzLinesVeils(sz.lines_and_veils);
+          }
+          if (typeof ctx.solo?.runtime?.clock_minutes === "number") {
+            setSzStartMinutes(ctx.solo.runtime.clock_minutes);
+          }
+        })
+        .catch(() => {
+          // Ignore hydration failure when running in minimal mocked contexts
+        });
+    }
+    if (!editCampaign) {
+      Promise.all([listCharacters(), listCampaigns()])
+        .then(([chars, camps]) => {
+          if (cancelled) return;
+          const allChars = Array.isArray(chars) ? chars : [];
+          const allCamps = Array.isArray(camps) ? camps : [];
+          const claimedIds = new Set(allCamps.flatMap((c) => c.character_ids ?? []));
+          setUnattachedChars(allChars.filter((ch) => ch?.id && !claimedIds.has(ch.id)));
+        })
+        .catch(() => {
+          setUnattachedChars([]);
+        });
+    } else {
+      setUnattachedChars([]);
+    }
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, editCampaign?.id, draftKey]);
 
   if (!open) return null;
 
@@ -563,6 +894,29 @@ export function CampaignCreatorModal({
       if ((!field || field === "objectives") && res.objectives && Object.keys(res.objectives).length > 0) {
         setObjectivePairs(Object.entries(res.objectives).map(([key, val]) => ({ key, val })));
       }
+      if ((!field || field === "discoveries") && res.discoveries && Object.keys(res.discoveries).length > 0) {
+        setDiscoveryPairs(Object.entries(res.discoveries).map(([key, val]) => ({ key, val })));
+      }
+      if ((!field || field === "locations") && Array.isArray(res.locations) && res.locations.length > 0) {
+        setLocations(
+          res.locations.map((l) => ({
+            name: l.name || "",
+            district: l.district || district,
+            security: "",
+            notes: l.notes || "",
+          })),
+        );
+      }
+      if ((!field || field === "gig") && res.gig) {
+        setGig({
+          title: res.gig.title || "",
+          client: res.gig.client || "",
+          target: res.gig.target || "",
+          payoutEb: typeof res.gig.payout_eb === "number" ? String(res.gig.payout_eb) : "",
+          deadline: res.gig.deadline || "",
+          notes: res.gig.notes || "",
+        });
+      }
       if ((!field || field === "gm_secrets") && res.gm_secrets) setGmSecrets(res.gm_secrets);
       if ((!field || field === "opening_clock") && res.opening_clock?.name) {
         setClockName(res.opening_clock.name);
@@ -600,6 +954,70 @@ export function CampaignCreatorModal({
       const objectives = Object.fromEntries(
         objectivePairs.filter((p) => p.key.trim() && p.val.trim()).map((p) => [p.key.trim(), p.val.trim()]),
       );
+      const discoveries = Object.fromEntries(
+        discoveryPairs.filter((p) => p.key.trim() && p.val.trim()).map((p) => [p.key.trim(), p.val.trim()]),
+      );
+      const npcIdentities = Object.fromEntries(
+        npcPairs
+          .filter(
+            (p) =>
+              p.key.trim() &&
+              (p.realName?.trim() || p.personality?.trim() || p.speechStyle?.trim()),
+          )
+          .map((p) => [
+            p.key.trim(),
+            {
+              handle: p.key.trim(),
+              ...(p.realName?.trim() ? { real_name: p.realName.trim() } : {}),
+              real_name_hidden: Boolean(p.realNameHidden ?? false),
+              ...(p.personality?.trim() ? { personality: p.personality.trim() } : {}),
+              ...(p.speechStyle?.trim() ? { speech_style: p.speechStyle.trim() } : {}),
+            },
+          ]),
+      );
+      const secretsMap: Record<string, string> = {};
+      if (gmSecrets.trim()) secretsMap["Premise Secret"] = gmSecrets.trim();
+      for (const sp of secretPairs) {
+        if (sp.key.trim() && sp.val.trim()) secretsMap[sp.key.trim()] = sp.val.trim();
+      }
+      const allClocks = [
+        ...(clockName.trim()
+          ? [
+              {
+                name: clockName.trim(),
+                segments: clockSegments,
+                filled: clockFilled,
+                category: clockCategory,
+                visibility: clockVisibility,
+                note: clockNote.trim(),
+              },
+            ]
+          : []),
+        ...extraClocks
+          .filter((c) => c.name.trim())
+          .map((c) => ({
+            name: c.name.trim(),
+            segments: c.segments,
+            filled: c.filled,
+            category: c.category,
+            visibility: c.visibility,
+            note: c.note.trim(),
+          })),
+      ];
+      const cleanLocations = locations
+        .filter((l) => l.name.trim())
+        .map((l) => ({
+          name: l.name.trim(),
+          district: l.district.trim() || district,
+          security: l.security.trim(),
+          notes: l.notes.trim(),
+        }));
+      const hasGig = Boolean(gig.title.trim() || gig.client.trim() || gig.target.trim() || gig.notes.trim());
+      const factionDetails = selectedFactions.map((fname) => ({
+        name: fname,
+        disposition: factionMeta[fname]?.disposition || "Neutral",
+        turf: factionMeta[fname]?.turf?.trim() || "",
+      }));
       const beatLines = [
         beatHook.trim() ? `Hook: ${beatHook.trim()}` : "",
         beatDev.trim() ? `Developments: ${beatDev.trim()}` : "",
@@ -608,45 +1026,98 @@ export function CampaignCreatorModal({
         beatRes.trim() ? `Resolution: ${beatRes.trim()}` : "",
       ].filter(Boolean);
       const hasWorldData =
-        summary.trim() ||
-        openingScene.trim() ||
+        Boolean(editCampaign) ||
+        Boolean(district) ||
+        Boolean(caperStyle) ||
+        selectedFactions.length > 0 ||
+        Boolean(screamsheetHook.trim()) ||
+        Boolean(summary.trim()) ||
+        Boolean(openingScene.trim()) ||
         Object.keys(npcs).length > 0 ||
         Object.keys(objectives).length > 0 ||
+        Object.keys(discoveries).length > 0 ||
+        cleanLocations.length > 0 ||
+        hasGig ||
         beatLines.length > 0 ||
-        gmSecrets.trim() ||
-        clockName.trim();
+        Object.keys(secretsMap).length > 0 ||
+        allClocks.length > 0;
 
       if (hasWorldData) {
-        const payload: CampaignBootstrapPayload = {
-          ...(summary.trim() ? { summary: summary.trim() } : {}),
-          ...(openingScene.trim() ? { scene: openingScene.trim() } : {}),
-          ...(Object.keys(npcs).length > 0 ? { npcs } : {}),
-          ...(Object.keys(objectives).length > 0 ? { objectives } : {}),
-          ...(beatLines.length > 0
+        const unresolvedPayload: Record<string, string> = {};
+        if (beatLines.length > 0) {
+          unresolvedPayload["Beat Chart"] = beatLines.join(" | ");
+        }
+        if (district) {
+          unresolvedPayload["District & Threat"] = `${district}${activeDistrict?.zone_type ? ` [${activeDistrict.zone_type}]` : ""} (${activeDistrict?.threat_rating ?? "Moderate"})`;
+        }
+        const worldEntitiesPayload: NonNullable<CampaignBootstrapPayload["world_entities"]> = {
+          ...(factionDetails.length > 0 || editCampaign ? { factions: factionDetails } : {}),
+          ...(cleanLocations.length > 0 || editCampaign ? { locations: cleanLocations } : {}),
+          ...(hasGig
             ? {
-                unresolved: {
-                  "Beat Chart": beatLines.join(" | "),
-                  ...(district
-                    ? {
-                        "District & Threat": `${district}${activeDistrict?.zone_type ? ` [${activeDistrict.zone_type}]` : ""} (${activeDistrict?.threat_rating ?? "Moderate"})`,
-                      }
-                    : {}),
+                gig: {
+                  title: gig.title.trim() || "Opening Contract",
+                  client: gig.client.trim(),
+                  target: gig.target.trim(),
+                  payout_eb: Number.parseInt(gig.payoutEb, 10) || 0,
+                  deadline: gig.deadline.trim(),
+                  notes: gig.notes.trim(),
+                },
+              }
+            : editCampaign
+              ? { gig: null as unknown as undefined }
+              : {}),
+          ...(screamsheetHook.trim()
+            ? {
+                screamsheet: {
+                  headline: screamsheetHook.split(":")[0].trim().slice(0, 90) || "N54 Screamsheet Lead",
+                  body: screamsheetHook.trim(),
                 },
               }
             : {}),
-          ...(gmSecrets.trim() ? { gm_secrets: gmSecrets.trim() } : {}),
+        };
+        const payload: CampaignBootstrapPayload = {
+          ...(editCampaign ? { name: title, clear_missing: true } : {}),
+          ...(district ? { district } : {}),
+          ...(activeDistrict?.zone_type ? { zone_type: activeDistrict.zone_type } : {}),
+          ...(activeDistrict?.threat_rating ? { threat_rating: activeDistrict.threat_rating } : {}),
+          ...(caperStyle ? { caper_style: caperStyle } : {}),
+          factions: selectedFactions,
+          screamsheet_hook: screamsheetHook.trim(),
+          ...(summary.trim() || editCampaign ? { summary: summary.trim() } : {}),
+          ...(openingScene.trim() || editCampaign ? { scene: openingScene.trim() } : {}),
+          ...(Object.keys(npcs).length > 0 || editCampaign ? { npcs } : {}),
+          ...(Object.keys(objectives).length > 0 || editCampaign ? { objectives } : {}),
+          ...(Object.keys(discoveries).length > 0 || editCampaign ? { discoveries } : {}),
+          ...(Object.keys(npcIdentities).length > 0 || editCampaign ? { npc_identities: npcIdentities } : {}),
+          ...(Object.keys(worldEntitiesPayload).length > 0 ? { world_entities: worldEntitiesPayload } : {}),
+          ...(Object.keys(unresolvedPayload).length > 0 || editCampaign ? { unresolved: unresolvedPayload } : {}),
+          ...(Object.keys(secretsMap).length > 0 || editCampaign ? { gm_secrets: secretsMap } : {}),
+          ...(allClocks.length > 0 || editCampaign ? { clocks: allClocks } : {}),
           ...(clockName.trim()
             ? { opening_clock: { name: clockName.trim(), segments: clockSegments, note: clockNote.trim() } }
             : {}),
+          session_zero: {
+            gm_style: szGmStyle,
+            narrator_length: szNarratorLength,
+            narrator_pacing: szNarratorPacing,
+            lethality_dial: szLethality,
+            economy_dial: szEconomy,
+            campaign_scope: szScope,
+            crew_concept: szCrewConcept.trim(),
+            lines_and_veils: szLinesVeils.trim(),
+          },
+          ...(!editCampaign ? { starting_clock_minutes: szStartMinutes } : {}),
+          ...(!editCampaign && attachCharIds.length > 0 ? { attach_character_ids: attachCharIds } : {}),
         };
         await bootstrapCampaign(targetCampaign.id, payload);
       }
 
       clearDraft(draftKey);
       if (editCampaign && onUpdated) {
-        await onUpdated(targetCampaign.id, targetCampaign.name);
+        await onUpdated(targetCampaign.id, title);
       } else {
-        await onCreated(targetCampaign.id, targetCampaign.name);
+        await onCreated(targetCampaign.id, title, { launchIntro: launchIntroOnCreate });
       }
       onClose();
     } catch (err) {
@@ -962,6 +1433,50 @@ export function CampaignCreatorModal({
               placeholder="Optional Screamsheet broadcast headline or rumor hitting Night City Nets today…"
               className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
             />
+            {selectedFactions.length > 0 && (
+              <div className="space-y-1.5 border-t border-slate-800/80 pt-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Faction Dispositions &amp; Turf (Seeded to Campaign Library)
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {selectedFactions.map((fname) => {
+                    const meta = factionMeta[fname] ?? { disposition: "Neutral", turf: "" };
+                    return (
+                      <div key={fname} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-950/70 px-2 py-1">
+                        <span className="min-w-[90px] truncate text-[11px] font-medium text-slate-200">{fname}</span>
+                        <select
+                          aria-label={`${fname} disposition`}
+                          value={meta.disposition}
+                          onChange={(e) =>
+                            setFactionMeta((prev) => ({
+                              ...prev,
+                              [fname]: { disposition: e.target.value, turf: meta.turf },
+                            }))
+                          }
+                          className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-100"
+                        >
+                          {["Hostile", "Wary", "Neutral", "Allied"].map((d) => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={meta.turf}
+                          onChange={(e) =>
+                            setFactionMeta((prev) => ({
+                              ...prev,
+                              [fname]: { disposition: meta.disposition, turf: e.target.value },
+                            }))
+                          }
+                          placeholder="Turf / agenda…"
+                          className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Premise & Opening Scene */}
@@ -1088,32 +1603,88 @@ export function CampaignCreatorModal({
                 </div>
               </div>
               {npcPairs.map((item, idx) => (
-                <div key={idx} className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={item.key}
-                    onChange={(e) =>
-                      setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                    }
-                    placeholder="NPC Name / Role"
-                    className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                  />
-                  <input
-                    type="text"
-                    value={item.val}
-                    onChange={(e) =>
-                      setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                    }
-                    placeholder="Motive / tie to crew"
-                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
-                    className="text-slate-500 hover:text-rose-400"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                <div key={idx} className="space-y-1.5 rounded border border-slate-800/80 bg-slate-950/40 p-1.5">
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={item.key}
+                      onChange={(e) =>
+                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                      }
+                      placeholder="NPC Name / Role"
+                      className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      value={item.val}
+                      onChange={(e) =>
+                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                      }
+                      placeholder="Motive / tie to crew"
+                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, showIdentity: !x.showIdentity } : x)))
+                      }
+                      title="Edit NPC hidden legal name, personality & speech style"
+                      className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-cyan-300 hover:border-cyan-400"
+                    >
+                      ID
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
+                      className="text-slate-500 hover:text-rose-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {item.showIdentity && (
+                    <div className="grid grid-cols-1 gap-1.5 border-t border-slate-800/70 pt-1.5 sm:grid-cols-2">
+                      <input
+                        type="text"
+                        value={item.realName ?? ""}
+                        onChange={(e) =>
+                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, realName: e.target.value } : x)))
+                        }
+                        placeholder="Real legal name (optional)"
+                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                      />
+                      <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.realNameHidden)}
+                          onChange={(e) =>
+                            setNpcPairs((p) =>
+                              p.map((x, i) => (i === idx ? { ...x, realNameHidden: e.target.checked } : x)),
+                            )
+                          }
+                          className="h-3 w-3 accent-amber-400"
+                        />
+                        <span>Hide legal name (GM Secret)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={item.personality ?? ""}
+                        onChange={(e) =>
+                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, personality: e.target.value } : x)))
+                        }
+                        placeholder="Personality (e.g. Paranoid, sharp)"
+                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                      />
+                      <input
+                        type="text"
+                        value={item.speechStyle ?? ""}
+                        onChange={(e) =>
+                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, speechStyle: e.target.value } : x)))
+                        }
+                        placeholder="Speech style (e.g. Clipped corp-speak)"
+                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1173,7 +1744,195 @@ export function CampaignCreatorModal({
             </div>
           </div>
 
-          {/* GM Secrets (Spoiler-Shielded) + Opening World Clock */}
+          {/* World Entities: Locations, Starting Gig & Discoveries */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowWorldEntities((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200 hover:text-cyan-200"
+              >
+                <MapPin className="h-3.5 w-3.5 text-cyan-400" />
+                <span>
+                  World Builder Extras: Locations ({locations.length}), Starting Gig &amp; Clues ({discoveryPairs.length})
+                </span>
+                <span className="font-mono text-[10px] text-cyan-400">{showWorldEntities ? "▲ Hide" : "▼ Expand"}</span>
+              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWorldEntities(true);
+                    setLocations((p) => [...p, { name: "", district, security: "", notes: "" }]);
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-cyan-300"
+                >
+                  <Plus className="h-3 w-3" /> Location
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWorldEntities(true);
+                    setDiscoveryPairs((p) => [...p, { key: "", val: "" }]);
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-emerald-300"
+                >
+                  <Plus className="h-3 w-3" /> Clue / Discovery
+                </button>
+              </div>
+            </div>
+            {showWorldEntities && (
+              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
+                {/* Starting Gig / Contract */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Starting Gig / Contract (Seeded to Library)
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <input
+                      type="text"
+                      value={gig.title}
+                      onChange={(e) => setGig((g) => ({ ...g, title: e.target.value }))}
+                      placeholder="Gig Title (e.g. Kabuki Cold Drop)"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      value={gig.client}
+                      onChange={(e) => setGig((g) => ({ ...g, client: e.target.value }))}
+                      placeholder="Client / Fixer"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      value={gig.target}
+                      onChange={(e) => setGig((g) => ({ ...g, target: e.target.value }))}
+                      placeholder="Target / Asset"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={gig.payoutEb}
+                      onChange={(e) => setGig((g) => ({ ...g, payoutEb: e.target.value }))}
+                      placeholder="Payout (eb)"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      value={gig.deadline}
+                      onChange={(e) => setGig((g) => ({ ...g, deadline: e.target.value }))}
+                      placeholder="Deadline (e.g. 48 hours)"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      value={gig.notes}
+                      onChange={(e) => setGig((g) => ({ ...g, notes: e.target.value }))}
+                      placeholder="Contract terms / twist"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                  </div>
+                </div>
+                {/* Locations */}
+                {locations.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Key Locations / Venues
+                    </div>
+                    {locations.map((loc, idx) => (
+                      <div key={idx} className="grid grid-cols-1 gap-1.5 sm:grid-cols-4">
+                        <input
+                          type="text"
+                          value={loc.name}
+                          onChange={(e) =>
+                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                          }
+                          placeholder="Venue / Block Name"
+                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <input
+                          type="text"
+                          value={loc.district}
+                          onChange={(e) =>
+                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, district: e.target.value } : x)))
+                          }
+                          placeholder="District"
+                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <input
+                          type="text"
+                          value={loc.security}
+                          onChange={(e) =>
+                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, security: e.target.value } : x)))
+                          }
+                          placeholder="Security / Threat"
+                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={loc.notes}
+                            onChange={(e) =>
+                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, notes: e.target.value } : x)))
+                            }
+                            placeholder="Vibe / access notes"
+                            className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setLocations((p) => p.filter((_, i) => i !== idx))}
+                            className="text-slate-500 hover:text-rose-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Starting Discoveries */}
+                {discoveryPairs.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Starting Discoveries / Clues Known to PCs
+                    </div>
+                    {discoveryPairs.map((dp, idx) => (
+                      <div key={idx} className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={dp.key}
+                          onChange={(e) =>
+                            setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                          }
+                          placeholder="Clue / Intel"
+                          className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <input
+                          type="text"
+                          value={dp.val}
+                          onChange={(e) =>
+                            setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                          }
+                          placeholder="What the crew already knows at Session 1"
+                          className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setDiscoveryPairs((p) => p.filter((_, i) => i !== idx))}
+                          className="text-slate-500 hover:text-rose-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* GM Secrets (Spoiler-Shielded) + Opening World Clocks */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1203,20 +1962,58 @@ export function CampaignCreatorModal({
                 </div>
               </div>
               {revealGmSecrets ? (
-                <textarea
-                  rows={2}
-                  value={gmSecrets}
-                  onChange={(e) => setGmSecrets(e.target.value)}
-                  placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
-                  className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                />
+                <div className="space-y-2">
+                  <textarea
+                    rows={2}
+                    value={gmSecrets}
+                    onChange={(e) => setGmSecrets(e.target.value)}
+                    placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                  />
+                  {secretPairs.map((sp, idx) => (
+                    <div key={idx} className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={sp.key}
+                        onChange={(e) =>
+                          setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                        }
+                        placeholder="Secret Key"
+                        className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <input
+                        type="text"
+                        value={sp.val}
+                        onChange={(e) =>
+                          setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                        }
+                        placeholder="Hidden truth…"
+                        className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSecretPairs((p) => p.filter((_, i) => i !== idx))}
+                        className="text-slate-500 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSecretPairs((p) => [...p, { key: "", val: "" }])}
+                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-[10px] text-amber-200"
+                  >
+                    <Plus className="h-3 w-3" /> Add Secret Entry
+                  </button>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center rounded border border-amber-500/30 bg-slate-950/90 px-3 py-4 text-center">
                   <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90">
                     CLASSIFIED // SPOILER SHIELDED
                   </span>
                   <span className="mt-1 text-[11px] text-slate-400">
-                    {gmSecrets.trim()
+                    {gmSecrets.trim() || secretPairs.length > 0
                       ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
                       : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
                   </span>
@@ -1229,40 +2026,344 @@ export function CampaignCreatorModal({
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
                   <Clock className="h-3.5 w-3.5 text-rose-400" /> Opening World / Heat Clock (Optional)
                 </div>
-                <FieldAiActions
-                  label="Opening Clock"
-                  compact
-                  disabled={aiBusy}
-                  busyAction={busyFor("opening_clock")}
-                  onImprove={() => void handleAiCampaign("expand", "opening_clock")}
-                  onRegen={() => void handleAiCampaign("scratch", "opening_clock")}
-                />
+                <div className="flex items-center gap-1.5">
+                  <FieldAiActions
+                    label="Opening Clock"
+                    compact
+                    disabled={aiBusy}
+                    busyAction={busyFor("opening_clock")}
+                    onImprove={() => void handleAiCampaign("expand", "opening_clock")}
+                    onRegen={() => void handleAiCampaign("scratch", "opening_clock")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExtraClocks((p) => [
+                        ...p,
+                        { name: "", segments: 4, filled: 0, category: "deadline", visibility: "public", note: "" },
+                      ])
+                    }
+                    className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-rose-300"
+                  >
+                    <Plus className="h-3 w-3" /> Clock
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 <input
                   type="text"
                   value={clockName}
                   onChange={(e) => setClockName(e.target.value)}
                   placeholder="Clock name (e.g. Corp Trace)"
-                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                  className="min-w-[130px] flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                 />
                 <input
                   type="number"
                   min={2}
                   max={12}
+                  aria-label="Primary clock segments"
                   value={clockSegments}
-                  onChange={(e) => setClockSegments(Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4)))}
-                  className="w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                  onChange={(e) => {
+                    const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
+                    setClockSegments(seg);
+                    setClockFilled((f) => Math.min(f, seg));
+                  }}
+                  className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={clockSegments}
+                  aria-label="Primary clock filled"
+                  title="Initial filled segments"
+                  value={clockFilled}
+                  onChange={(e) => setClockFilled(Math.max(0, Math.min(clockSegments, parseInt(e.target.value, 10) || 0)))}
+                  className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
                 />
               </div>
-              <input
-                type="text"
-                value={clockNote}
-                onChange={(e) => setClockNote(e.target.value)}
-                placeholder="What happens when the clock fills…"
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-              />
+              <div className="flex gap-1.5">
+                <select
+                  aria-label="Primary clock category"
+                  value={clockCategory}
+                  onChange={(e) => setClockCategory(e.target.value as ExtraClockDraft["category"])}
+                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                >
+                  {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Primary clock visibility"
+                  value={clockVisibility}
+                  onChange={(e) => setClockVisibility(e.target.value as "public" | "secret")}
+                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                >
+                  <option value="public">Public</option>
+                  <option value="secret">GM Secret</option>
+                </select>
+                <input
+                  type="text"
+                  value={clockNote}
+                  onChange={(e) => setClockNote(e.target.value)}
+                  placeholder="What happens when the clock fills…"
+                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                />
+              </div>
+              {extraClocks.map((ec, idx) => (
+                <div key={idx} className="space-y-1 border-t border-slate-800/80 pt-2">
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={ec.name}
+                      onChange={(e) =>
+                        setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                      }
+                      placeholder="Additional clock name"
+                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    />
+                    <input
+                      type="number"
+                      min={2}
+                      max={12}
+                      value={ec.segments}
+                      onChange={(e) => {
+                        const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
+                        setExtraClocks((p) =>
+                          p.map((x, i) => (i === idx ? { ...x, segments: seg, filled: Math.min(x.filled, seg) } : x)),
+                        );
+                      }}
+                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                    />
+                    <select
+                      value={ec.visibility}
+                      onChange={(e) =>
+                        setExtraClocks((p) =>
+                          p.map((x, i) => (i === idx ? { ...x, visibility: e.target.value as "public" | "secret" } : x)),
+                        )
+                      }
+                      className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-[10px] text-slate-200"
+                    >
+                      <option value="public">Public</option>
+                      <option value="secret">Secret</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setExtraClocks((p) => p.filter((_, i) => i !== idx))}
+                      className="text-slate-500 hover:text-rose-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={ec.category}
+                      onChange={(e) =>
+                        setExtraClocks((p) =>
+                          p.map((x, i) =>
+                            i === idx ? { ...x, category: e.target.value as ExtraClockDraft["category"] } : x,
+                          ),
+                        )
+                      }
+                      className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
+                    >
+                      {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={ec.note}
+                      onChange={(e) =>
+                        setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))
+                      }
+                      placeholder="Trigger note…"
+                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-100"
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
+          </div>
+
+          {/* Session Zero & Table Dials + Starting Party */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => setShowSessionZero((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <ShieldAlert className="h-3.5 w-3.5 text-cyan-400" />
+                Session Zero Dials, Starting Time &amp; Table Boundaries (Optional)
+              </span>
+              <span className="font-mono text-[10px] text-cyan-400">{showSessionZero ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showSessionZero && (
+              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">GM Tone Override</label>
+                    <select
+                      aria-label="Session Zero GM Style"
+                      value={szGmStyle}
+                      onChange={(e) => setSzGmStyle(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    >
+                      <option value="inherit">Inherit Server Default</option>
+                      <option value="grounded">Grounded Street</option>
+                      <option value="cinematic">Cinematic</option>
+                      <option value="grit_dark">Grit &amp; Dark</option>
+                      <option value="spy_thriller">Spy Thriller</option>
+                      <option value="full_action">Full Action</option>
+                      <option value="lethal">Lethal Combat Zone</option>
+                      <option value="noir_mystery">Noir Mystery</option>
+                      <option value="sandbox">Open Sandbox</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Reply Length</label>
+                    <select
+                      aria-label="Session Zero Reply Length"
+                      value={szNarratorLength}
+                      onChange={(e) => setSzNarratorLength(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    >
+                      <option value="inherit">Inherit Server Default</option>
+                      <option value="auto">Auto</option>
+                      <option value="concise">Concise</option>
+                      <option value="standard">Standard</option>
+                      <option value="detailed">Detailed</option>
+                      <option value="novel">Novelistic</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Pacing</label>
+                    <select
+                      aria-label="Session Zero Pacing"
+                      value={szNarratorPacing}
+                      onChange={(e) => setSzNarratorPacing(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    >
+                      <option value="inherit">Inherit Server Default</option>
+                      <option value="balanced">Balanced</option>
+                      <option value="reactive">Reactive / Fast</option>
+                      <option value="tactical">Tactical Crunch</option>
+                      <option value="roleplay">Roleplay Heavy</option>
+                      <option value="slow_burn">Slow Burn</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Lethality Dial</label>
+                    <select
+                      aria-label="Lethality Dial"
+                      value={szLethality}
+                      onChange={(e) => setSzLethality(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    >
+                      <option value="Standard RED">Standard RED (pp. 168–188)</option>
+                      <option value="Gritty / High Lethality">Gritty / High Lethality</option>
+                      <option value="Cinematic Action">Cinematic Action</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Economy Dial</label>
+                    <select
+                      aria-label="Economy Dial"
+                      value={szEconomy}
+                      onChange={(e) => setSzEconomy(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                    >
+                      <option value="Raw Scarcity">Raw Scarcity (Time of the Red)</option>
+                      <option value="Standard RED">Standard RED (500–2,000 eb gigs)</option>
+                      <option value="High-Roller">High-Roller Contracts</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Campaign Scope &amp; Time</label>
+                    <div className="flex gap-1.5">
+                      <select
+                        aria-label="Campaign Scope"
+                        value={szScope}
+                        onChange={(e) => setSzScope(e.target.value)}
+                        className="w-1/2 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100"
+                      >
+                        <option value="One-Shot">One-Shot</option>
+                        <option value="Mini-Arc">Mini-Arc</option>
+                        <option value="Open Sandbox">Open Sandbox</option>
+                      </select>
+                      <select
+                        aria-label="Starting Night City Time"
+                        disabled={Boolean(editCampaign)}
+                        title={editCampaign ? "Starting clock time is only set on campaign creation" : "Starting Night City time"}
+                        value={szStartMinutes}
+                        onChange={(e) => setSzStartMinutes(parseInt(e.target.value, 10) || 0)}
+                        className="w-1/2 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 disabled:opacity-50"
+                      >
+                        <option value={0}>00:00 Midnight</option>
+                        <option value={360}>06:00 Red Dawn</option>
+                        <option value={720}>12:00 High Noon</option>
+                        <option value={1140}>19:00 Dusk</option>
+                        <option value={1320}>22:00 Night</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    value={szCrewConcept}
+                    onChange={(e) => setSzCrewConcept(e.target.value)}
+                    placeholder="Crew Concept / Shared HQ or Patron (e.g. Heywood ripperdoc clinic crew)"
+                    className="rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                  />
+                  <input
+                    type="text"
+                    value={szLinesVeils}
+                    onChange={(e) => setSzLinesVeils(e.target.value)}
+                    placeholder="Lines & Veils / Safety Boundaries (topics off-limits for GM)"
+                    className="rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                  />
+                </div>
+                {!editCampaign && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      {unattachedChars.length > 0 && (
+                        <>
+                          <span className="text-[11px] font-semibold text-slate-300">Attach Starting PCs:</span>
+                          {unattachedChars.map((ch) => {
+                            const checked = attachCharIds.includes(ch.id);
+                            return (
+                              <label key={ch.id} className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setAttachCharIds((prev) =>
+                                      prev.includes(ch.id) ? prev.filter((x) => x !== ch.id) : [...prev, ch.id],
+                                    )
+                                  }
+                                  className="h-3 w-3 accent-cyan-400"
+                                />
+                                <span>{ch.name}</span>
+                              </label>
+                            );
+                          })}
+                        </>
+                      )}
+                    </div>
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-cyan-200">
+                      <input
+                        type="checkbox"
+                        checked={launchIntroOnCreate}
+                        onChange={(e) => setLaunchIntroOnCreate(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-cyan-400"
+                      />
+                      <span>Launch Opening GM Intro on Create</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

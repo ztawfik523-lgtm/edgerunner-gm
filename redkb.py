@@ -888,6 +888,17 @@ def make_api(
             return "user"
         return str(sess.get("role") or "anon")
 
+    def _can_view_gm_private_state(request: Request, sess: dict[str, Any]) -> bool:
+        eff_role = _effective_role(request, sess)
+        if eff_role in {"admin", "open"}:
+            return True
+        return bool(
+            sess.get("pin_only_mode")
+            and sess.get("authenticated")
+            and not auth.is_admin_configured()
+            and (request.headers.get("x-redgm-view-role") or "").strip().lower() != "user"
+        )
+
     @app.post("/v1/game")
     async def game(request: Request):
         request_id = uuid.uuid4().hex
@@ -908,12 +919,17 @@ def make_api(
             admin_campaign_actions = {
                 "create_campaign",
                 "update_campaign",
+                "rename_campaign",
                 "start_session",
                 "undo_campaign",
                 "delete_campaign",
                 "set_primary_campaign",
             }
-            if action_name in admin_campaign_actions and eff_role == "user" and not sess.get("pin_only_mode"):
+            if (
+                action_name in admin_campaign_actions
+                and eff_role == "user"
+                and not (sess.get("pin_only_mode") and sess.get("authenticated") and not auth.is_admin_configured())
+            ):
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Admin permission required to create or modify campaigns and sessions.", "request_id": request_id},
@@ -1056,16 +1072,37 @@ def make_api(
                         pass
                 if action_name == "campaign_context" and isinstance(res_out.get("result"), dict):
                     try:
-                        from turnloop import TurnEngine, build_npc_profiles, compute_party_grouping
+                        from turnloop import (
+                            TurnEngine,
+                            build_npc_profiles,
+                            compute_party_grouping,
+                            parse_campaign_meta,
+                            parse_session_zero,
+                        )
                         ctx_res = res_out["result"]
                         camp_obj = ctx_res.get("campaign") or {}
                         camp_id_ctx = camp_obj.get("id")
                         state_obj = camp_obj.get("state") or {}
                         chars_obj = ctx_res.get("characters") or []
-                        secrets_obj = TurnEngine(svc, None)._get_gm_secrets(camp_id_ctx) if camp_id_ctx else {}
-                        include_hidden = eff_role in {"admin", "open"}
+                        eng_ctx = TurnEngine(svc, None)
+                        secrets_obj = eng_ctx._get_gm_secrets(camp_id_ctx) if camp_id_ctx else {}
+                        include_hidden = _can_view_gm_private_state(request, sess)
                         ctx_res["npc_profiles"] = build_npc_profiles(state_obj, secrets_obj, include_hidden=include_hidden)
                         ctx_res["party_grouping"] = compute_party_grouping(chars_obj, state_obj)
+                        ctx_res["campaign_meta"] = parse_campaign_meta(state_obj)
+                        ctx_res["session_zero"] = parse_session_zero(state_obj)
+                        if camp_id_ctx:
+                            ctx_res["clocks"] = (
+                                eng_ctx.list_all_clocks(camp_id_ctx)
+                                if include_hidden
+                                else eng_ctx.list_public_clocks(camp_id_ctx)
+                            )
+                        if include_hidden:
+                            ctx_res["gm_secrets"] = {
+                                str(k): str(v)
+                                for k, v in secrets_obj.items()
+                                if not str(k).startswith("__")
+                            }
                     except Exception:
                         pass
                 return res_out
@@ -2548,7 +2585,7 @@ def make_api(
                 profiles = build_npc_profiles(
                     fresh_ctx["campaign"]["state"],
                     fresh_sec,
-                    include_hidden=(eff_role in {"admin", "open"}),
+                    include_hidden=_can_view_gm_private_state(request, sess),
                 )
                 return {"campaign": fresh_ctx["campaign"], "npc_profiles": profiles}
 
@@ -2658,7 +2695,16 @@ def make_api(
         sess = _session(request)
         if _effective_role(request, sess) == "user" and not (sess.get("pin_only_mode") and not auth.is_admin_configured()):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify campaign setup.", "request_id": request_id})
-        from turnloop import TurnEngine
+        from library import CampaignLibrary
+        from turnloop import (
+            TurnEngine,
+            _encode_npc_identities_json,
+            encode_campaign_meta_json,
+            encode_session_zero_json,
+            parse_campaign_meta,
+            parse_npc_identities_public,
+            parse_session_zero,
+        )
         try:
             body = await request.json()
             if not isinstance(body, dict):
@@ -2668,21 +2714,137 @@ def make_api(
                 svc = gameplay_service()
                 ctx = svc.campaign_context(campaign_id)
                 camp = ctx["campaign"]
+                new_name = body.get("name")
+                if isinstance(new_name, str) and new_name.strip() and new_name.strip() != camp["name"]:
+                    camp = svc.execute(
+                        "rename_campaign",
+                        {
+                            "campaign_id": campaign_id,
+                            "name": new_name.strip(),
+                            "expected_revision": camp["revision"],
+                            "reason": "Rename campaign",
+                            "operation_id": f"camp-rename-{uuid.uuid4().hex[:12]}",
+                        },
+                        campaign_id=campaign_id,
+                    )["result"]
+                clear_missing = bool(body.get("clear_missing", False))
+                cur_state = dict(camp.get("state") or {})
+                cur_disc = dict(cur_state.get("discoveries") or {})
+                internal_disc = {k: v for k, v in cur_disc.items() if str(k).startswith("__")}
                 changes: dict[str, Any] = {}
                 for field in ("scene", "summary"):
-                    val = body.get(field)
-                    if isinstance(val, str) and val.strip():
-                        changes[field] = val.strip()
+                    if field in body:
+                        val = body.get(field)
+                        if isinstance(val, str) and val.strip():
+                            changes[field] = val.strip()
+                        elif clear_missing and isinstance(val, str):
+                            changes[field] = ""
                 for map_field in ("npcs", "objectives", "discoveries", "unresolved"):
+                    if map_field not in body:
+                        continue
                     val = body.get(map_field)
-                    if isinstance(val, dict) and val:
+                    if isinstance(val, dict):
                         cleaned = {
                             str(k).strip(): str(v).strip()
                             for k, v in val.items()
-                            if str(k).strip() and str(v).strip()
+                            if str(k).strip() and str(v).strip() and not (map_field == "discoveries" and str(k).strip().startswith("__"))
                         }
-                        if cleaned:
+                        if map_field == "discoveries":
+                            if cleaned or clear_missing:
+                                changes[map_field] = {**internal_disc, **cleaned}
+                        elif cleaned or clear_missing:
                             changes[map_field] = cleaned
+                has_meta_input = any(
+                    k in body
+                    for k in ("district", "zone_type", "threat_rating", "caper_style", "factions", "screamsheet_hook", "campaign_meta", "world_entities")
+                )
+                if has_meta_input:
+                    merged_meta = {} if clear_missing else dict(parse_campaign_meta(cur_state))
+                    if isinstance(body.get("campaign_meta"), dict):
+                        merged_meta.update(body["campaign_meta"])
+                    for mk in ("district", "zone_type", "threat_rating", "caper_style", "screamsheet_hook"):
+                        if mk in body:
+                            mv = str(body.get(mk) or "").strip()
+                            if mv:
+                                merged_meta[mk] = mv
+                            else:
+                                merged_meta.pop(mk, None)
+                    if "factions" in body and isinstance(body["factions"], list):
+                        merged_meta["factions"] = [str(f).strip() for f in body["factions"] if str(f).strip()]
+                    we = body.get("world_entities")
+                    if isinstance(we, dict):
+                        if "factions" in we and isinstance(we.get("factions"), list):
+                            fds = [f for f in we["factions"] if isinstance(f, dict) and str(f.get("name") or "").strip()]
+                            if fds:
+                                merged_meta["faction_details"] = fds
+                            else:
+                                merged_meta.pop("faction_details", None)
+                        if "locations" in we and isinstance(we.get("locations"), list):
+                            locs = [l for l in we["locations"] if isinstance(l, dict) and str(l.get("name") or "").strip()]
+                            if locs:
+                                merged_meta["locations"] = locs
+                            else:
+                                merged_meta.pop("locations", None)
+                        if "gig" in we:
+                            if isinstance(we.get("gig"), dict) and any(str(we["gig"].get(k) or "").strip() for k in ("title", "client", "target", "notes")):
+                                merged_meta["gig"] = dict(we["gig"])
+                            else:
+                                merged_meta.pop("gig", None)
+                    base_disc = dict(changes.get("discoveries") if "discoveries" in changes else cur_disc)
+                    base_disc["__campaign_meta"] = encode_campaign_meta_json(merged_meta)
+                    changes["discoveries"] = base_disc
+
+                if isinstance(body.get("session_zero"), dict) or "starting_clock_minutes" in body:
+                    merged_sz = dict(parse_session_zero(cur_state))
+                    if isinstance(body.get("session_zero"), dict):
+                        merged_sz.update(body["session_zero"])
+                    if isinstance(body.get("starting_clock_minutes"), int) and body["starting_clock_minutes"] >= 0:
+                        merged_sz["starting_clock_minutes"] = int(body["starting_clock_minutes"])
+                    base_disc = dict(changes.get("discoveries") if "discoveries" in changes else cur_disc)
+                    base_disc["__session_zero"] = encode_session_zero_json(merged_sz)
+                    changes["discoveries"] = base_disc
+
+                eng = TurnEngine(svc, None)
+                npc_secret_updates: dict[str, str | None] = {}
+                npc_ids_in = body.get("npc_identities")
+                existing_sec = eng._get_gm_secrets(campaign_id)
+                cur_ids_prev = parse_npc_identities_public(cur_state)
+                if isinstance(npc_ids_in, dict):
+                    cur_ids = {} if clear_missing else dict(cur_ids_prev)
+                    for raw_handle, spec in npc_ids_in.items():
+                        if not isinstance(raw_handle, str) or not raw_handle.strip() or not isinstance(spec, dict):
+                            continue
+                        handle = raw_handle.strip()
+                        entry: dict[str, Any] = {
+                            "handle": str(spec.get("handle") or handle).strip() or handle,
+                            "real_name_hidden": bool(spec.get("real_name_hidden", False)),
+                        }
+                        if isinstance(spec.get("personality"), str) and spec["personality"].strip():
+                            entry["personality"] = spec["personality"].strip()[:240]
+                        if isinstance(spec.get("speech_style"), str) and spec["speech_style"].strip():
+                            entry["speech_style"] = spec["speech_style"].strip()[:160]
+                        real_name = str(spec.get("real_name") or "").strip()
+                        if not real_name and not entry["real_name_hidden"]:
+                            real_name = str(existing_sec.get(f"__npc_real:{handle}") or cur_ids_prev.get(handle, {}).get("real_name") or "").strip()
+                        if real_name:
+                            if entry["real_name_hidden"]:
+                                npc_secret_updates[f"__npc_real:{handle}"] = real_name
+                            else:
+                                entry["real_name"] = real_name
+                                npc_secret_updates[f"__npc_real:{handle}"] = None
+                        elif not entry["real_name_hidden"]:
+                            npc_secret_updates[f"__npc_real:{handle}"] = None
+                        cur_ids[handle] = entry
+                    if clear_missing:
+                        for sec_k in list(existing_sec):
+                            if str(sec_k).startswith("__npc_real:"):
+                                sec_handle = str(sec_k)[len("__npc_real:"):]
+                                if sec_handle not in cur_ids:
+                                    npc_secret_updates[str(sec_k)] = None
+                    base_disc = dict(changes.get("discoveries") if "discoveries" in changes else cur_disc)
+                    base_disc["__npc_identities"] = _encode_npc_identities_json(cur_ids)
+                    changes["discoveries"] = base_disc
+
                 if changes:
                     camp = svc.execute(
                         "update_campaign",
@@ -2695,25 +2857,151 @@ def make_api(
                         },
                         campaign_id=campaign_id,
                     )["result"]
+
+                start_mins = body.get("starting_clock_minutes")
+                if type(start_mins) is int and start_mins >= 0:
+                    svc.solo.set_initial_clock_minutes(campaign_id, start_mins)
+
+                attach_ids = body.get("attach_character_ids")
+                if isinstance(attach_ids, list):
+                    existing_members = set(camp.get("character_ids") or [])
+                    for raw_cid in attach_ids:
+                        cid = str(raw_cid or "").strip()
+                        if not cid or cid in existing_members:
+                            continue
+                        camp = svc.execute(
+                            "attach_character",
+                            {
+                                "campaign_id": campaign_id,
+                                "character_id": cid,
+                                "expected_revision": camp["revision"],
+                                "reason": "Attach starting party character",
+                                "operation_id": f"camp-attach-{uuid.uuid4().hex[:12]}",
+                            },
+                            campaign_id=campaign_id,
+                        )["result"]
+                        existing_members.add(cid)
+
+                we_in = body.get("world_entities")
+                seeded_library: list[dict[str, Any]] = []
+                if isinstance(we_in, dict):
+                    lib = CampaignLibrary(svc.store, rules_path=db_path)
+                    for fac in we_in.get("factions") or []:
+                        if not isinstance(fac, dict) or not str(fac.get("name") or "").strip():
+                            continue
+                        fname = str(fac["name"]).strip()
+                        disp = str(fac.get("disposition") or "Neutral").strip()
+                        turf = str(fac.get("turf") or "").strip()
+                        notes = str(fac.get("notes") or "").strip()
+                        summary_txt = f"{disp}" + (f" · {turf}" if turf else "")
+                        seeded_library.append(
+                            lib.upsert_entry(
+                                campaign_id,
+                                name=fname,
+                                category="faction",
+                                operation_id=f"boot-fac-{uuid.uuid4().hex[:12]}",
+                                summary=summary_txt[:240],
+                                description=notes or summary_txt,
+                                stats={"disposition": disp, **({"turf": turf} if turf else {})},
+                                tags=["faction", disp.lower()],
+                                created_by="user",
+                                allow_variant=True,
+                            )
+                        )
+                    for loc in we_in.get("locations") or []:
+                        if not isinstance(loc, dict) or not str(loc.get("name") or "").strip():
+                            continue
+                        lname = str(loc["name"]).strip()
+                        ldist = str(loc.get("district") or body.get("district") or "").strip()
+                        lsec = str(loc.get("security") or "").strip()
+                        lnotes = str(loc.get("notes") or "").strip()
+                        lsum = " · ".join(p for p in (ldist, lsec) if p) or "Campaign location"
+                        seeded_library.append(
+                            lib.upsert_entry(
+                                campaign_id,
+                                name=lname,
+                                category="location",
+                                operation_id=f"boot-loc-{uuid.uuid4().hex[:12]}",
+                                summary=lsum[:240],
+                                description=lnotes or lsum,
+                                stats={**({"district": ldist} if ldist else {}), **({"security": lsec} if lsec else {})},
+                                tags=["location"],
+                                created_by="user",
+                                allow_variant=True,
+                            )
+                        )
+                    gig = we_in.get("gig")
+                    if isinstance(gig, dict) and any(str(gig.get(k) or "").strip() for k in ("title", "client", "target", "notes")):
+                        gtitle = str(gig.get("title") or "Opening Contract").strip()
+                        gclient = str(gig.get("client") or "").strip()
+                        gtarget = str(gig.get("target") or "").strip()
+                        gdeadline = str(gig.get("deadline") or "").strip()
+                        gpayout = int(gig["payout_eb"]) if isinstance(gig.get("payout_eb"), (int, float)) and gig["payout_eb"] >= 0 else 0
+                        gnotes = str(gig.get("notes") or "").strip()
+                        gsum = f"Client: {gclient or 'Fixer'} · Target: {gtarget or 'TBD'}" + (f" · {gpayout} eb" if gpayout else "")
+                        seeded_library.append(
+                            lib.upsert_entry(
+                                campaign_id,
+                                name=gtitle,
+                                category="encounter",
+                                operation_id=f"boot-gig-{uuid.uuid4().hex[:12]}",
+                                summary=gsum[:240],
+                                description=gnotes or gsum,
+                                stats={
+                                    **({"client": gclient} if gclient else {}),
+                                    **({"target": gtarget} if gtarget else {}),
+                                    **({"payout_eb": gpayout} if gpayout else {}),
+                                    **({"deadline": gdeadline} if gdeadline else {}),
+                                },
+                                tags=["gig", "contract"],
+                                created_by="user",
+                                allow_variant=True,
+                            )
+                        )
+                    sheet = we_in.get("screamsheet")
+                    if isinstance(sheet, dict) and str(sheet.get("headline") or "").strip():
+                        headline = str(sheet["headline"]).strip()
+                        sbody = str(sheet.get("body") or "").strip()
+                        seeded_library.append(
+                            lib.upsert_entry(
+                                campaign_id,
+                                name=headline,
+                                category="screamsheet",
+                                operation_id=f"boot-sheet-{uuid.uuid4().hex[:12]}",
+                                summary=(sbody or headline)[:240],
+                                description=sbody or headline,
+                                stats={"headline": headline},
+                                tags=["screamsheet", "n54"],
+                                created_by="user",
+                                allow_variant=True,
+                            )
+                        )
+
                 secrets_in = body.get("gm_secrets")
-                secrets_map: dict[str, str] | None = None
+                secrets_map: dict[str, str | None] = dict(npc_secret_updates)
+                has_secrets_payload = "gm_secrets" in body or bool(npc_secret_updates)
                 if isinstance(secrets_in, str) and secrets_in.strip():
-                    secrets_map = {"Premise Secret": secrets_in.strip()}
+                    secrets_map["Premise Secret"] = secrets_in.strip()
                 elif isinstance(secrets_in, dict):
-                    secrets_map = {
-                        str(k).strip(): str(v).strip()
-                        for k, v in secrets_in.items()
-                        if str(k).strip() and str(v).strip()
-                    }
+                    for k, v in secrets_in.items():
+                        if str(k).strip() and str(v).strip() and not str(k).strip().startswith("__"):
+                            secrets_map[str(k).strip()] = str(v).strip()
                 opening_clock = body.get("opening_clock") if isinstance(body.get("opening_clock"), dict) else None
-                eng = TurnEngine(svc, None)
+                clocks_in = body.get("clocks") if isinstance(body.get("clocks"), list) else None
                 gm_seed = eng.seed_initial_gm_state(
                     campaign_id,
-                    secrets=secrets_map,
+                    secrets=secrets_map if has_secrets_payload else None,
                     opening_clock=opening_clock,
+                    clocks=clocks_in,
+                    replace_secrets=bool(clear_missing and "gm_secrets" in body),
+                    replace_clocks=bool(clear_missing and ("clocks" in body or "opening_clock" in body)),
                 )
                 eng.tree.sync_active_leaf_revisions(campaign_id)
-                return {"campaign": camp, **gm_seed}
+                return {
+                    "campaign": camp,
+                    **gm_seed,
+                    **({"library_seeded": len(seeded_library)} if seeded_library else {}),
+                }
 
             res = await asyncio.to_thread(_apply)
             coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})

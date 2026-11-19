@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Callable, Any
 from sourcecatalog import skills as source_skills_catalog, lookup_skill, _normalize as _catalog_normalize
+from economy import HOUSING as ECONOMY_HOUSING, LIFESTYLES as ECONOMY_LIFESTYLES
 from roles import validate_role_choices
 
 STATS = ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")
@@ -123,6 +124,160 @@ def _role_skills(pages: list[tuple[int, str]], role: str, catalog: dict[str, dic
 
 
 BASIC = {_norm_skill(x) for x in ("Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth")}
+_HEAD_ARMOR_DEFAULT_SP = (
+    ("metalgear", 18),
+    ("flak", 15),
+    ("heavy armorjack", 13),
+    ("medium armorjack", 12),
+    ("light armorjack", 11),
+    ("kevlar", 7),
+    ("leathers", 4),
+)
+
+
+def _infer_head_armor_from_inventory(inventory: dict[str, int]) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    for item_name in inventory:
+        low = item_name.lower()
+        if "head" not in low and "helmet" not in low and "cowl" not in low and "bodyweight" not in low:
+            continue
+        m = re.search(r"SP\s*(\d+)", item_name, re.I)
+        if m:
+            sp = int(m.group(1))
+        else:
+            sp = next((val for key, val in _HEAD_ARMOR_DEFAULT_SP if key in low), 11)
+        if best is None or sp > best["sp"]:
+            best = {"name": item_name, "sp": sp}
+    return best
+
+
+def _infer_body_armor_from_inventory(inventory: dict[str, int]) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    for item_name in inventory:
+        low = item_name.lower()
+        if "bodyweight" not in low and "armorjack" not in low and "kevlar" not in low and "leathers" not in low and "flak" not in low and "metalgear" not in low:
+            continue
+        if "head" in low and "body" not in low:
+            continue
+        if "helmet" in low or "cowl" in low or "shield" in low:
+            continue
+        m = re.search(r"SP\s*(\d+)", item_name, re.I)
+        if m:
+            sp = int(m.group(1))
+        else:
+            sp = next((val for key, val in _HEAD_ARMOR_DEFAULT_SP if key in low), 11)
+        if best is None or sp > best["sp"]:
+            best = {"name": item_name, "sp": sp}
+    return best
+
+
+_CREATION_CATALOG_CACHE: dict[str, dict[str, Any]] | None = None
+
+
+def _creation_catalog_by_norm() -> dict[str, dict[str, Any]]:
+    """Build a cached normalized lookup of canonical Corebook gear, weapons, armor, cyberware, etc."""
+    global _CREATION_CATALOG_CACHE
+    if _CREATION_CATALOG_CACHE is not None:
+        return _CREATION_CATALOG_CACHE
+    from creation_catalog import (
+        build_corebook_ammo_attachments_exotics,
+        build_corebook_armor,
+        build_corebook_cyberware_additions,
+        build_corebook_drugs,
+        build_corebook_gear,
+        build_corebook_hardware,
+        build_corebook_net_catalog,
+        build_corebook_services_housing_fashion,
+        build_corebook_vehicles,
+        build_corebook_weapons,
+        parse_hl_int,
+    )
+
+    index: dict[str, dict[str, Any]] = {}
+    groups = (
+        build_corebook_weapons(),
+        build_corebook_armor(),
+        build_corebook_gear(),
+        build_corebook_hardware(),
+        build_corebook_vehicles(),
+        build_corebook_drugs(),
+        build_corebook_cyberware_additions(),
+        build_corebook_net_catalog(),
+        build_corebook_ammo_attachments_exotics(),
+        build_corebook_services_housing_fashion(),
+    )
+    for entries in groups:
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                continue
+            stats = dict(entry.get("stats") or {})
+            cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else int(stats.get("cost_eb") or 0)
+            hl = stats.get("hl") if isinstance(stats.get("hl"), int) else parse_hl_int(stats.get("humanity_loss"))
+            item_meta = {
+                "id": str(entry.get("id") or f"corebook:{entry.get('category', 'gear')}:{_norm_skill(entry['name']).replace(' ', '_')}"),
+                "name": str(entry["name"]),
+                "category": str(entry.get("category") or "gear"),
+                "cost": cost_eb,
+                "hl": hl,
+                "stats": stats,
+            }
+            norm_key = _norm_skill(entry["name"])
+            index.setdefault(norm_key, item_meta)
+            collapsed = norm_key.replace(" ", "")
+            if collapsed:
+                index.setdefault(collapsed, item_meta)
+    _CREATION_CATALOG_CACHE = index
+    return index
+
+
+def _strip_caliber_tag(raw_name: str) -> str:
+    return re.sub(r"\s+—\s+[^—]+$", "", raw_name.strip()).strip()
+
+
+def _lookup_catalog_entry(cat_index: dict[str, dict[str, Any]], raw_name: str) -> dict[str, Any] | None:
+    base = _strip_caliber_tag(raw_name)
+    norm = _norm_skill(base)
+    return cat_index.get(norm) or cat_index.get(norm.replace(" ", ""))
+
+
+def _fashion_matrix_price(raw_name: str) -> int | None:
+    try:
+        from creation_reference import FASHION_ITEMS
+    except Exception:
+        return None
+    norm = _norm_skill(raw_name)
+    collapsed = norm.replace(" ", "")
+    for item in FASHION_ITEMS:
+        fn = _norm_skill(str(item.get("name") or ""))
+        if fn == norm or (collapsed and fn.replace(" ", "") == collapsed):
+            return int(item.get("cost_eb") or 0)
+    return None
+
+
+def _match_catalog_items(inventory: dict[str, int], rules_path: str | Path) -> dict[str, dict[str, Any]]:
+    matched: dict[str, dict[str, Any]] = {}
+    cat_index = _creation_catalog_by_norm()
+    src_by_norm: dict[str, tuple[str, dict[str, Any]]] = {}
+    try:
+        from sourcecatalog import items as source_items
+        for iid, meta in source_items(rules_path).items():
+            if isinstance(meta, dict) and meta.get("name"):
+                src_by_norm[_norm_skill(str(meta["name"]))] = (iid, meta)
+    except Exception:
+        pass
+    for item_name in inventory:
+        base = _strip_caliber_tag(item_name)
+        norm = _norm_skill(base)
+        if norm in src_by_norm:
+            iid, meta = src_by_norm[norm]
+            matched[iid] = dict(meta)
+        else:
+            meta = _lookup_catalog_entry(cat_index, base)
+            if meta:
+                matched[meta["id"]] = dict(meta)
+    return matched
+
+
 def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Callable[[int], int] = secrets.randbelow) -> dict[str, Any]:
     if not isinstance(args, dict):
         raise ValueError("args must be an object")
@@ -246,15 +401,99 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
             humanity_loss = raw_hl
         if isinstance(starting_gear.get("equipped_weapon"), str) and starting_gear["equipped_weapon"].strip():
             equipment_detail["equipped_weapon"] = starting_gear["equipped_weapon"].strip()
-        if isinstance(starting_gear.get("equipped_armor"), dict):
+        if isinstance(starting_gear.get("equipped_armor"), dict) and str(starting_gear["equipped_armor"].get("name") or "").strip():
             equipment_detail["equipped_armor"] = dict(starting_gear["equipped_armor"])
+        elif inventory:
+            inferred_body = _infer_body_armor_from_inventory(inventory)
+            if inferred_body is not None:
+                equipment_detail["equipped_armor"] = inferred_body
+        head_in = starting_gear.get("equipped_head_armor")
+        if isinstance(head_in, dict) and str(head_in.get("name") or "").strip():
+            equipment_detail["equipped_head_armor"] = {
+                "name": str(head_in["name"]).strip(),
+                "sp": int(head_in.get("sp") or 11),
+            }
+        elif isinstance(head_in, str) and head_in.strip():
+            m_sp = re.search(r"SP\s*(\d+)", head_in, re.I)
+            equipment_detail["equipped_head_armor"] = {
+                "name": head_in.strip(),
+                "sp": int(m_sp.group(1)) if m_sp else 11,
+            }
+        elif inventory:
+            inferred_head = _infer_head_armor_from_inventory(inventory)
+            if inferred_head is not None:
+                equipment_detail["equipped_head_armor"] = inferred_head
         if isinstance(starting_gear.get("fashion"), list):
             fashion_items = [x for x in starting_gear["fashion"] if isinstance(x, (str, dict))]
+        cat_lookup = _creation_catalog_by_norm()
+        fashion_names_norm: set[str] = set()
+        fashion_total = 0
+        for f_entry in fashion_items:
+            if isinstance(f_entry, dict):
+                fname = str(f_entry.get("name") or "").strip()
+                fnorm = _norm_skill(fname) if fname else ""
+                if fnorm:
+                    fashion_names_norm.add(fnorm)
+                meta_f = _lookup_catalog_entry(cat_lookup, fname) if fname else None
+                matrix_price = _fashion_matrix_price(fname) if fname else None
+                if meta_f is not None:
+                    fashion_total += int(meta_f.get("cost") or 0)
+                elif matrix_price is not None:
+                    fashion_total += matrix_price
+                else:
+                    fcost = f_entry.get("cost_eb")
+                    if isinstance(fcost, int) and fcost >= 0:
+                        fashion_total += fcost
+            elif isinstance(f_entry, str) and f_entry.strip():
+                fnorm = _norm_skill(f_entry)
+                fashion_names_norm.add(fnorm)
+                meta_f = _lookup_catalog_entry(cat_lookup, f_entry)
+                if meta_f is not None:
+                    fashion_total += int(meta_f.get("cost") or 0)
+                else:
+                    mp = _fashion_matrix_price(f_entry)
+                    if mp is not None:
+                        fashion_total += mp
+
+        known_cw_hl = 0
+        known_gear_eb = 0
+        for cw_item in cyberware_list:
+            meta_cw = _lookup_catalog_entry(cat_lookup, cw_item["name"])
+            if meta_cw is not None:
+                known_cw_hl += int(meta_cw.get("hl") or 0)
+                known_gear_eb += int(meta_cw.get("cost") or 0)
+            elif isinstance(cw_item.get("cost_eb"), int) and cw_item["cost_eb"] > 0:
+                known_gear_eb += cw_item["cost_eb"]
+        if known_cw_hl > humanity_loss:
+            humanity_loss = known_cw_hl
+        for inv_name, inv_qty in inventory.items():
+            inv_norm = _norm_skill(inv_name)
+            meta = _lookup_catalog_entry(cat_lookup, inv_name)
+            is_fashion = (meta is not None and meta.get("category") == "fashion") or (_fashion_matrix_price(inv_name) is not None)
+            if inv_norm in fashion_names_norm:
+                continue
+            if is_fashion:
+                unit_cost = int(meta.get("cost") or 0) if meta is not None else int(_fashion_matrix_price(inv_name) or 0)
+                fashion_total += unit_cost * inv_qty
+                continue
+            if meta is not None:
+                known_gear_eb += int(meta.get("cost") or 0) * inv_qty
+        if method == "complete_package" and fashion_total > 800:
+            raise ValueError("complete_package fashion spending exceeds 800 eb budget")
+
         spent_eb = starting_gear.get("money_spent_eb")
-        if method == "complete_package" and type(spent_eb) is int:
-            if not 0 <= spent_eb <= 2550:
-                raise ValueError("complete_package money_spent_eb must be between 0 and 2550")
-            starting_money = 2550 - spent_eb
+        if method == "complete_package":
+            if known_gear_eb > 2550:
+                raise ValueError("complete_package catalog equipment cost exceeds 2550 eb budget")
+            if spent_eb is not None:
+                if type(spent_eb) is not int or not 0 <= spent_eb <= 2550:
+                    raise ValueError("complete_package money_spent_eb must be between 0 and 2550")
+                if spent_eb < known_gear_eb:
+                    raise ValueError("complete_package money_spent_eb cannot be less than catalog equipment cost")
+                effective_spent = max(spent_eb, known_gear_eb)
+            else:
+                effective_spent = known_gear_eb
+            starting_money = 2550 - effective_spent
         if not inventory and not cyberware_list and not equipment_detail:
             unresolved.append("source-derived starting equipment package not validated")
     else:
@@ -271,14 +510,91 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
             if definition is None:
                 raise ValueError(f"Unknown cultural language skill: {free_name}")
             skills[free_name] = 4
-    hp = 10 + 5 * ((stats["BODY"] + stats["WILL"] + 1) // 2)
+    if role == "Fixer" and isinstance(choices, dict):
+        fixer_lang = str(choices.get("language") or "").strip()
+        if fixer_lang and fixer_lang.lower() != "streetslang":
+            fixer_lang_skill = f"Language ({fixer_lang})"
+            if not any(_norm_skill(k) == _norm_skill(fixer_lang_skill) for k in skills):
+                if lookup_skill(catalog, fixer_lang_skill) is not None or lookup_skill(catalog, "Language (Streetslang)") is not None:
+                    skills[fixer_lang_skill] = 4
+
+    housing_in = args.get("housing")
+    default_housing = "corporate" if role == "Exec" else "cargo_container"
+    housing = str(housing_in).strip() if isinstance(housing_in, str) and housing_in.strip() else default_housing
+    if housing not in ECONOMY_HOUSING:
+        raise ValueError(f"Unknown housing tier: {housing}")
+    if housing == "corporate" and role != "Exec":
+        raise ValueError("Corporate housing requires Exec role")
+
+    lifestyle_in = args.get("lifestyle")
+    lifestyle = str(lifestyle_in).strip() if isinstance(lifestyle_in, str) and lifestyle_in.strip() else "Kibble"
+    if lifestyle not in ECONOMY_LIFESTYLES:
+        raise ValueError(f"Unknown lifestyle tier: {lifestyle}")
+
+    trauma_in = args.get("trauma_team")
+    default_trauma = "Silver" if role == "Exec" else "None"
+    trauma_team = str(trauma_in).strip() if isinstance(trauma_in, str) and trauma_in.strip() else default_trauma
+    if trauma_team not in ("None", "Silver", "Executive"):
+        raise ValueError("trauma_team must be None, Silver, or Executive")
+
+    base_body = stats["BODY"]
+    grafted_count = sum(1 for cw in cyberware_list if "grafted muscle" in cw["name"].lower())
+    effective_body = min(10, base_body + 2 * grafted_count) if grafted_count > 0 else base_body
+    subdermal_sp = 0
+    subdermal_name = ""
+    for cw in cyberware_list:
+        low_cw = cw["name"].lower()
+        if "linear frame" in low_cw and ("beta" in low_cw or "β" in low_cw):
+            effective_body = max(effective_body, 14)
+        elif "linear frame" in low_cw and ("sigma" in low_cw or "σ" in low_cw or "Σ" in cw["name"]):
+            effective_body = max(effective_body, 12)
+        if "subdermal armor" in low_cw and subdermal_sp < 11:
+            subdermal_sp = 11
+            subdermal_name = "Subdermal Armor"
+        elif re.search(r"skin\s*weave", low_cw) and subdermal_sp < 7:
+            subdermal_sp = 7
+            subdermal_name = "Skinweave"
+
+    if subdermal_sp > 0:
+        cur_body_sp = int((equipment_detail.get("equipped_armor") or {}).get("sp") or 0)
+        if cur_body_sp < subdermal_sp:
+            equipment_detail["equipped_armor"] = {"name": subdermal_name, "sp": subdermal_sp}
+        cur_head_sp = int((equipment_detail.get("equipped_head_armor") or {}).get("sp") or 0)
+        if cur_head_sp < subdermal_sp:
+            equipment_detail["equipped_head_armor"] = {"name": subdermal_name, "sp": subdermal_sp}
+
+    hp = 10 + 5 * ((effective_body + stats["WILL"] + 1) // 2)
     initial_humanity = stats["EMP"] * 10
     starting_humanity = max(0, initial_humanity - humanity_loss)
     seriously_wounded = (hp + 1) // 2
-    death_save = stats["BODY"]
+    death_save = effective_body
     active_emp = max(0, starting_humanity // 10)
+    stored_choices = dict(choices) if isinstance(choices, dict) else choices
+    if role == "Tech" and isinstance(stored_choices, dict) and isinstance(role_validation.get("maker_ranks"), dict):
+        stored_choices["maker_ranks"] = dict(role_validation["maker_ranks"])
+
+    raw_rep = args.get("reputation", 0)
+    if raw_rep is None:
+        reputation = 0
+    elif type(raw_rep) is int and 0 <= raw_rep <= 10:
+        reputation = raw_rep
+    else:
+        raise ValueError("reputation must be an integer between 0 and 10")
+    reputation_note = str(args.get("reputation_note") or "").strip()
+
+    raw_hooks = args.get("starting_hooks")
+    starting_hooks: dict[str, str] = {}
+    if isinstance(raw_hooks, dict):
+        for hk in ("trauma", "addiction", "debt"):
+            hv = str(raw_hooks.get(hk) or "").strip()
+            if hv:
+                starting_hooks[hk] = hv
+
     detail: dict[str, Any] = {
-        "roles": [{"role": role, "rank": 4, "choices": choices}],
+        "roles": [{"role": role, "rank": 4, "choices": stored_choices}],
+        "housing": housing,
+        "lifestyle": lifestyle,
+        "reputation": reputation,
         "creation": {
             "status": "draft" if unresolved else "validated",
             "unresolved": unresolved,
@@ -289,23 +605,47 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
             "initial_humanity": initial_humanity,
             "starting_humanity_loss": humanity_loss,
             "active_emp": active_emp,
+            "base_body": base_body,
+            "effective_body": effective_body,
+            "cyberware_modifiers": {
+                "effective_body": effective_body,
+                "subdermal_sp": subdermal_sp,
+            },
             "seriously_wounded": seriously_wounded,
             "death_save": death_save,
             "fashion_budget": 800 if method == "complete_package" else 0,
+            **({"starting_hooks": starting_hooks} if starting_hooks else {}),
         },
         "lifepath": lifepath,
     }
+    if reputation_note:
+        detail["reputation_note"] = reputation_note
+    if trauma_team != "None":
+        detail["trauma_team"] = trauma_team
+    if role == "Exec" and isinstance(role_validation.get("initial_team"), list):
+        detail["team"] = list(role_validation["initial_team"])
+    if role == "Nomad" and isinstance(role_validation.get("initial_motorpool"), list):
+        detail["family_motorpool"] = list(role_validation["initial_motorpool"])
+        if role_validation.get("active_vehicle"):
+            detail["active_vehicle"] = str(role_validation["active_vehicle"])
+    catalog_items = _match_catalog_items(inventory, rules_path)
+    if catalog_items:
+        detail["catalog_items"] = catalog_items
     if cyberware_list:
         detail["cyberware"] = cyberware_list
     if "equipped_weapon" in equipment_detail:
         detail["equipped_weapon"] = equipment_detail["equipped_weapon"]
     if "equipped_armor" in equipment_detail:
         detail["equipped_armor"] = equipment_detail["equipped_armor"]
+    if "equipped_head_armor" in equipment_detail:
+        detail["equipped_head_armor"] = equipment_detail["equipped_head_armor"]
     if fashion_items:
         detail["fashion"] = fashion_items
     backstory = args.get("backstory")
     if isinstance(backstory, dict):
         detail["backstory"] = dict(backstory)
+    if starting_hooks:
+        detail.setdefault("backstory", {})["starting_hooks"] = dict(starting_hooks)
     if handle:
         detail["handle"] = handle
     if real_name:

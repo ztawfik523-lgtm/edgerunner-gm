@@ -338,11 +338,46 @@ export interface PartyGroupingState {
   prompt_summary: string;
 }
 
+export interface CampaignMeta {
+  district?: string;
+  zone_type?: string;
+  threat_rating?: string;
+  caper_style?: string;
+  factions?: string[];
+  faction_details?: Array<{ name: string; disposition: string; turf?: string }>;
+  screamsheet_hook?: string;
+  locations?: Array<{ name: string; district?: string; security?: string; notes?: string }>;
+  gig?: {
+    title?: string;
+    client?: string;
+    target?: string;
+    payout_eb?: number;
+    deadline?: string;
+    notes?: string;
+  };
+}
+
+export interface SessionZeroConfig {
+  gm_style?: string;
+  narrator_length?: string;
+  narrator_pacing?: string;
+  lethality_dial?: string;
+  economy_dial?: string;
+  campaign_scope?: string;
+  crew_concept?: string;
+  lines_and_veils?: string;
+  starting_clock_minutes?: number;
+}
+
 export interface CampaignContext {
   campaign: CampaignRecord;
   characters: CharacterRecord[];
-  npc_profiles?: Record<string, NpcIdentityProfile>;
+  npc_profiles?: Record<string, NpcIdentityProfile & { personality?: string; speech_style?: string }>;
   party_grouping?: PartyGroupingState;
+  campaign_meta?: CampaignMeta;
+  session_zero?: SessionZeroConfig;
+  clocks?: WorldClock[];
+  gm_secrets?: Record<string, string>;
   solo: {
     revision: number;
     runtime: SoloRuntime;
@@ -592,6 +627,22 @@ export interface CreationFashionItem {
   name: string;
   cost_eb: number;
   style: string;
+  garment?: string;
+  summary: string;
+}
+
+export interface CreationHousingTier {
+  id: string;
+  name: string;
+  monthly_eb: number;
+  summary: string;
+  exec_only?: boolean;
+}
+
+export interface CreationLifestyleTier {
+  id: string;
+  name: string;
+  monthly_eb: number;
   summary: string;
 }
 
@@ -649,6 +700,9 @@ export interface CreationReference {
     housing?: CreationShopItem[];
   };
   fashion: CreationFashionItem[];
+  fashion_matrix?: CreationFashionItem[];
+  housing_tiers?: CreationHousingTier[];
+  lifestyles?: CreationLifestyleTier[];
   campaign_presets?: CampaignPresets;
   difficult_skills?: string[];
   threat_ratings?: Array<Record<string, unknown>>;
@@ -744,6 +798,16 @@ export interface CreationAiAssistResponse {
   opening_scene?: string;
   npcs?: Record<string, string>;
   objectives?: Record<string, string>;
+  discoveries?: Record<string, string>;
+  locations?: Array<{ name: string; district?: string; security?: string; notes?: string }>;
+  gig?: {
+    title?: string;
+    client?: string;
+    target?: string;
+    payout_eb?: number;
+    deadline?: string;
+    notes?: string;
+  } | null;
   beat_chart?: {
     hook?: string;
     developments?: string;

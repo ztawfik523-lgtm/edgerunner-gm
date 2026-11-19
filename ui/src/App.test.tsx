@@ -2940,6 +2940,401 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /Confirm Delete/i }));
     await waitFor(() => expect(deletedCalled).toBe(true));
   });
+
+  it("hydrates Campaign Architect in edit mode and persists rename, multi-clocks, world entities, and Session Zero", async () => {
+    const bootstrapped: Array<Record<string, unknown>> = [];
+    const editCampaign = {
+      id: "camp-edit-hydrated",
+      name: "Watson Burns",
+      session_number: 1,
+      revision: 2,
+      character_ids: [],
+      state: {
+        scene: "Kabuki alleys in acid rain",
+        summary: "Maelstrom holds the sub-level relay.",
+        npcs: { Rogue: "Afterlife Queen" },
+        objectives: { "Breach Relay": "Extract the blackbox" },
+        discoveries: {},
+        unresolved: {},
+      },
+    };
+    const unattachedPc = {
+      id: "pc-unattached",
+      name: "Chrome Vex",
+      stats: { INT: 7, REF: 6, DEX: 6, TECH: 6, COOL: 5, WILL: 6, LUCK: 6, MOVE: 6, BODY: 5, EMP: 6 },
+      skills: { Interface: 4 },
+      hp: 35,
+      max_hp: 35,
+      humanity: 53,
+      luck_remaining: 6,
+      money: 400,
+      inventory: {},
+      revision: 1,
+      detail: { roles: [{ role: "Netrunner", rank: 4 }] },
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+          gm_thinking_mode: "quality",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: true,
+          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+          stats: {},
+          methods: [],
+          roles: [],
+          skills: [],
+          cultural_regions: [],
+          lifepath_tables: {},
+          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
+          fashion: [],
+          campaign_presets: {
+            districts: [{ name: "Watson Development", zone_type: "Combat Zone", threat_rating: "High", summary: "Kabuki & Little China.", printed_page: 308 }],
+            factions: [{ name: "Tyger Claws", type: "Booster Gang", summary: "Japantown syndicate.", printed_page: 308 }],
+            caper_styles: [],
+            screamsheet_hooks: ["RED SKY BLACKOUT: Rolling blackouts hit Kabuki."],
+          },
+        });
+      }
+      if (url.startsWith(`/v1/campaigns/${editCampaign.id}/bootstrap`)) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        bootstrapped.push(body);
+        return jsonResponse({
+          campaign: { ...editCampaign, name: body.name ?? editCampaign.name, revision: 3 },
+          clocks: [],
+        });
+      }
+      if (url.startsWith("/v1/campaigns/camp-new-attach/bootstrap")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        bootstrapped.push(body);
+        return jsonResponse({
+          campaign: { id: "camp-new-attach", name: "Crew Start", session_number: 1, revision: 2, character_ids: body.attach_character_ids ?? [], state: editCampaign.state },
+          clocks: [],
+        });
+      }
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ action: "list_campaigns", result: [editCampaign] });
+        if (body.action === "list_characters") return jsonResponse({ action: "list_characters", result: [unattachedPc] });
+        if (body.action === "create_campaign") {
+          return jsonResponse({
+            action: "create_campaign",
+            result: { id: "camp-new-attach", name: body.arguments.name, session_number: 1, revision: 1, state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} } },
+          });
+        }
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            action: "campaign_context",
+            result: {
+              campaign: editCampaign,
+              characters: [],
+              campaign_meta: {
+                district: "Watson Development",
+                gig: {
+                  title: "Existing Gig",
+                  client: "Wakako",
+                  target: "Conapt Safe",
+                  payout_eb: 2000,
+                  deadline: "48 hours",
+                  notes: "Arasaka drone patrol",
+                },
+                locations: [{ name: "Afterlife", district: "Watson Development", security: "High", notes: "Merc bar" }],
+              },
+              npc_profiles: {
+                Rogue: { real_name: "Rogue Amendiares", real_name_hidden: true, personality: "Ice-cold fixer", speech_style: "Dry, clipped" },
+              },
+              session_zero: {
+                gm_style: "gritty",
+                narrator_length: "detailed",
+                narrator_pacing: "tactical",
+                lethality_dial: "brutal",
+                economy_dial: "tight",
+                campaign_scope: "street",
+                crew_concept: "Data Runners",
+                lines_and_veils: "No torture",
+              },
+              clocks: [
+                { id: "clk-1", name: "NCPD Heat", segments: 6, filled: 2, category: "faction", visibility: "public", note: "Patrols tighten" },
+                { id: "clk-2", name: "Corpo Hit", segments: 4, filled: 1, category: "heat", visibility: "secret", note: "Kill team dispatched" },
+              ],
+              gm_secrets: { "Premise Secret": "Client works for Militech" },
+              solo: { runtime: { clock_minutes: 1320, runs: {} } },
+            },
+          });
+        }
+      }
+      if (url.startsWith("/v1/chat/tree") || url.startsWith("/v1/campaigns/")) {
+        return jsonResponse({ messages: [], active_branch: [], active_leaf_id: null, clocks: [], players: [], active_turn: null });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [], results: [] });
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Campaign$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Architect/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /Campaign Creator/i })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i)).toHaveValue("Watson Burns");
+      expect(screen.getByDisplayValue("NCPD Heat")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Corpo Hit")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /World Builder Extras/i }));
+    expect(screen.getByDisplayValue("Existing Gig")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Afterlife")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Watson Reborn" } });
+    fireEvent.change(screen.getByPlaceholderText(/Gig Title \(e\.g\. Kabuki Cold Drop\)/i), { target: { value: "Kabuki Cold Drop" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
+    fireEvent.change(screen.getByPlaceholderText(/Lines & Veils/i), { target: { value: "Keep it PG-13" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Clock$/i }));
+    const extraClockInputs = screen.getAllByPlaceholderText("Additional clock name");
+    fireEvent.change(extraClockInputs[extraClockInputs.length - 1], { target: { value: "Biotechnica Sweep" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Apply Architect Updates/i }));
+    await waitFor(() => expect(bootstrapped.length).toBe(1));
+
+    const editPayload = bootstrapped[0];
+    expect(editPayload.name).toBe("Watson Reborn");
+    expect(editPayload.clear_missing).toBe(true);
+    expect(Array.isArray(editPayload.clocks)).toBe(true);
+    expect((editPayload.clocks as unknown[]).length).toBe(3);
+    expect((editPayload.world_entities as { gig?: { title?: string } })?.gig?.title).toBe("Kabuki Cold Drop");
+    expect((editPayload.session_zero as { lines_and_veils?: string })?.lines_and_veils).toBe("Keep it PG-13");
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Campaign Creator/i })).not.toBeInTheDocument());
+
+    // Create flow also allows attaching unattached PCs cleanly
+    fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Crew Start" } });
+    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
+    const chromeCheckbox = await screen.findByLabelText("Chrome Vex");
+    fireEvent.click(chromeCheckbox);
+    fireEvent.change(screen.getByPlaceholderText(/Core stakes/i), { target: { value: "Run jobs out of Watson." } });
+    fireEvent.click(screen.getByRole("button", { name: /^Create Campaign$/i }));
+
+    await waitFor(() => expect(bootstrapped.length).toBe(2));
+    expect(bootstrapped[1].attach_character_ids).toEqual(["pc-unattached"]);
+  });
+
+  it("supports Character Creator dynamic (choose 1) skills, housing/lifestyle/Trauma Team, fashion matrix, hooks, and live Linear Frame Sigma / Skinweave vitals", async () => {
+    const campaign = {
+      id: "camp-char-expanded",
+      name: "Watson Origin",
+      revision: 1,
+      session_number: 1,
+      character_ids: [] as string[],
+      state: { scene: "Charter Hill", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const createdPayloads: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+          gm_thinking_mode: "quality",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: true,
+          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+          stats: {},
+          methods: [
+            { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
+            { id: "freeform", name: "Freeform / Custom Sheet", badge: "Custom", summary: "No budget locks", rules: "Unconstrained." },
+          ],
+          roles: [
+            {
+              name: "Rockerboy",
+              ability: "Charismatic Impact",
+              ability_summary: "Sway crowds and fans.",
+              tagline: "Rebel artist",
+              best_for: "Social disruption.",
+              key_stats: ["COOL", "EMP"],
+              page: 142,
+              templates: [[6, 6, 7, 5, 8, 6, 7, 6, 7, 7]],
+              skills: { "Play Instrument (choose 1)": 6, Persuasion: 4 },
+              starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
+              starting_armor: ["Light Armorjack Body (SP 11)"],
+              starting_outfit: ["Agent"],
+              starting_cyberware: [],
+              starting_hl: 0,
+              role_lifepath: [{ key: "Type", label: "Rocker Type", options: ["Musician", "Slam Poet"] }],
+            },
+          ],
+          skills: [
+            { name: "Play Instrument", stat: "TECH", cost: 1, basic: false, specializable: true, group: "Performance", summary: "Perform music.", description: "Play Instrument." },
+            { name: "Persuasion", stat: "COOL", cost: 1, basic: true, specializable: false, group: "Social", summary: "Convince others.", description: "Persuasion." },
+          ],
+          cultural_regions: [{ region: "North American", languages: ["Streetslang", "English", "Spanish"], notes: "NUSA." }],
+          lifepath_tables: {},
+          housing_tiers: [
+            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Metal studio box." },
+            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Sleeper pod." },
+            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Exec only.", exec_only: true },
+          ],
+          lifestyles: [
+            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
+            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Pre-packaged." },
+          ],
+          fashion_matrix: [
+            { name: "Urban Flash Mirrored Jacket", style: "Urban Flash", slot: "Jacket", cost_eb: 100, summary: "LED-piped synthleather." },
+            { name: "Bag Lady Chic Trench", style: "Bag Lady Chic", slot: "Jacket", cost_eb: 20, summary: "Padded scavenger coat." },
+          ],
+          fashion: [
+            { name: "Urban Flash Mirrored Jacket", style: "Urban Flash", slot: "Jacket", cost_eb: 100, summary: "LED-piped synthleather." },
+          ],
+          shop: {
+            weapon: [],
+            armor: [],
+            cyberware: [
+              { id: "c-sigma", name: "Linear Frame Sigma", category: "cyberware", cost_eb: 1000, summary: "Sets BODY to 12.", description: "Internal borg frame.", printed_page: 365, stats: { hl: 14, subtype: "borgware", install: "Hospital" } },
+              { id: "c-skinweave", name: "Skinweave", category: "cyberware", cost_eb: 500, summary: "Passive SP 7 armor.", description: "Subdermal weave.", printed_page: 364, stats: { hl: 7, sp: 7, subtype: "body", install: "Hospital" } },
+            ],
+            gear: [],
+            program: [],
+            hardware: [],
+            vehicle: [],
+            drug: [],
+          },
+        });
+      }
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({ campaign_id: campaign.id, nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ action: "list_campaigns", result: [campaign] });
+        if (body.action === "list_characters") return jsonResponse({ action: "list_characters", result: [] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            action: "campaign_context",
+            result: { campaign, characters: [], clocks: [], solo: { revision: 0, runtime: { clock_minutes: 0, runs: {} }, characters: {} } },
+          });
+        }
+        if (body.action === "create_character") {
+          createdPayloads.push(body.arguments);
+          return jsonResponse({
+            action: "create_character",
+            result: {
+              id: "char-chrome-rocker",
+              name: body.arguments.name,
+              stats: body.arguments.stats,
+              skills: body.arguments.skills,
+              hp: 55,
+              max_hp: 55,
+              humanity: body.arguments.humanity ?? 49,
+              luck_remaining: 6,
+              money: body.arguments.money ?? 0,
+              inventory: body.arguments.inventory ?? {},
+              revision: 1,
+              detail: body.arguments.detail ?? {},
+            },
+          });
+        }
+        if (body.action === "attach_character") {
+          return jsonResponse({ action: "attach_character", result: campaign });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Open Character Sheet Creator/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /Edgerunner Character Sheet Creator/i })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Vee Mercer"), { target: { value: "Chrome Chord" } });
+
+    // Streetrat Rockerboy exposes dynamic Play Instrument Specialization picker on Step 3
+    fireEvent.click(screen.getByRole("button", { name: /3\. Skills/i }));
+    expect(await screen.findByText("Play Instrument Specialization")).toBeInTheDocument();
+    const specLabel = screen.getByText("Play Instrument Specialization");
+    const specSelect = specLabel.parentElement?.querySelector("select") as HTMLSelectElement;
+    expect(specSelect).toBeTruthy();
+    fireEvent.change(specSelect, { target: { value: "Synthesizer" } });
+
+    // Switch to Freeform so custom cyberware, fashion, housing, and lifestyle submit cleanly
+    fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Freeform \/ Custom Sheet/i }));
+
+    // Step 4: Street Reputation & Starting Hooks
+    fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Street Reputation & Starting Hooks/i }));
+    fireEvent.change(screen.getByLabelText("Starting Reputation"), { target: { value: "4" } });
+    fireEvent.change(screen.getByPlaceholderText(/Owes 500 eb to a Kabuki ripperdoc/i), { target: { value: "Owes 500 eb to Chromanticore" } });
+
+    // Step 5: Housing, Lifestyle, Trauma Team, Fashion Matrix & Linear Frame Sigma / Skinweave
+    fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
+    fireEvent.change(screen.getByLabelText("Character Housing"), { target: { value: "cube" } });
+    fireEvent.change(screen.getByLabelText("Character Lifestyle"), { target: { value: "Generic Prepak" } });
+    fireEvent.change(screen.getByLabelText("Trauma Team Plan"), { target: { value: "Silver" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^fashion$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Urban Flash$/i }));
+    expect(screen.getByText("Urban Flash Mirrored Jacket")).toBeInTheDocument();
+    expect(screen.queryByText("Bag Lady Chic Trench")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+100eb" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^cyberware$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "+1000eb" }));
+    fireEvent.click(screen.getByRole("button", { name: "+500eb" }));
+
+    expect(screen.getByText(/BODY 7→12/)).toBeInTheDocument();
+    expect(screen.getByText(/Passive Cyberware Armor: Skinweave \(SP 7\)/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /6\. Sheet Preview/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create & Attach to Campaign/i }));
+
+    await waitFor(() => expect(createdPayloads.length).toBe(1));
+    const detail = createdPayloads[0]?.detail as {
+      housing?: string;
+      lifestyle?: string;
+      trauma_team?: string;
+      reputation?: number;
+      backstory?: { starting_hooks?: { debt?: string } };
+      cyberware?: Array<{ name: string }>;
+      fashion?: Array<{ name: string }>;
+    };
+    expect(detail?.housing).toBe("cube");
+    expect(detail?.lifestyle).toBe("Generic Prepak");
+    expect(detail?.trauma_team).toBe("Silver");
+    expect(detail?.reputation).toBe(4);
+    expect(detail?.backstory?.starting_hooks?.debt).toContain("Chromanticore");
+    expect(detail?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
+    expect(detail?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

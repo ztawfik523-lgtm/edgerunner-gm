@@ -1455,7 +1455,7 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
         "hp": char["hp"],
         "max_hp": char["max_hp"],
         "seriously_wounded": (max_h + 1) // 2,
-        "death_save": body_stat,
+        "death_save": int((d.get("creation") or {}).get("effective_body") or d.get("death_save") or body_stat),
         "wound_state": wound_state(max(0, char["hp"]), char["max_hp"], move_stat),
         "humanity": char["humanity"],
         "luck_remaining": char["luck_remaining"],
@@ -1663,14 +1663,134 @@ def _encode_party_locations_json(mode: str, locations: dict[str, str], channels:
 
 
 def _encode_npc_identities_json(cur_ids: dict[str, dict[str, Any]]) -> str:
-    """Serialize __npc_identities within 3500 chars without ever producing truncated invalid JSON."""
+    """Serialize __npc_identities within 1950 chars without ever producing truncated invalid JSON."""
     clean: dict[str, dict[str, Any]] = dict(cur_ids)
     raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
-    while len(raw) > 3500 and clean:
+    while len(raw) > 1950 and clean:
         first_key = next(iter(clean))
         clean.pop(first_key, None)
         raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
-    return raw if len(raw) <= 3500 else "{}"
+    return raw if len(raw) <= 1950 else "{}"
+
+
+def encode_campaign_meta_json(meta: dict[str, Any]) -> str:
+    """Serialize __campaign_meta safely within 1950 chars without truncating JSON."""
+    if not isinstance(meta, dict):
+        return "{}"
+    clean: dict[str, Any] = {}
+    for k in ("district", "zone_type", "threat_rating", "caper_style"):
+        val = str(meta.get(k) or "").strip()[:120]
+        if val:
+            clean[k] = val
+    hook = str(meta.get("screamsheet_hook") or "").strip()[:360]
+    if hook:
+        clean["screamsheet_hook"] = hook
+    factions = [str(f).strip()[:60] for f in (meta.get("factions") or []) if str(f).strip()][:8]
+    if factions:
+        clean["factions"] = factions
+    raw_fd = meta.get("faction_details")
+    if isinstance(raw_fd, list):
+        fds = [
+            {
+                "name": str(item.get("name") or "").strip()[:60],
+                "disposition": str(item.get("disposition") or "Neutral").strip()[:24],
+                **({"turf": str(item.get("turf") or "").strip()[:120]} if str(item.get("turf") or "").strip() else {}),
+            }
+            for item in raw_fd[:6]
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if fds:
+            clean["faction_details"] = fds
+    raw_locs = meta.get("locations")
+    if isinstance(raw_locs, list):
+        locs = [
+            {
+                "name": str(item.get("name") or "").strip()[:80],
+                **({"district": str(item.get("district") or "").strip()[:60]} if str(item.get("district") or "").strip() else {}),
+                **({"security": str(item.get("security") or "").strip()[:48]} if str(item.get("security") or "").strip() else {}),
+                **({"notes": str(item.get("notes") or "").strip()[:140]} if str(item.get("notes") or "").strip() else {}),
+            }
+            for item in raw_locs[:6]
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if locs:
+            clean["locations"] = locs
+    raw_gig = meta.get("gig")
+    if isinstance(raw_gig, dict) and any(str(raw_gig.get(x) or "").strip() for x in ("title", "client", "target", "notes")):
+        gig_obj: dict[str, Any] = {}
+        for gk, glim in (("title", 90), ("client", 80), ("target", 120), ("deadline", 60), ("notes", 160)):
+            gv = str(raw_gig.get(gk) or "").strip()[:glim]
+            if gv:
+                gig_obj[gk] = gv
+        if isinstance(raw_gig.get("payout_eb"), (int, float)) and raw_gig["payout_eb"] >= 0:
+            gig_obj["payout_eb"] = int(raw_gig["payout_eb"])
+        if gig_obj:
+            clean["gig"] = gig_obj
+    raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    for drop_key in ("locations", "faction_details", "gig", "screamsheet_hook"):
+        if len(raw) <= 1950:
+            break
+        clean.pop(drop_key, None)
+        raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    return raw if len(raw) <= 1950 else "{}"
+
+
+def parse_campaign_meta(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Decode __campaign_meta from campaign state discoveries."""
+    disc = (state or {}).get("discoveries") or {}
+    raw = disc.get("__campaign_meta")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def encode_session_zero_json(cfg: dict[str, Any]) -> str:
+    """Serialize __session_zero safely within 1950 chars."""
+    if not isinstance(cfg, dict):
+        return "{}"
+    clean: dict[str, Any] = {}
+    for k, lim in (
+        ("gm_style", 40),
+        ("narrator_length", 32),
+        ("narrator_pacing", 32),
+        ("lethality_dial", 40),
+        ("economy_dial", 40),
+        ("campaign_scope", 40),
+        ("crew_concept", 320),
+        ("lines_and_veils", 500),
+    ):
+        val = str(cfg.get(k) or "").strip()[:lim]
+        if val and val != "inherit":
+            clean[k] = val
+    if isinstance(cfg.get("starting_clock_minutes"), int) and cfg["starting_clock_minutes"] >= 0:
+        clean["starting_clock_minutes"] = int(cfg["starting_clock_minutes"])
+    raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    if len(raw) > 1950 and "lines_and_veils" in clean:
+        clean["lines_and_veils"] = str(clean["lines_and_veils"])[:240]
+        raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    if len(raw) > 1950 and "crew_concept" in clean:
+        clean["crew_concept"] = str(clean["crew_concept"])[:160]
+        raw = json.dumps(clean, separators=(",", ":"), ensure_ascii=False)
+    return raw if len(raw) <= 1950 else "{}"
+
+
+def parse_session_zero(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Decode __session_zero from campaign state discoveries."""
+    disc = (state or {}).get("discoveries") or {}
+    raw = disc.get("__session_zero")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return {}
 
 
 def apply_pc_locations_to_discoveries(
@@ -1775,6 +1895,44 @@ def build_npc_profiles(
     return profiles
 
 
+def _format_session_zero_and_meta_block(raw_state: dict[str, Any] | None) -> str:
+    """Format compact per-campaign Session Zero dials and World Setup metadata for prompts."""
+    sz = parse_session_zero(raw_state)
+    meta = parse_campaign_meta(raw_state)
+    parts: list[str] = []
+    if meta:
+        world_bits: list[str] = []
+        if meta.get("district"):
+            zone = f" [{meta['zone_type']}]" if meta.get("zone_type") else ""
+            threat = f" (Threat: {meta['threat_rating']})" if meta.get("threat_rating") else ""
+            world_bits.append(f"District: {meta['district']}{zone}{threat}")
+        if meta.get("caper_style"):
+            world_bits.append(f"Caper Style: {meta['caper_style']}")
+        if isinstance(meta.get("factions"), list) and meta["factions"]:
+            world_bits.append(f"Active Factions: {', '.join(str(x) for x in meta['factions'])}")
+        if isinstance(meta.get("gig"), dict) and meta["gig"].get("title"):
+            g = meta["gig"]
+            pay = f" ({g['payout_eb']} eb)" if g.get("payout_eb") else ""
+            world_bits.append(f"Starting Gig: {g['title']}{pay}")
+        if world_bits:
+            parts.append("Campaign World Setup: " + " | ".join(world_bits))
+    if sz:
+        sz_bits: list[str] = []
+        for key, label in (
+            ("campaign_scope", "Scope"),
+            ("lethality_dial", "Lethality"),
+            ("economy_dial", "Economy"),
+            ("crew_concept", "Crew Concept"),
+        ):
+            if sz.get(key):
+                sz_bits.append(f"{label}: {sz[key]}")
+        if sz_bits:
+            parts.append("Session Zero Dials: " + " | ".join(sz_bits))
+        if sz.get("lines_and_veils"):
+            parts.append(f"Table Safety Boundaries (Lines & Veils — STRICTLY RESPECT): {sz['lines_and_veils']}")
+    return ("\n".join(parts) + "\n") if parts else ""
+
+
 def _visible_state_for_prompt(state: dict[str, Any]) -> dict[str, Any]:
     """Return narrative state with internal __* storage keys stripped from discoveries."""
     cleaned = dict(state or {})
@@ -1828,7 +1986,14 @@ def _normalize_campaign_changes(
                 if text_entry:
                     merged[text_entry[:100]] = text_entry[:2000]
         if len(merged) > 40:
-            merged = dict(list(merged.items())[-40:])
+            if section == "discoveries":
+                internal_items = [(k, v) for k, v in merged.items() if str(k).startswith("__")]
+                user_items = [(k, v) for k, v in merged.items() if not str(k).startswith("__")]
+                keep_user = max(0, 40 - len(internal_items))
+                kept = internal_items + (user_items[-keep_user:] if keep_user > 0 else [])
+                merged = dict(kept[-40:])
+            else:
+                merged = dict(list(merged.items())[-40:])
         clean[section] = merged
 
     if characters is not None and (isinstance(pc_locations_in, dict) or (isinstance(all_together_in, str) and all_together_in.strip())):
@@ -1926,6 +2091,17 @@ class TurnEngine:
         if self.turn_settings.get("gm_thinking_mode", "quality") != "balanced":
             return {}
         return {"enable_thinking": False} if self._supports_enable_thinking(fn) else {}
+
+    def _effective_turn_settings(self, raw_state: dict[str, Any] | None) -> dict[str, Any]:
+        eff = dict(self.turn_settings)
+        sz = parse_session_zero(raw_state)
+        if sz.get("gm_style") in _GM_STYLE_HINTS:
+            eff["gm_style"] = sz["gm_style"]
+        if sz.get("narrator_length") in _LENGTH_HINTS:
+            eff["narrator_length"] = sz["narrator_length"]
+        if sz.get("narrator_pacing") in _PACING_HINTS:
+            eff["narrator_pacing"] = sz["narrator_pacing"]
+        return eff
 
     def _ensure_private_tables(self) -> None:
         with closing(self.gameplay.store._connect()) as conn, conn:
@@ -2276,6 +2452,12 @@ class TurnEngine:
         _, clocks = self._load_branch_private_state(campaign_id, target_leaf)
         return [c for c in clocks if c.get("visibility") != "secret"]
 
+    def list_all_clocks(self, campaign_id: str, leaf_id: str | None = None) -> list[dict[str, Any]]:
+        self.gameplay.campaign_context(campaign_id)
+        target_leaf = leaf_id if leaf_id is not None else self._latest_snapshot_leaf(campaign_id)
+        _, clocks = self._load_branch_private_state(campaign_id, target_leaf)
+        return list(clocks)
+
     def mutate_public_clock(self, campaign_id: str, body: dict[str, Any], leaf_id: str | None = None) -> list[dict[str, Any]]:
         self.gameplay.campaign_context(campaign_id)
         target_leaf = leaf_id if leaf_id is not None else self._latest_snapshot_leaf(campaign_id)
@@ -2318,29 +2500,66 @@ class TurnEngine:
         self,
         campaign_id: str,
         *,
-        secrets: dict[str, str] | None = None,
+        secrets: dict[str, str | None] | None = None,
         opening_clock: dict[str, Any] | None = None,
+        clocks: list[dict[str, Any]] | None = None,
+        replace_secrets: bool = False,
+        replace_clocks: bool = False,
     ) -> dict[str, Any]:
-        """Seed initial hidden GM secrets and/or opening public clock for a newly created campaign."""
+        """Seed initial hidden GM secrets and/or starting clocks for a campaign."""
         self.gameplay.campaign_context(campaign_id)
-        cur_secrets, cur_clocks = self._load_branch_private_state(campaign_id, None)
-        merged_secrets = self._merge_gm_secrets(cur_secrets, secrets or {})
-        next_clocks = list(cur_clocks)
-        if isinstance(opening_clock, dict) and str(opening_clock.get("name") or "").strip():
-            op = {
+        target_leaf = self._latest_snapshot_leaf(campaign_id)
+        cur_secrets, cur_clocks = self._load_branch_private_state(campaign_id, target_leaf)
+
+        if replace_secrets:
+            preserved_internal = {k: v for k, v in cur_secrets.items() if str(k).startswith("__")}
+            base_secrets = preserved_internal
+        else:
+            base_secrets = dict(cur_secrets)
+        merged_secrets = self._merge_gm_secrets(base_secrets, secrets or {})
+
+        clock_ops: list[dict[str, Any]] = []
+        if isinstance(clocks, list):
+            for entry in clocks:
+                if not isinstance(entry, dict) or not str(entry.get("name") or "").strip():
+                    continue
+                vis_raw = str(entry.get("visibility") or "public").strip().lower()
+                clock_ops.append({
+                    "id": entry.get("id") or entry.get("name"),
+                    "name": str(entry["name"]).strip(),
+                    "segments": entry.get("segments", 4),
+                    "filled": entry.get("filled", 0),
+                    "category": entry.get("category", "heat"),
+                    "note": str(entry.get("note") or "").strip(),
+                    "visibility": "secret" if vis_raw == "secret" else "public",
+                })
+        elif isinstance(opening_clock, dict) and str(opening_clock.get("name") or "").strip():
+            vis_raw = str(opening_clock.get("visibility") or "public").strip().lower()
+            clock_ops.append({
                 "id": opening_clock.get("id") or opening_clock.get("name"),
                 "name": str(opening_clock["name"]).strip(),
                 "segments": opening_clock.get("segments", 4),
                 "filled": opening_clock.get("filled", 0),
                 "category": opening_clock.get("category", "heat"),
                 "note": str(opening_clock.get("note") or "").strip(),
-                "visibility": "public",
-            }
-            next_clocks, _ = self._apply_clock_ops(next_clocks, [op], allow_secret=False)
+                "visibility": "secret" if vis_raw == "secret" else "public",
+            })
+
+        base_clocks = [] if replace_clocks else list(cur_clocks)
+        if clock_ops:
+            next_clocks, _ = self._apply_clock_ops(base_clocks, clock_ops, allow_secret=True)
+        else:
+            next_clocks = base_clocks
+
         self._save_branch_private_state(campaign_id, None, None, merged_secrets, next_clocks)
+        for lid in self._active_channel_leaves(campaign_id):
+            msg = self.tree.get_message(campaign_id, lid)
+            parent_id = msg["parent_id"] if msg else None
+            self._save_branch_private_state(campaign_id, lid, parent_id, merged_secrets, next_clocks)
         return {
             "clocks": [c for c in next_clocks if c.get("visibility") != "secret"],
-            "secrets_count": len(merged_secrets),
+            "all_clocks": list(next_clocks),
+            "secrets_count": len([k for k in merged_secrets if not str(k).startswith("__")]),
         }
 
     def _get_compressed_count(self, campaign_id: str) -> int:
@@ -2973,16 +3192,18 @@ class TurnEngine:
             if isinstance(guidance, str) and guidance.strip()
             else ""
         )
-        style_key = str(self.turn_settings.get("gm_style") or "grounded")
+        eff_settings = self._effective_turn_settings(ctx["campaign"]["state"])
+        style_key = str(eff_settings.get("gm_style") or "grounded")
         style_hint = _GM_STYLE_HINTS.get(style_key, _GM_STYLE_HINTS["grounded"])
-        default_step = int(self.turn_settings.get("default_time_step_minutes") or 0)
+        sz_meta_block = _format_session_zero_and_meta_block(ctx["campaign"]["state"])
+        default_step = int(eff_settings.get("default_time_step_minutes") or 0)
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
         dialogue_rules = (self.prompt_settings.get("player_dialogue_rules") or "").strip()
         multiplayer_rules = (self.prompt_settings.get("multiplayer_rules") or "").strip()
         planner_extra = (self.prompt_settings.get("planner_extra") or "").strip()
         planner_core = (self.prompt_settings.get("planner_core_rules") or "").strip()
-        allow_homebrew = bool(self.turn_settings.get("allow_ai_homebrew", True))
-        custom_lines = ""
+        allow_homebrew = bool(eff_settings.get("allow_ai_homebrew", True))
+        custom_lines = sz_meta_block
         if world_prefix:
             custom_lines += f"Campaign World / Table Rules:\n{world_prefix}\n"
         if dialogue_rules:
@@ -3062,6 +3283,7 @@ class TurnEngine:
         intro_prompt = (self.prompt_settings.get("intro_prompt") or "").strip() or _DEFAULT_INTRO_PROMPT
         world_prefix = (self.prompt_settings.get("world_rules_prefix") or "").strip()
         extra_world = f"\nTable World Rules:\n{world_prefix}\n" if world_prefix else ""
+        sz_meta_block = _format_session_zero_and_meta_block(camp["state"])
         guidance_line = (
             f"\nDirector Regeneration Note: {guidance.strip()}\n"
             if isinstance(guidance, str) and guidance.strip()
@@ -3070,6 +3292,7 @@ class TurnEngine:
         system_prompt = (
             f"{intro_prompt}\n"
             f"{extra_world}"
+            f"{sz_meta_block}"
             f"{guidance_line}"
             f"Active Campaign: {camp.get('name', 'Night City Run')} (Session {camp.get('session_number', 1)})\n"
             f"Campaign Scene: {state.get('scene') or '(not yet set)'}\n"
@@ -3190,9 +3413,10 @@ class TurnEngine:
             else ""
         )
         persona = (self.prompt_settings.get("system_persona") or "").strip() or _DEFAULT_NARRATOR_PERSONA
-        style_key = str(self.turn_settings.get("gm_style") or "grounded")
-        length_key = str(self.turn_settings.get("narrator_length") or "standard")
-        pacing_key = str(self.turn_settings.get("narrator_pacing") or "balanced")
+        eff_settings = self._effective_turn_settings(ctx["campaign"]["state"])
+        style_key = str(eff_settings.get("gm_style") or "grounded")
+        length_key = str(eff_settings.get("narrator_length") or "standard")
+        pacing_key = str(eff_settings.get("narrator_pacing") or "balanced")
         style_hint = _GM_STYLE_HINTS.get(style_key, _GM_STYLE_HINTS["grounded"])
         length_hint = _LENGTH_HINTS.get(length_key, _LENGTH_HINTS["standard"])
         pacing_hint = _PACING_HINTS.get(pacing_key, _PACING_HINTS["balanced"])
@@ -3204,8 +3428,9 @@ class TurnEngine:
         multiplayer_rules = (self.prompt_settings.get("multiplayer_rules") or "").strip()
         narrator_extra = (self.prompt_settings.get("narrator_extra") or "").strip()
         narrator_core = (self.prompt_settings.get("narrator_core_rules") or "").strip()
-        enable_highlights = bool(self.turn_settings.get("enable_highlights", True))
-        custom_sections = ""
+        enable_highlights = bool(eff_settings.get("enable_highlights", True))
+        sz_meta_block = _format_session_zero_and_meta_block(ctx["campaign"]["state"])
+        custom_sections = f"\n{sz_meta_block}" if sz_meta_block else ""
         if world_prefix:
             custom_sections += f"\nTable World Rules:\n{world_prefix}\n"
         if dialogue_rules:

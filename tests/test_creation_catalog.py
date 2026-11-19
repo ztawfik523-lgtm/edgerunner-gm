@@ -212,9 +212,9 @@ def test_corebook_mooks_and_encounters():
     assert cc.build_corebook_factions() == []
 
     presets = cc.build_campaign_presets()
-    assert presets["zone_types"] == []
-    assert presets["threat_ratings"] == []
-    assert presets["screamsheets"] == []
+    assert len(presets["zone_types"]) >= 7
+    assert len(presets["threat_ratings"]) >= 5
+    assert len(presets["screamsheets"]) >= 5
 
 
 def test_corebook_rules_reference():

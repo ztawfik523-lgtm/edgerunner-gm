@@ -54,6 +54,21 @@ class SoloService:
             return [dict(sequence=r[0], operation_id=r[1], action=json.loads(r[2])["action"], reason=r[3]) for r in conn.execute(
                 "SELECT sequence,operation_id,payload,reason FROM gameplay_events WHERE campaign_id=? ORDER BY sequence", (campaign_id,))]
 
+    def set_initial_clock_minutes(self, campaign_id: str, clock_minutes: int):
+        if type(clock_minutes) is not int or clock_minutes < 0:
+            raise ValueError("clock_minutes must be a nonnegative integer")
+        with closing(self.store._connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            snap = self._snapshot(conn, campaign_id)
+            runtime = dict(snap["runtime"])
+            runtime["clock_minutes"] = clock_minutes
+            next_rev = int(snap["revision"]) + 1 if snap["revision"] else 1
+            conn.execute(
+                "INSERT INTO solo_state VALUES(?,?,?) ON CONFLICT(campaign_id) DO UPDATE SET revision=excluded.revision,state_json=excluded.state_json",
+                (campaign_id, next_rev, _json(runtime)),
+            )
+            return {"revision": next_rev, "runtime": runtime}
+
     def execute(self, action, arguments, campaign_id, randbelow=secrets.randbelow):
         if not campaign_id:
             raise ValueError("A selected campaign is required for solo gameplay")
@@ -255,7 +270,8 @@ class SoloService:
         _begin_turn(char)
         detail = char["detail"]
         if char["hp"] <= 0 and not detail.get("dead"):
-            check = death_save(char["stats"]["BODY"], detail.get("death_save_penalty", 0), randbelow)
+            death_body = int((detail.get("creation") or {}).get("effective_body") or detail.get("death_save") or char["stats"]["BODY"])
+            check = death_save(death_body, detail.get("death_save_penalty", 0), randbelow)
             detail["death_save_penalty"] = check["next_penalty"]
             detail["dead"] = check["dead"]
             detail["last_death_save"] = check
