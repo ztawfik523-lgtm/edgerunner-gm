@@ -3095,14 +3095,12 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByDisplayValue("Corpo Hit")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /World Builder Extras/i }));
     expect(screen.getByDisplayValue("Existing Gig")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Afterlife")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Watson Reborn" } });
     fireEvent.change(screen.getByPlaceholderText(/Gig Title \(e\.g\. Kabuki Cold Drop\)/i), { target: { value: "Kabuki Cold Drop" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     fireEvent.change(screen.getByPlaceholderText(/Lines & Veils/i), { target: { value: "Keep it PG-13" } });
 
     fireEvent.click(screen.getByRole("button", { name: /^Clock$/i }));
@@ -3125,7 +3123,6 @@ describe("Cyberpunk RED GM UI", () => {
     // Create flow also allows attaching unattached PCs cleanly
     fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Crew Start" } });
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     const chromeCheckbox = await screen.findByLabelText("Chrome Vex");
     fireEvent.click(chromeCheckbox);
     fireEvent.change(screen.getByPlaceholderText(/Core stakes/i), { target: { value: "Run jobs out of Watson." } });
@@ -3289,9 +3286,8 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
     fireEvent.click(screen.getByRole("button", { name: /Freeform \/ Custom Sheet/i }));
 
-    // Step 4: Street Reputation & Starting Hooks
+    // Step 4: Street Reputation & Starting Hooks (expanded by default)
     fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Street Reputation & Starting Hooks/i }));
     fireEvent.change(screen.getByLabelText("Starting Reputation"), { target: { value: "4" } });
     fireEvent.change(screen.getByPlaceholderText(/Owes 500 eb to a Kabuki ripperdoc/i), { target: { value: "Owes 500 eb to Chromanticore" } });
 

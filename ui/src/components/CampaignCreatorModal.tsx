@@ -311,8 +311,13 @@ export function CampaignCreatorModal({
   const [clockVisibility, setClockVisibility] = useState<"public" | "secret">("public");
   const [clockNote, setClockNote] = useState("");
   const [extraClocks, setExtraClocks] = useState<ExtraClockDraft[]>([]);
-  const [showWorldEntities, setShowWorldEntities] = useState(false);
-  const [showSessionZero, setShowSessionZero] = useState(false);
+  const [showSettingStyle, setShowSettingStyle] = useState(true);
+  const [showPremiseOpening, setShowPremiseOpening] = useState(true);
+  const [showBeatChart, setShowBeatChart] = useState(true);
+  const [showNpcsObjectives, setShowNpcsObjectives] = useState(true);
+  const [showWorldEntities, setShowWorldEntities] = useState(true);
+  const [showSecretsClocks, setShowSecretsClocks] = useState(true);
+  const [showSessionZero, setShowSessionZero] = useState(true);
   const [szGmStyle, setSzGmStyle] = useState("inherit");
   const [szNarratorLength, setSzNarratorLength] = useState("inherit");
   const [szNarratorPacing, setSzNarratorPacing] = useState("inherit");
@@ -496,8 +501,13 @@ export function CampaignCreatorModal({
       applyEditDefaults(editCampaign);
       setDraftRestored(false);
     }
-    setShowWorldEntities(false);
-    setShowSessionZero(false);
+    setShowSettingStyle(true);
+    setShowPremiseOpening(true);
+    setShowBeatChart(true);
+    setShowNpcsObjectives(true);
+    setShowWorldEntities(true);
+    setShowSecretsClocks(true);
+    setShowSessionZero(true);
     setAttachCharIds([]);
     setLaunchIntroOnCreate(false);
     setRevealGmSecrets(false);
@@ -635,7 +645,7 @@ export function CampaignCreatorModal({
         }
       })
       .catch(() => {
-        // Fallback presets work seamlessly offline/in tests
+        // Keep current presets state if reference fetch fails
       });
     if (editCampaign && !hadSavedDraftRef.current) {
       fetchCampaignContext(editCampaign.id)
@@ -768,7 +778,8 @@ export function CampaignCreatorModal({
   const applyPresetScaffold = () => {
     const dist = activeDistrict ?? presets.districts[0];
     const style = activeStyle ?? presets.caper_styles[0];
-    const hookLine = screamsheetHook || pickOne(presets.screamsheet_hooks);
+    if (!dist || !style) return;
+    const hookLine = screamsheetHook || pickOne(presets.screamsheet_hooks) || "";
     if (!screamsheetHook) setScreamsheetHook(hookLine);
     if (!name.trim()) {
       setName(`${dist.name.split(" ")[0]}: ${style.name.split(" ")[0]} Run`);
@@ -807,22 +818,37 @@ export function CampaignCreatorModal({
 
   const aiBusy = aiBusyField !== null;
 
-  const handleAiCampaign = async (mode: "scratch" | "expand", field?: string) => {
+  const handleAiCampaign = async (
+    mode: "scratch" | "expand",
+    field?: string,
+    entryIndex?: number,
+    subField?: string,
+  ) => {
     if (aiBusy) return;
     setError("");
-    const busyKey = field ? `${mode}:${field}` : mode;
+    const busyKey =
+      entryIndex !== undefined && subField
+        ? `${mode}:${field}:${entryIndex}:${subField}`
+        : field
+          ? `${mode}:${field}`
+          : mode;
     setAiBusyField(busyKey);
     try {
       const npcsMap = Object.fromEntries(
-        npcPairs.filter((p) => p.key.trim() && p.val.trim()).map((p) => [p.key.trim(), p.val.trim()]),
+        npcPairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `NPC #${i + 1}`, p.val.trim()]),
       );
       const objMap = Object.fromEntries(
-        objectivePairs.filter((p) => p.key.trim() && p.val.trim()).map((p) => [p.key.trim(), p.val.trim()]),
+        objectivePairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `Objective #${i + 1}`, p.val.trim()]),
+      );
+      const discMap = Object.fromEntries(
+        discoveryPairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `Clue #${i + 1}`, p.val.trim()]),
       );
       const res = await assistCharacterCreation({
         target: "campaign",
         mode,
         ...(field ? { field } : {}),
+        ...(entryIndex !== undefined ? { entry_index: entryIndex } : {}),
+        ...(subField ? { sub_field: subField } : {}),
         guidance: aiGuidance.trim() || undefined,
         campaign: {
           name: name.trim() || undefined,
@@ -841,6 +867,7 @@ export function CampaignCreatorModal({
           summary: summary.trim() || undefined,
           opening_scene: openingScene.trim() || undefined,
           gm_secrets: gmSecrets.trim() || undefined,
+          secret_entries: secretPairs,
           beats: {
             hook: beatHook,
             developments: beatDev,
@@ -850,11 +877,39 @@ export function CampaignCreatorModal({
           },
           npcs: npcsMap,
           objectives: objMap,
-          opening_clock: clockName.trim()
+          discoveries: discMap,
+          locations,
+          gig: {
+            title: gig.title,
+            client: gig.client,
+            target: gig.target,
+            payout_eb: parseInt(gig.payoutEb, 10) || undefined,
+            deadline: gig.deadline,
+            notes: gig.notes,
+          },
+          opening_clock: clockName.trim() || clockNote.trim()
             ? { name: clockName.trim(), segments: clockSegments, note: clockNote.trim() }
             : undefined,
         },
       });
+      if (entryIndex !== undefined && subField && res.value !== undefined) {
+        const val = res.value;
+        if (val) {
+          if (field === "npcs") {
+            setNpcPairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "objectives") {
+            setObjectivePairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "discoveries") {
+            setDiscoveryPairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "locations") {
+            setLocations((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "gm_secrets") {
+            setSecretPairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          }
+        }
+        onNotify(`${mode === "scratch" ? "Regenerated" : "Improved"} ${field?.replace(/_/g, " ") ?? "entry"}.`);
+        return;
+      }
       if (!field && mode === "scratch" && !lockChoices) {
         if (res.district) {
           const matchedDist = presets.districts.find(
@@ -917,12 +972,19 @@ export function CampaignCreatorModal({
           notes: res.gig.notes || "",
         });
       }
+      if (field === "gig_title" && res.gig_title) setGig((g) => ({ ...g, title: res.gig_title! }));
+      if (field === "gig_client" && res.gig_client) setGig((g) => ({ ...g, client: res.gig_client! }));
+      if (field === "gig_target" && res.gig_target) setGig((g) => ({ ...g, target: res.gig_target! }));
+      if (field === "gig_deadline" && res.gig_deadline) setGig((g) => ({ ...g, deadline: res.gig_deadline! }));
+      if (field === "gig_notes" && res.gig_notes) setGig((g) => ({ ...g, notes: res.gig_notes! }));
       if ((!field || field === "gm_secrets") && res.gm_secrets) setGmSecrets(res.gm_secrets);
       if ((!field || field === "opening_clock") && res.opening_clock?.name) {
         setClockName(res.opening_clock.name);
         setClockSegments(res.opening_clock.segments || 4);
         setClockNote(res.opening_clock.note || "");
       }
+      if (field === "clock_name" && res.clock_name) setClockName(res.clock_name);
+      if (field === "clock_note" && res.clock_note) setClockNote(res.clock_note);
       onNotify(
         !field && mode === "scratch"
           ? "Generated full Night City campaign premise, Beat Chart & GM secrets."
@@ -1138,12 +1200,14 @@ export function CampaignCreatorModal({
     onNotify("Campaign draft cleared.");
   };
 
-  const busyFor = (fieldKey: string): "improve" | "regen" | null =>
-    aiBusyField === `expand:${fieldKey}`
+  const busyFor = (fieldKey: string, entryIndex?: number, subField?: string): "improve" | "regen" | null => {
+    const suffix = entryIndex !== undefined && subField ? `${fieldKey}:${entryIndex}:${subField}` : fieldKey;
+    return aiBusyField === `expand:${suffix}`
       ? "improve"
-      : aiBusyField === `scratch:${fieldKey}`
+      : aiBusyField === `scratch:${suffix}`
         ? "regen"
         : null;
+  };
 
   return (
     <div
@@ -1182,7 +1246,7 @@ export function CampaignCreatorModal({
                 )}
               </div>
               <p className="font-cyber-hud text-[11px] text-slate-400">
-                District threat, active gangs &amp; factions, Beat Chart (pp. 395–408), and spoiler-shielded GM truths.
+                District threat, active gangs &amp; factions, Beat Chart, and spoiler-shielded GM truths.
               </p>
             </div>
           </div>
@@ -1294,454 +1358,527 @@ export function CampaignCreatorModal({
             </div>
           )}
 
-          {/* Row 1: Title + Guidance */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Campaign Title *
-                </label>
-                <FieldAiActions
-                  label="Campaign Title"
-                  disabled={aiBusy}
-                  busyAction={busyFor("name")}
-                  onImprove={() => void handleAiCampaign("expand", "name")}
-                  onRegen={() => void handleAiCampaign("scratch", "name")}
-                />
-              </div>
-              <input
-                autoFocus
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Chrome over Kabuki"
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-200">
-                Optional Direction / Theme Prompt
-              </label>
-              <input
-                type="text"
-                value={aiGuidance}
-                onChange={(e) => setAiGuidance(e.target.value)}
-                placeholder="e.g. Noir smuggling crew caught between Maelstrom & Trauma Team"
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          {/* Row 2: District & Caper Style */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-              <label className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                <span className="inline-flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 text-rose-400" /> Starting District (pp. 298–317)
-                </span>
-                {activeDistrict && (
-                  <div className="flex items-center gap-1.5">
-                    {activeDistrict.zone_type && (
-                      <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
-                        {activeDistrict.zone_type}
-                      </span>
-                    )}
-                    <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
-                      {activeDistrict.threat_rating}
-                    </span>
-                  </div>
-                )}
-              </label>
-              <select
-                value={district}
-                onChange={(e) => setDistrict(e.target.value)}
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-              >
-                {presets.districts.map((d) => (
-                  <option key={d.name} value={d.name}>
-                    {d.name} ({d.zone_type ? `${d.zone_type} · ` : ""}{d.threat_rating} · p.{d.printed_page})
-                  </option>
-                ))}
-              </select>
-              {activeDistrict && (
-                <p className="text-[11px] text-slate-400">{activeDistrict.summary}</p>
-              )}
-            </div>
-
-            <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-              <label className="flex items-center justify-between gap-1.5 text-xs font-semibold text-slate-200">
-                <span className="inline-flex items-center gap-1.5">
-                  <Target className="h-3.5 w-3.5 text-cyan-400" /> Campaign / Caper Style (pp. 393–405)
-                </span>
-                <span className="font-mono text-[10px] text-slate-400">
-                  {lockChoices ? "Locked" : "Auto on Scratch"}
-                </span>
-              </label>
-              <select
-                value={caperStyle}
-                onChange={(e) => setCaperStyle(e.target.value)}
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-              >
-                {presets.caper_styles.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name} (p.{s.printed_page})
-                  </option>
-                ))}
-              </select>
-              {activeStyle && <p className="text-[11px] text-slate-400">{activeStyle.summary}</p>}
-            </div>
-          </div>
-
-          {/* Factions & Screamsheet Hook */}
-          <div className={`rounded-lg border p-3 space-y-3 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-slate-200">
-                Active Gangs &amp; Factions (up to 4)
+          {/* Setting & Style (Collapsible) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-3">
+            <button
+              type="button"
+              onClick={() => setShowSettingStyle((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-rose-400" />
+                Setting &amp; Style
               </span>
-              <button
-                type="button"
-                onClick={() => setScreamsheetHook(pickOne(presets.screamsheet_hooks))}
-                className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
-              >
-                <Dices className="h-3 w-3" /> Roll Screamsheet Hook
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {presets.factions.map((fac) => {
-                const picked = selectedFactions.includes(fac.name);
-                return (
-                  <button
-                    key={fac.name}
-                    type="button"
-                    title={`${fac.type} (p.${fac.printed_page}): ${fac.summary}`}
-                    onClick={() => toggleFaction(fac.name)}
-                    className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                      picked
-                        ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
-                        : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {fac.name}
-                  </button>
-                );
-              })}
-            </div>
-            <input
-              type="text"
-              value={screamsheetHook}
-              onChange={(e) => setScreamsheetHook(e.target.value)}
-              placeholder="Optional Screamsheet broadcast headline or rumor hitting Night City Nets today…"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-            />
-            {selectedFactions.length > 0 && (
-              <div className="space-y-1.5 border-t border-slate-800/80 pt-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Faction Dispositions &amp; Turf (Seeded to Campaign Library)
+              <span className="font-mono text-[10px] text-cyan-400">{showSettingStyle ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showSettingStyle && (
+              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
+                {/* Row 1: Title + Guidance */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="block text-xs font-semibold text-slate-200">
+                        Campaign Title *
+                      </label>
+                      <FieldAiActions
+                        label="Campaign Title"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("name")}
+                        onImprove={() => void handleAiCampaign("expand", "name")}
+                        onRegen={() => void handleAiCampaign("scratch", "name")}
+                      />
+                    </div>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. Chrome over Kabuki"
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-200">
+                      Direction / Theme Prompt
+                    </label>
+                    <input
+                      type="text"
+                      value={aiGuidance}
+                      onChange={(e) => setAiGuidance(e.target.value)}
+                      placeholder="e.g. Noir smuggling crew caught between Maelstrom & Trauma Team"
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                  {selectedFactions.map((fname) => {
-                    const meta = factionMeta[fname] ?? { disposition: "Neutral", turf: "" };
-                    return (
-                      <div key={fname} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-950/70 px-2 py-1">
-                        <span className="min-w-[90px] truncate text-[11px] font-medium text-slate-200">{fname}</span>
-                        <select
-                          aria-label={`${fname} disposition`}
-                          value={meta.disposition}
-                          onChange={(e) =>
-                            setFactionMeta((prev) => ({
-                              ...prev,
-                              [fname]: { disposition: e.target.value, turf: meta.turf },
-                            }))
-                          }
-                          className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-100"
+
+                {/* Row 2: District & Caper Style */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
+                    <label className="flex items-center justify-between text-xs font-semibold text-slate-200">
+                      <span className="inline-flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5 text-rose-400" /> Starting District
+                      </span>
+                      {activeDistrict && (
+                        <div className="flex items-center gap-1.5">
+                          {activeDistrict.zone_type && (
+                            <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                              {activeDistrict.zone_type}
+                            </span>
+                          )}
+                          <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
+                            {activeDistrict.threat_rating}
+                          </span>
+                        </div>
+                      )}
+                    </label>
+                    <select
+                      value={district}
+                      onChange={(e) => setDistrict(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                    >
+                      {presets.districts.map((d) => (
+                        <option key={d.name} value={d.name}>
+                          {d.name} ({d.zone_type ? `${d.zone_type} · ` : ""}{d.threat_rating})
+                        </option>
+                      ))}
+                    </select>
+                    {activeDistrict && (
+                      <p className="text-[11px] text-slate-400">{activeDistrict.summary}</p>
+                    )}
+                  </div>
+
+                  <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
+                    <label className="flex items-center justify-between gap-1.5 text-xs font-semibold text-slate-200">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Target className="h-3.5 w-3.5 text-cyan-400" /> Campaign / Caper Style
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        {lockChoices ? "Locked" : "Auto on Scratch"}
+                      </span>
+                    </label>
+                    <select
+                      value={caperStyle}
+                      onChange={(e) => setCaperStyle(e.target.value)}
+                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                    >
+                      {presets.caper_styles.map((s) => (
+                        <option key={s.id} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    {activeStyle && <p className="text-[11px] text-slate-400">{activeStyle.summary}</p>}
+                  </div>
+                </div>
+
+                {/* Factions & Screamsheet Hook */}
+                <div className={`rounded-lg border p-3 space-y-3 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-200">
+                      Active Gangs &amp; Factions (up to 4)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setScreamsheetHook(pickOne(presets.screamsheet_hooks))}
+                      className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                    >
+                      <Dices className="h-3 w-3" /> Roll Screamsheet Hook
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {presets.factions.map((fac) => {
+                      const picked = selectedFactions.includes(fac.name);
+                      return (
+                        <button
+                          key={fac.name}
+                          type="button"
+                          title={`${fac.type}: ${fac.summary}`}
+                          onClick={() => toggleFaction(fac.name)}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                            picked
+                              ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
+                              : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"
+                          }`}
                         >
-                          {["Hostile", "Wary", "Neutral", "Allied"].map((d) => (
-                            <option key={d} value={d}>{d}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          value={meta.turf}
-                          onChange={(e) =>
-                            setFactionMeta((prev) => ({
-                              ...prev,
-                              [fname]: { disposition: meta.disposition, turf: e.target.value },
-                            }))
-                          }
-                          placeholder="Turf / agenda…"
-                          className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
-                        />
+                          {fac.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    value={screamsheetHook}
+                    onChange={(e) => setScreamsheetHook(e.target.value)}
+                    placeholder="Screamsheet broadcast headline or rumor hitting Night City Nets today…"
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                  />
+                  {selectedFactions.length > 0 && (
+                    <div className="space-y-1.5 border-t border-slate-800/80 pt-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Faction Dispositions &amp; Turf (Seeded to Campaign Library)
                       </div>
-                    );
-                  })}
+                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        {selectedFactions.map((fname) => {
+                          const meta = factionMeta[fname] ?? { disposition: "Neutral", turf: "" };
+                          return (
+                            <div key={fname} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-950/70 px-2 py-1">
+                              <span className="min-w-[90px] truncate text-[11px] font-medium text-slate-200">{fname}</span>
+                              <select
+                                aria-label={`${fname} disposition`}
+                                value={meta.disposition}
+                                onChange={(e) =>
+                                  setFactionMeta((prev) => ({
+                                    ...prev,
+                                    [fname]: { disposition: e.target.value, turf: meta.turf },
+                                  }))
+                                }
+                                className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-100"
+                              >
+                                {["Hostile", "Wary", "Neutral", "Allied"].map((d) => (
+                                  <option key={d} value={d}>{d}</option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                value={meta.turf}
+                                onChange={(e) =>
+                                  setFactionMeta((prev) => ({
+                                    ...prev,
+                                    [fname]: { disposition: meta.disposition, turf: e.target.value },
+                                  }))
+                                }
+                                placeholder="Turf / agenda…"
+                                className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Premise & Opening Scene */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Campaign Premise &amp; Central Conflict
-                </label>
-                <FieldAiActions
-                  label="Campaign Premise"
-                  disabled={aiBusy}
-                  busyAction={busyFor("summary")}
-                  onImprove={() => void handleAiCampaign("expand", "summary")}
-                  onRegen={() => void handleAiCampaign("scratch", "summary")}
-                />
-              </div>
-              <textarea
-                rows={3}
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-                placeholder="Core stakes, Fixer/Corp friction, and campaign tone…"
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-              />
-            </div>
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Opening Scene (Where Session 1 Drops In)
-                </label>
-                <FieldAiActions
-                  label="Opening Scene"
-                  disabled={aiBusy}
-                  busyAction={busyFor("opening_scene")}
-                  onImprove={() => void handleAiCampaign("expand", "opening_scene")}
-                  onRegen={() => void handleAiCampaign("scratch", "opening_scene")}
-                />
-              </div>
-              <textarea
-                rows={3}
-                value={openingScene}
-                onChange={(e) => setOpeningScene(e.target.value)}
-                placeholder="Sensory hook right before Turn 1: rain-slick alley, Afterlife booth, convoy checkpoint…"
-                className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-              />
-            </div>
-          </div>
-
-          {/* Corebook Beat Chart (pp. 395-408) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
-                Corebook Beat Chart Outline (pp. 395–408 · Optional)
-              </div>
-              <FieldAiActions
-                label="Beat Chart"
-                disabled={aiBusy}
-                busyAction={busyFor("beat_chart")}
-                onImprove={() => void handleAiCampaign("expand", "beat_chart")}
-                onRegen={() => void handleAiCampaign("scratch", "beat_chart")}
-              />
-            </div>
-            <p className="text-[11px] text-amber-200/80">
-              Corebook Beat Chart (pp. 395–408): alternate Action, Investigation, and Character-Interaction beats.
-            </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {([
-                ["Hook", "beat_hook", beatHook, setBeatHook, "Inciting Screamsheet / Fixer offer"],
-                ["Developments", "beat_developments", beatDev, setBeatDev, "Complications & mid-run twists"],
-                ["Cliffhanger", "beat_cliffhanger", beatCliff, setBeatCliff, "Reversal or trap raising stakes"],
-                ["Climax", "beat_climax", beatClimax, setBeatClimax, "Showdown / extraction payoff"],
-                ["Resolution", "beat_resolution", beatRes, setBeatRes, "Eddie payout, Rep & IP aftermath"],
-              ] as const).map(([label, fieldKey, val, setter, ph]) => (
-                <div key={label}>
-                  <div className="mb-0.5 flex items-center justify-between gap-1">
-                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      {label}
+          {/* Premise & Opening Scene (Collapsible) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => setShowPremiseOpening((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                Premise &amp; Opening Scene
+              </span>
+              <span className="font-mono text-[10px] text-cyan-400">{showPremiseOpening ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showPremiseOpening && (
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Campaign Premise &amp; Central Conflict
                     </label>
                     <FieldAiActions
-                      label={label}
+                      label="Campaign Premise"
                       compact
                       disabled={aiBusy}
-                      busyAction={busyFor(fieldKey)}
-                      onImprove={() => void handleAiCampaign("expand", fieldKey)}
-                      onRegen={() => void handleAiCampaign("scratch", fieldKey)}
+                      busyAction={busyFor("summary")}
+                      onImprove={() => void handleAiCampaign("expand", "summary")}
+                      onRegen={() => void handleAiCampaign("scratch", "summary")}
                     />
                   </div>
-                  <input
-                    type="text"
-                    value={val}
-                    onChange={(e) => setter(e.target.value)}
-                    placeholder={ph}
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                  <textarea
+                    rows={3}
+                    value={summary}
+                    onChange={(e) => setSummary(e.target.value)}
+                    placeholder="Core stakes, Fixer/Corp friction, and campaign tone…"
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
                   />
                 </div>
-              ))}
-            </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Opening Scene (Where Session 1 Drops In)
+                    </label>
+                    <FieldAiActions
+                      label="Opening Scene"
+                      compact
+                      disabled={aiBusy}
+                      busyAction={busyFor("opening_scene")}
+                      onImprove={() => void handleAiCampaign("expand", "opening_scene")}
+                      onRegen={() => void handleAiCampaign("scratch", "opening_scene")}
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={openingScene}
+                    onChange={(e) => setOpeningScene(e.target.value)}
+                    placeholder="Sensory hook right before Turn 1: rain-slick alley, Afterlife booth, convoy checkpoint…"
+                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Starting NPCs & Objectives */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                  <Users className="h-3.5 w-3.5 text-cyan-400" /> Starting NPCs ({npcPairs.length})
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <FieldAiActions
-                    label="Starting NPCs"
-                    compact
-                    disabled={aiBusy}
-                    busyAction={busyFor("npcs")}
-                    onImprove={() => void handleAiCampaign("expand", "npcs")}
-                    onRegen={() => void handleAiCampaign("scratch", "npcs")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setNpcPairs((p) => [...p, { key: "", val: "" }])}
-                    className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-cyan-300"
-                  >
-                    <Plus className="h-3 w-3" /> Add
-                  </button>
-                </div>
-              </div>
-              {npcPairs.map((item, idx) => (
-                <div key={idx} className="space-y-1.5 rounded border border-slate-800/80 bg-slate-950/40 p-1.5">
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      value={item.key}
-                      onChange={(e) =>
-                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                      }
-                      placeholder="NPC Name / Role"
-                      className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <input
-                      type="text"
-                      value={item.val}
-                      onChange={(e) =>
-                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                      }
-                      placeholder="Motive / tie to crew"
-                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, showIdentity: !x.showIdentity } : x)))
-                      }
-                      title="Edit NPC hidden legal name, personality & speech style"
-                      className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-cyan-300 hover:border-cyan-400"
-                    >
-                      ID
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
-                      className="text-slate-500 hover:text-rose-400"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  {item.showIdentity && (
-                    <div className="grid grid-cols-1 gap-1.5 border-t border-slate-800/70 pt-1.5 sm:grid-cols-2">
-                      <input
-                        type="text"
-                        value={item.realName ?? ""}
-                        onChange={(e) =>
-                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, realName: e.target.value } : x)))
-                        }
-                        placeholder="Real legal name (optional)"
-                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
-                      />
-                      <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(item.realNameHidden)}
-                          onChange={(e) =>
-                            setNpcPairs((p) =>
-                              p.map((x, i) => (i === idx ? { ...x, realNameHidden: e.target.checked } : x)),
-                            )
-                          }
-                          className="h-3 w-3 accent-amber-400"
+          {/* Beat Chart Outline (Collapsible) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+            <button
+              type="button"
+              onClick={() => setShowBeatChart((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                Beat Chart Outline
+              </span>
+              <span className="font-mono text-[10px] text-cyan-400">{showBeatChart ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showBeatChart && (
+              <div className="space-y-2 border-t border-slate-800/80 pt-2">
+                <p className="text-[11px] text-amber-200/80">
+                  Beat Chart: alternate Action, Investigation, and Character-Interaction beats.
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {([
+                    ["Hook", "beat_hook", beatHook, setBeatHook, "Inciting Screamsheet / Fixer offer"],
+                    ["Developments", "beat_developments", beatDev, setBeatDev, "Complications & mid-run twists"],
+                    ["Cliffhanger", "beat_cliffhanger", beatCliff, setBeatCliff, "Reversal or trap raising stakes"],
+                    ["Climax", "beat_climax", beatClimax, setBeatClimax, "Showdown / extraction payoff"],
+                    ["Resolution", "beat_resolution", beatRes, setBeatRes, "Eddie payout, Rep & IP aftermath"],
+                  ] as const).map(([label, fieldKey, val, setter, ph]) => (
+                    <div key={label}>
+                      <div className="mb-0.5 flex items-center justify-between gap-1">
+                        <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                          {label}
+                        </label>
+                        <FieldAiActions
+                          label={label}
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor(fieldKey)}
+                          onImprove={() => void handleAiCampaign("expand", fieldKey)}
+                          onRegen={() => void handleAiCampaign("scratch", fieldKey)}
                         />
-                        <span>Hide legal name (GM Secret)</span>
-                      </label>
+                      </div>
                       <input
                         type="text"
-                        value={item.personality ?? ""}
-                        onChange={(e) =>
-                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, personality: e.target.value } : x)))
-                        }
-                        placeholder="Personality (e.g. Paranoid, sharp)"
-                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
-                      />
-                      <input
-                        type="text"
-                        value={item.speechStyle ?? ""}
-                        onChange={(e) =>
-                          setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, speechStyle: e.target.value } : x)))
-                        }
-                        placeholder="Speech style (e.g. Clipped corp-speak)"
-                        className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                        value={val}
+                        onChange={(e) => setter(e.target.value)}
+                        placeholder={ph}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                       />
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                  <Target className="h-3.5 w-3.5 text-emerald-400" /> Starting Objectives ({objectivePairs.length})
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <FieldAiActions
-                    label="Starting Objectives"
-                    compact
-                    disabled={aiBusy}
-                    busyAction={busyFor("objectives")}
-                    onImprove={() => void handleAiCampaign("expand", "objectives")}
-                    onRegen={() => void handleAiCampaign("scratch", "objectives")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setObjectivePairs((p) => [...p, { key: "", val: "" }])}
-                    className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-emerald-300"
-                  >
-                    <Plus className="h-3 w-3" /> Add
-                  </button>
+                  ))}
                 </div>
               </div>
-              {objectivePairs.map((item, idx) => (
-                <div key={idx} className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={item.key}
-                    onChange={(e) =>
-                      setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                    }
-                    placeholder="Objective"
-                    className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                  />
-                  <input
-                    type="text"
-                    value={item.val}
-                    onChange={(e) =>
-                      setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                    }
-                    placeholder="Details"
-                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setObjectivePairs((p) => p.filter((_, i) => i !== idx))}
-                    className="text-slate-500 hover:text-rose-400"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+            )}
+          </div>
+
+          {/* Starting NPCs & Objectives (Collapsible) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => setShowNpcsObjectives((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5 text-cyan-400" />
+                Starting NPCs ({npcPairs.length}) &amp; Objectives ({objectivePairs.length})
+              </span>
+              <span className="font-mono text-[10px] text-cyan-400">{showNpcsObjectives ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showNpcsObjectives && (
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                      <Users className="h-3.5 w-3.5 text-cyan-400" /> Starting NPCs ({npcPairs.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setNpcPairs((p) => [...p, { key: "", val: "" }])}
+                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-cyan-300"
+                    >
+                      <Plus className="h-3 w-3" /> Add
+                    </button>
+                  </div>
+                  {npcPairs.map((item, idx) => (
+                    <div key={idx} className="space-y-1.5 rounded border border-slate-800/80 bg-slate-950/40 p-1.5">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={item.key}
+                            onChange={(e) =>
+                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                            }
+                            placeholder="NPC Name / Role"
+                            className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`NPC ${idx + 1} Name`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("npcs", idx, "key")}
+                            onImprove={() => void handleAiCampaign("expand", "npcs", idx, "key")}
+                            onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "key")}
+                          />
+                        </div>
+                        <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                          <input
+                            type="text"
+                            value={item.val}
+                            onChange={(e) =>
+                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                            }
+                            placeholder="Motive / tie to crew"
+                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`NPC ${idx + 1} Motive`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("npcs", idx, "val")}
+                            onImprove={() => void handleAiCampaign("expand", "npcs", idx, "val")}
+                            onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "val")}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, showIdentity: !x.showIdentity } : x)))
+                          }
+                          title="Edit NPC hidden legal name, personality & speech style"
+                          className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-cyan-300 hover:border-cyan-400"
+                        >
+                          ID
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
+                          className="text-slate-500 hover:text-rose-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {item.showIdentity && (
+                        <div className="grid grid-cols-1 gap-1.5 border-t border-slate-800/70 pt-1.5 sm:grid-cols-2">
+                          <input
+                            type="text"
+                            value={item.realName ?? ""}
+                            onChange={(e) =>
+                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, realName: e.target.value } : x)))
+                            }
+                            placeholder="Real legal name"
+                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                          />
+                          <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-300">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.realNameHidden)}
+                              onChange={(e) =>
+                                setNpcPairs((p) =>
+                                  p.map((x, i) => (i === idx ? { ...x, realNameHidden: e.target.checked } : x)),
+                                )
+                              }
+                              className="h-3 w-3 accent-amber-400"
+                            />
+                            <span>Hide legal name (GM Secret)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={item.personality ?? ""}
+                            onChange={(e) =>
+                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, personality: e.target.value } : x)))
+                            }
+                            placeholder="Personality (e.g. Paranoid, sharp)"
+                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                          />
+                          <input
+                            type="text"
+                            value={item.speechStyle ?? ""}
+                            onChange={(e) =>
+                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, speechStyle: e.target.value } : x)))
+                            }
+                            placeholder="Speech style (e.g. Clipped corp-speak)"
+                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                      <Target className="h-3.5 w-3.5 text-emerald-400" /> Starting Objectives ({objectivePairs.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setObjectivePairs((p) => [...p, { key: "", val: "" }])}
+                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-emerald-300"
+                    >
+                      <Plus className="h-3 w-3" /> Add
+                    </button>
+                  </div>
+                  {objectivePairs.map((item, idx) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-1">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={item.key}
+                          onChange={(e) =>
+                            setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                          }
+                          placeholder="Objective"
+                          className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <FieldAiActions
+                          label={`Objective ${idx + 1} Title`}
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("objectives", idx, "key")}
+                          onImprove={() => void handleAiCampaign("expand", "objectives", idx, "key")}
+                          onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "key")}
+                        />
+                      </div>
+                      <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                        <input
+                          type="text"
+                          value={item.val}
+                          onChange={(e) =>
+                            setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                          }
+                          placeholder="Details"
+                          className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        />
+                        <FieldAiActions
+                          label={`Objective ${idx + 1} Details`}
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("objectives", idx, "val")}
+                          onImprove={() => void handleAiCampaign("expand", "objectives", idx, "val")}
+                          onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "val")}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setObjectivePairs((p) => p.filter((_, i) => i !== idx))}
+                        className="text-slate-500 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* World Entities: Locations, Starting Gig & Discoveries */}
@@ -1789,27 +1926,57 @@ export function CampaignCreatorModal({
                     Starting Gig / Contract (Seeded to Library)
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <input
-                      type="text"
-                      value={gig.title}
-                      onChange={(e) => setGig((g) => ({ ...g, title: e.target.value }))}
-                      placeholder="Gig Title (e.g. Kabuki Cold Drop)"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <input
-                      type="text"
-                      value={gig.client}
-                      onChange={(e) => setGig((g) => ({ ...g, client: e.target.value }))}
-                      placeholder="Client / Fixer"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <input
-                      type="text"
-                      value={gig.target}
-                      onChange={(e) => setGig((g) => ({ ...g, target: e.target.value }))}
-                      placeholder="Target / Asset"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={gig.title}
+                        onChange={(e) => setGig((g) => ({ ...g, title: e.target.value }))}
+                        placeholder="Gig Title (e.g. Kabuki Cold Drop)"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Gig Title"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("gig_title")}
+                        onImprove={() => void handleAiCampaign("expand", "gig_title")}
+                        onRegen={() => void handleAiCampaign("scratch", "gig_title")}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={gig.client}
+                        onChange={(e) => setGig((g) => ({ ...g, client: e.target.value }))}
+                        placeholder="Client / Fixer"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Gig Client"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("gig_client")}
+                        onImprove={() => void handleAiCampaign("expand", "gig_client")}
+                        onRegen={() => void handleAiCampaign("scratch", "gig_client")}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={gig.target}
+                        onChange={(e) => setGig((g) => ({ ...g, target: e.target.value }))}
+                        placeholder="Target / Asset"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Gig Target"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("gig_target")}
+                        onImprove={() => void handleAiCampaign("expand", "gig_target")}
+                        onRegen={() => void handleAiCampaign("scratch", "gig_target")}
+                      />
+                    </div>
                     <input
                       type="number"
                       min={0}
@@ -1818,20 +1985,40 @@ export function CampaignCreatorModal({
                       placeholder="Payout (eb)"
                       className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                     />
-                    <input
-                      type="text"
-                      value={gig.deadline}
-                      onChange={(e) => setGig((g) => ({ ...g, deadline: e.target.value }))}
-                      placeholder="Deadline (e.g. 48 hours)"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <input
-                      type="text"
-                      value={gig.notes}
-                      onChange={(e) => setGig((g) => ({ ...g, notes: e.target.value }))}
-                      placeholder="Contract terms / twist"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={gig.deadline}
+                        onChange={(e) => setGig((g) => ({ ...g, deadline: e.target.value }))}
+                        placeholder="Deadline (e.g. 48 hours)"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Gig Deadline"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("gig_deadline")}
+                        onImprove={() => void handleAiCampaign("expand", "gig_deadline")}
+                        onRegen={() => void handleAiCampaign("scratch", "gig_deadline")}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={gig.notes}
+                        onChange={(e) => setGig((g) => ({ ...g, notes: e.target.value }))}
+                        placeholder="Contract terms / twist"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Gig Notes"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("gig_notes")}
+                        onImprove={() => void handleAiCampaign("expand", "gig_notes")}
+                        onRegen={() => void handleAiCampaign("scratch", "gig_notes")}
+                      />
+                    </div>
                   </div>
                 </div>
                 {/* Locations */}
@@ -1842,15 +2029,25 @@ export function CampaignCreatorModal({
                     </div>
                     {locations.map((loc, idx) => (
                       <div key={idx} className="grid grid-cols-1 gap-1.5 sm:grid-cols-4">
-                        <input
-                          type="text"
-                          value={loc.name}
-                          onChange={(e) =>
-                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
-                          }
-                          placeholder="Venue / Block Name"
-                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={loc.name}
+                            onChange={(e) =>
+                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                            }
+                            placeholder="Venue / Block Name"
+                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`Location ${idx + 1} Name`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("locations", idx, "name")}
+                            onImprove={() => void handleAiCampaign("expand", "locations", idx, "name")}
+                            onRegen={() => void handleAiCampaign("scratch", "locations", idx, "name")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={loc.district}
@@ -1869,7 +2066,7 @@ export function CampaignCreatorModal({
                           placeholder="Security / Threat"
                           className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                         />
-                        <div className="flex gap-1.5">
+                        <div className="flex items-center gap-1">
                           <input
                             type="text"
                             value={loc.notes}
@@ -1877,7 +2074,15 @@ export function CampaignCreatorModal({
                               setLocations((p) => p.map((x, i) => (i === idx ? { ...x, notes: e.target.value } : x)))
                             }
                             placeholder="Vibe / access notes"
-                            className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`Location ${idx + 1} Notes`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("locations", idx, "notes")}
+                            onImprove={() => void handleAiCampaign("expand", "locations", idx, "notes")}
+                            onRegen={() => void handleAiCampaign("scratch", "locations", idx, "notes")}
                           />
                           <button
                             type="button"
@@ -1898,25 +2103,45 @@ export function CampaignCreatorModal({
                       Starting Discoveries / Clues Known to PCs
                     </div>
                     {discoveryPairs.map((dp, idx) => (
-                      <div key={idx} className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={dp.key}
-                          onChange={(e) =>
-                            setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                          }
-                          placeholder="Clue / Intel"
-                          className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                        />
-                        <input
-                          type="text"
-                          value={dp.val}
-                          onChange={(e) =>
-                            setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                          }
-                          placeholder="What the crew already knows at Session 1"
-                          className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                        />
+                      <div key={idx} className="flex flex-wrap items-center gap-1.5">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={dp.key}
+                            onChange={(e) =>
+                              setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                            }
+                            placeholder="Clue / Intel"
+                            className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`Discovery ${idx + 1} Title`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("discoveries", idx, "key")}
+                            onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "key")}
+                            onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "key")}
+                          />
+                        </div>
+                        <div className="flex min-w-[160px] flex-1 items-center gap-1">
+                          <input
+                            type="text"
+                            value={dp.val}
+                            onChange={(e) =>
+                              setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                            }
+                            placeholder="What the crew already knows at Session 1"
+                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          />
+                          <FieldAiActions
+                            label={`Discovery ${idx + 1} Details`}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("discoveries", idx, "val")}
+                            onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "val")}
+                            onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "val")}
+                          />
+                        </div>
                         <button
                           type="button"
                           onClick={() => setDiscoveryPairs((p) => p.filter((_, i) => i !== idx))}
@@ -1932,183 +2157,231 @@ export function CampaignCreatorModal({
             )}
           </div>
 
-          {/* GM Secrets (Spoiler-Shielded) + Opening World Clocks */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="flex items-center gap-1.5 text-xs font-semibold text-amber-200">
-                  {revealGmSecrets ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                  <span>Hidden GM Secrets</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-amber-500/40 bg-slate-950/90 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:border-amber-400">
-                    <input
-                      type="checkbox"
-                      checked={revealGmSecrets}
-                      onChange={(e) => setRevealGmSecrets(e.target.checked)}
-                      aria-label="Unspoil GM Secrets"
-                      className="h-3 w-3 accent-amber-400"
-                    />
-                    <span>Unspoil</span>
-                  </label>
-                  <FieldAiActions
-                    label="GM Secrets"
-                    compact
-                    disabled={aiBusy}
-                    busyAction={busyFor("gm_secrets")}
-                    onImprove={() => void handleAiCampaign("expand", "gm_secrets")}
-                    onRegen={() => void handleAiCampaign("scratch", "gm_secrets")}
-                  />
-                </div>
-              </div>
-              {revealGmSecrets ? (
-                <div className="space-y-2">
-                  <textarea
-                    rows={2}
-                    value={gmSecrets}
-                    onChange={(e) => setGmSecrets(e.target.value)}
-                    placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                  {secretPairs.map((sp, idx) => (
-                    <div key={idx} className="flex gap-1.5">
+          {/* GM Secrets (Spoiler-Shielded) + Opening World Clocks (Collapsible) */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => setShowSecretsClocks((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-rose-400" />
+                GM Secrets &amp; Opening Clocks
+              </span>
+              <span className="font-mono text-[10px] text-cyan-400">{showSecretsClocks ? "▲ Hide" : "▼ Expand"}</span>
+            </button>
+            {showSecretsClocks && (
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
+                <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-amber-200">
+                      {revealGmSecrets ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                      <span>Hidden GM Secrets</span>
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-amber-500/40 bg-slate-950/90 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:border-amber-400">
                       <input
-                        type="text"
-                        value={sp.key}
-                        onChange={(e) =>
-                          setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                        }
-                        placeholder="Secret Key"
-                        className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        type="checkbox"
+                        checked={revealGmSecrets}
+                        onChange={(e) => setRevealGmSecrets(e.target.checked)}
+                        aria-label="Unspoil GM Secrets"
+                        className="h-3 w-3 accent-amber-400"
                       />
-                      <input
-                        type="text"
-                        value={sp.val}
-                        onChange={(e) =>
-                          setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                        }
-                        placeholder="Hidden truth…"
-                        className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
+                      <span>Unspoil</span>
+                    </label>
+                  </div>
+                  {revealGmSecrets ? (
+                    <div className="space-y-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-300/80">
+                            Core GM Truths
+                          </span>
+                          <FieldAiActions
+                            label="GM Secrets"
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("gm_secrets")}
+                            onImprove={() => void handleAiCampaign("expand", "gm_secrets")}
+                            onRegen={() => void handleAiCampaign("scratch", "gm_secrets")}
+                          />
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={gmSecrets}
+                          onChange={(e) => setGmSecrets(e.target.value)}
+                          placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
+                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        />
+                      </div>
+                      {secretPairs.map((sp, idx) => (
+                        <div key={idx} className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={sp.key}
+                              onChange={(e) =>
+                                setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                              }
+                              placeholder="Secret Key"
+                              className="w-28 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Secret ${idx + 1} Key`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("gm_secrets", idx, "key")}
+                              onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "key")}
+                              onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "key")}
+                            />
+                          </div>
+                          <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                            <input
+                              type="text"
+                              value={sp.val}
+                              onChange={(e) =>
+                                setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                              }
+                              placeholder="Hidden truth…"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Secret ${idx + 1} Truth`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("gm_secrets", idx, "val")}
+                              onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "val")}
+                              onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "val")}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSecretPairs((p) => p.filter((_, i) => i !== idx))}
+                            className="text-slate-500 hover:text-rose-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
                       <button
                         type="button"
-                        onClick={() => setSecretPairs((p) => p.filter((_, i) => i !== idx))}
-                        className="text-slate-500 hover:text-rose-400"
+                        onClick={() => setSecretPairs((p) => [...p, { key: "", val: "" }])}
+                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-[10px] text-amber-200"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Plus className="h-3 w-3" /> Add Secret Entry
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setSecretPairs((p) => [...p, { key: "", val: "" }])}
-                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-[10px] text-amber-200"
-                  >
-                    <Plus className="h-3 w-3" /> Add Secret Entry
-                  </button>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center rounded border border-amber-500/30 bg-slate-950/90 px-3 py-4 text-center">
+                      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90">
+                        CLASSIFIED // SPOILER SHIELDED
+                      </span>
+                      <span className="mt-1 text-[11px] text-slate-400">
+                        {gmSecrets.trim() || secretPairs.length > 0
+                          ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
+                          : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center rounded border border-amber-500/30 bg-slate-950/90 px-3 py-4 text-center">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90">
-                    CLASSIFIED // SPOILER SHIELDED
-                  </span>
-                  <span className="mt-1 text-[11px] text-slate-400">
-                    {gmSecrets.trim() || secretPairs.length > 0
-                      ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
-                      : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
-                  </span>
-                </div>
-              )}
-            </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                  <Clock className="h-3.5 w-3.5 text-rose-400" /> Opening World / Heat Clock (Optional)
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <FieldAiActions
-                    label="Opening Clock"
-                    compact
-                    disabled={aiBusy}
-                    busyAction={busyFor("opening_clock")}
-                    onImprove={() => void handleAiCampaign("expand", "opening_clock")}
-                    onRegen={() => void handleAiCampaign("scratch", "opening_clock")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExtraClocks((p) => [
-                        ...p,
-                        { name: "", segments: 4, filled: 0, category: "deadline", visibility: "public", note: "" },
-                      ])
-                    }
-                    className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-rose-300"
-                  >
-                    <Plus className="h-3 w-3" /> Clock
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <input
-                  type="text"
-                  value={clockName}
-                  onChange={(e) => setClockName(e.target.value)}
-                  placeholder="Clock name (e.g. Corp Trace)"
-                  className="min-w-[130px] flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                />
-                <input
-                  type="number"
-                  min={2}
-                  max={12}
-                  aria-label="Primary clock segments"
-                  value={clockSegments}
-                  onChange={(e) => {
-                    const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
-                    setClockSegments(seg);
-                    setClockFilled((f) => Math.min(f, seg));
-                  }}
-                  className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
-                />
-                <input
-                  type="number"
-                  min={0}
-                  max={clockSegments}
-                  aria-label="Primary clock filled"
-                  title="Initial filled segments"
-                  value={clockFilled}
-                  onChange={(e) => setClockFilled(Math.max(0, Math.min(clockSegments, parseInt(e.target.value, 10) || 0)))}
-                  className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
-                />
-              </div>
-              <div className="flex gap-1.5">
-                <select
-                  aria-label="Primary clock category"
-                  value={clockCategory}
-                  onChange={(e) => setClockCategory(e.target.value as ExtraClockDraft["category"])}
-                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                >
-                  {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Primary clock visibility"
-                  value={clockVisibility}
-                  onChange={(e) => setClockVisibility(e.target.value as "public" | "secret")}
-                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                >
-                  <option value="public">Public</option>
-                  <option value="secret">GM Secret</option>
-                </select>
-                <input
-                  type="text"
-                  value={clockNote}
-                  onChange={(e) => setClockNote(e.target.value)}
-                  placeholder="What happens when the clock fills…"
-                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                />
-              </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+                      <Clock className="h-3.5 w-3.5 text-rose-400" /> Opening World / Heat Clock
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExtraClocks((p) => [
+                          ...p,
+                          { name: "", segments: 4, filled: 0, category: "deadline", visibility: "public", note: "" },
+                        ])
+                      }
+                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-rose-300"
+                    >
+                      <Plus className="h-3 w-3" /> Clock
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                      <input
+                        type="text"
+                        value={clockName}
+                        onChange={(e) => setClockName(e.target.value)}
+                        placeholder="Clock name (e.g. Corp Trace)"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Clock Name"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("clock_name")}
+                        onImprove={() => void handleAiCampaign("expand", "clock_name")}
+                        onRegen={() => void handleAiCampaign("scratch", "clock_name")}
+                      />
+                    </div>
+                    <input
+                      type="number"
+                      min={2}
+                      max={12}
+                      aria-label="Primary clock segments"
+                      value={clockSegments}
+                      onChange={(e) => {
+                        const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
+                        setClockSegments(seg);
+                        setClockFilled((f) => Math.min(f, seg));
+                      }}
+                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={clockSegments}
+                      aria-label="Primary clock filled"
+                      title="Initial filled segments"
+                      value={clockFilled}
+                      onChange={(e) => setClockFilled(Math.max(0, Math.min(clockSegments, parseInt(e.target.value, 10) || 0)))}
+                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <select
+                      aria-label="Primary clock category"
+                      value={clockCategory}
+                      onChange={(e) => setClockCategory(e.target.value as ExtraClockDraft["category"])}
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                    >
+                      {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label="Primary clock visibility"
+                      value={clockVisibility}
+                      onChange={(e) => setClockVisibility(e.target.value as "public" | "secret")}
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                    >
+                      <option value="public">Public</option>
+                      <option value="secret">GM Secret</option>
+                    </select>
+                    <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                      <input
+                        type="text"
+                        value={clockNote}
+                        onChange={(e) => setClockNote(e.target.value)}
+                        placeholder="What happens when the clock fills…"
+                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      />
+                      <FieldAiActions
+                        label="Clock Trigger Note"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("clock_note")}
+                        onImprove={() => void handleAiCampaign("expand", "clock_note")}
+                        onRegen={() => void handleAiCampaign("scratch", "clock_note")}
+                      />
+                    </div>
+                  </div>
               {extraClocks.map((ec, idx) => (
                 <div key={idx} className="space-y-1 border-t border-slate-800/80 pt-2">
                   <div className="flex gap-1.5">
@@ -2184,6 +2457,8 @@ export function CampaignCreatorModal({
               ))}
             </div>
           </div>
+            )}
+          </div>
 
           {/* Session Zero & Table Dials + Starting Party */}
           <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
@@ -2194,7 +2469,7 @@ export function CampaignCreatorModal({
             >
               <span className="inline-flex items-center gap-1.5">
                 <ShieldAlert className="h-3.5 w-3.5 text-cyan-400" />
-                Session Zero Dials, Starting Time &amp; Table Boundaries (Optional)
+                Session Zero Dials, Starting Time &amp; Table Boundaries
               </span>
               <span className="font-mono text-[10px] text-cyan-400">{showSessionZero ? "▲ Hide" : "▼ Expand"}</span>
             </button>
@@ -2260,7 +2535,7 @@ export function CampaignCreatorModal({
                       onChange={(e) => setSzLethality(e.target.value)}
                       className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                     >
-                      <option value="Standard RED">Standard RED (pp. 168–188)</option>
+                      <option value="Standard RED">Standard RED</option>
                       <option value="Gritty / High Lethality">Gritty / High Lethality</option>
                       <option value="Cinematic Action">Cinematic Action</option>
                     </select>

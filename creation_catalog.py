@@ -1039,7 +1039,16 @@ _ANTI_CLICHE_RULE = (
     "- Write vivid, specific, concrete 2045 details (rent in cargo containers, Kibble/Synthcoke/Smash, specific neighborhoods, real skill/gear hooks) instead of vague purple prose."
 )
 
-_BIO_FIELDS = {"concept", "summary", "established_history", "appearance"}
+_BIO_FIELDS = {
+    "concept",
+    "summary",
+    "established_history",
+    "appearance",
+    "reputation_note",
+    "trauma_hook",
+    "addiction_hook",
+    "debt_hook",
+}
 _CONTACT_FIELDS = {"friends", "enemies", "tragic_love_affairs"}
 _CAMPAIGN_FIELDS = {
     "name",
@@ -1056,8 +1065,15 @@ _CAMPAIGN_FIELDS = {
     "discoveries",
     "locations",
     "gig",
+    "gig_title",
+    "gig_client",
+    "gig_target",
+    "gig_deadline",
+    "gig_notes",
     "gm_secrets",
     "opening_clock",
+    "clock_name",
+    "clock_note",
 }
 
 _BEAT_KEY_TO_FIELD = {
@@ -1066,6 +1082,19 @@ _BEAT_KEY_TO_FIELD = {
     "beat_cliffhanger": ("cliffhanger", "Major twist raising the stakes (Corebook p. 399)"),
     "beat_climax": ("climax", "Showdown or extraction payoff (Corebook p. 400)"),
     "beat_resolution": ("resolution", "Fallout, eddie payout, Rep & IP aftermath (Corebook p. 401)"),
+}
+
+_CAMPAIGN_GIG_FIELDS = {
+    "gig_title": ("title", "Contract title"),
+    "gig_client": ("client", "Patron / Fixer"),
+    "gig_target": ("target", "Objective site or asset"),
+    "gig_deadline": ("deadline", "Contract deadline (e.g. 48 hours)"),
+    "gig_notes": ("notes", "Contract terms or twist"),
+}
+
+_CAMPAIGN_CLOCK_FIELDS = {
+    "clock_name": ("name", "Countdown name (e.g. Corp Response / Gang Heat)"),
+    "clock_note": ("note", "What happens when the clock fills"),
 }
 
 
@@ -1118,6 +1147,19 @@ async def generate_creation_ai_assist(
         )
         if field not in allowed:
             raise ValueError(f"Unsupported field {field!r} for target {target!r}")
+
+    raw_entry_index = payload.get("entry_index")
+    entry_index: int | None = (
+        int(raw_entry_index)
+        if isinstance(raw_entry_index, (int, float)) and not isinstance(raw_entry_index, bool) and int(raw_entry_index) >= 0
+        else None
+    )
+    raw_sub_field = payload.get("sub_field")
+    sub_field: str | None = (
+        str(raw_sub_field).strip().lower()
+        if isinstance(raw_sub_field, str) and raw_sub_field.strip()
+        else None
+    )
 
     char = payload.get("character") if isinstance(payload.get("character"), dict) else {}
     camp = payload.get("campaign") if isinstance(payload.get("campaign"), dict) else {}
@@ -1253,17 +1295,28 @@ async def generate_creation_ai_assist(
     lore_block = "\n".join(lore_snippets[:4]) if lore_snippets else "Setting: Night City 2045 (Time of the Red, post-4th Corporate War)."
 
     if target == "bio":
-        full_schema = {
+        core_bio_schema = {
             "concept": "Short punchy one-line character tagline",
             "summary": "2-3 vivid paragraphs about origins, upbringing, family crisis, and why they became an Edgerunner",
             "established_history": "Concrete pre-Session-1 Night City history: past jobs, Fixers/crews, favors owed, local turf, hooks for the GM",
             "appearance": "Concise visual description matching their outfit, Lifepath style, armor, and visible cyberware",
+        }
+        full_schema = {
+            **core_bio_schema,
+            "reputation_note": "Concise Night City street rumor or reason behind their starting Reputation",
+            "trauma_hook": "Specific psychological scar, cyberpsychosis warning sign, or war/street trauma",
+            "addiction_hook": "Specific Night City vice, chem habit, or compulsion (e.g. Synthcoke, Smash, BDs)",
+            "debt_hook": "Concrete eddie debt, blood favor, or obligation owed to a Fixer, corp, or ripperdoc",
         }
         current_draft = {
             "concept": current.get("concept") or "",
             "summary": current.get("summary") or "",
             "established_history": current.get("established_history") or "",
             "appearance": current.get("appearance") or "",
+            "reputation_note": current.get("reputation_note") or "",
+            "trauma_hook": current.get("trauma_hook") or "",
+            "addiction_hook": current.get("addiction_hook") or "",
+            "debt_hook": current.get("debt_hook") or "",
         }
         if field is not None:
             requested_schema = {field: full_schema[field]}
@@ -1273,7 +1326,7 @@ async def generate_creation_ai_assist(
                 else f"FOCUS EXCLUSIVELY ON THE '{field}' FIELD. Expand, enrich, and sharpen ONLY '{field}'—preserving every specific name, event, debt, and tone the player wrote in '{field}' (or drafting it to harmonize with their other fields in current_draft if '{field}' is currently brief/empty). Do NOT return other fields."
             )
         else:
-            requested_schema = full_schema
+            requested_schema = core_bio_schema
             mode_rule = (
                 "Write an original Concept tagline, Personal Backstory (2-3 crisp paragraphs), Established Night City History & Ties (concrete gigs, debts, hangouts, local turf, NPC hooks), and Signature Look & Mannerisms from scratch. Use the creative_seed angle unless user_guidance steers elsewhere."
                 if mode == "scratch"
@@ -1310,7 +1363,20 @@ async def generate_creation_ai_assist(
             "enemies": current.get("enemies") or [],
             "tragic_love_affairs": current.get("tragic_love_affairs") or [],
         }
-        if field is not None:
+        targeted_entry: dict[str, Any] | None = None
+        targeted_prev_val = ""
+        if field is not None and entry_index is not None and sub_field is not None:
+            cat_list = current_contacts.get(field) if isinstance(current_contacts.get(field), list) else []
+            if 0 <= entry_index < len(cat_list) and isinstance(cat_list[entry_index], dict):
+                targeted_entry = cat_list[entry_index]
+                targeted_prev_val = str(targeted_entry.get(sub_field) or "")
+            requested_schema = {"value": f"Concise updated text for '{field}[{entry_index}].{sub_field}'"}
+            mode_rule = (
+                f"FOCUS EXCLUSIVELY ON '{field}[{entry_index}].{sub_field}'. Generate a fresh, concrete Night City 2045 value from scratch consistent with the rest of this contact entry and the character sheet. Return ONLY {{\"value\": \"...\"}}."
+                if mode == "scratch"
+                else f"FOCUS EXCLUSIVELY ON '{field}[{entry_index}].{sub_field}'. Expand, sharpen, and enrich ONLY this single field while preserving the contact's existing name/identity and staying consistent with the rest of the entry and character sheet. Return ONLY {{\"value\": \"...\"}}."
+            )
+        elif field is not None:
             requested_schema = {field: full_schema[field]}
             mode_rule = (
                 f"Generate ONLY the '{field}' list from scratch anchored in this character's Lifepath, Role, Skills, and existing bio."
@@ -1328,6 +1394,9 @@ async def generate_creation_ai_assist(
             "task": "character_contacts",
             "mode": mode,
             **({"target_field": field} if field else {}),
+            **({"target_entry_index": entry_index} if entry_index is not None else {}),
+            **({"target_sub_field": sub_field} if sub_field else {}),
+            **({"target_entry": targeted_entry} if targeted_entry is not None else {}),
             "instruction": mode_rule,
             "user_guidance": guidance or "(none)",
             "sheet": sheet_brief,
@@ -1341,14 +1410,17 @@ async def generate_creation_ai_assist(
         }
         if scratch_seed:
             user_payload["creative_seed"] = scratch_seed
-            existing_names = [
-                str(e.get("name"))
-                for lst in current_contacts.values()
-                for e in (lst if isinstance(lst, list) else [])
-                if isinstance(e, dict) and e.get("name")
-            ]
-            if existing_names:
-                user_payload["avoid_repeating"] = f"Use completely new NPCs and dynamics; do NOT repeat these names: {', '.join(existing_names[:8])}"
+            if targeted_prev_val.strip():
+                user_payload["avoid_repeating"] = f"Write a completely fresh alternative; do NOT repeat: {targeted_prev_val[:220]}"
+            else:
+                existing_names = [
+                    str(e.get("name"))
+                    for lst in current_contacts.values()
+                    for e in (lst if isinstance(lst, list) else [])
+                    if isinstance(e, dict) and e.get("name")
+                ]
+                if existing_names:
+                    user_payload["avoid_repeating"] = f"Use completely new NPCs and dynamics; do NOT repeat these names: {', '.join(existing_names[:8])}"
 
     else:
         camp_brief = payload.get("campaign") if isinstance(payload.get("campaign"), dict) else {}
@@ -1386,17 +1458,51 @@ async def generate_creation_ai_assist(
             "summary": current.get("summary") or "",
             "opening_scene": current.get("opening_scene") or "",
             "gm_secrets": current.get("gm_secrets") or "",
+            "secret_entries": current.get("secret_entries") or [],
             "beats": current.get("beats") or {},
             "npcs": current.get("npcs") or {},
             "objectives": current.get("objectives") or {},
+            "discoveries": current.get("discoveries") or {},
+            "locations": current.get("locations") or [],
+            "gig": current.get("gig") or {},
             "opening_clock": current.get("opening_clock") or {},
         }
+        targeted_camp_entry: Any = None
         if field is not None:
             if field in _BEAT_KEY_TO_FIELD:
                 beat_key, beat_desc = _BEAT_KEY_TO_FIELD[field]
                 requested_schema = {"beat_chart": {beat_key: beat_desc}}
                 target_label = f"beat_chart.{beat_key}"
                 prev_field_val = (current_draft.get("beats") or {}).get(beat_key, "")
+            elif field in _CAMPAIGN_GIG_FIELDS:
+                gig_key, gig_desc = _CAMPAIGN_GIG_FIELDS[field]
+                requested_schema = {field: gig_desc}
+                target_label = f"gig.{gig_key}"
+                prev_field_val = (current_draft.get("gig") or {}).get(gig_key, "")
+            elif field in _CAMPAIGN_CLOCK_FIELDS:
+                clock_key, clock_desc = _CAMPAIGN_CLOCK_FIELDS[field]
+                requested_schema = {field: clock_desc}
+                target_label = f"opening_clock.{clock_key}"
+                prev_field_val = (current_draft.get("opening_clock") or {}).get(clock_key, "")
+            elif entry_index is not None and sub_field is not None and field in {"npcs", "objectives", "discoveries", "locations", "gm_secrets"}:
+                if field == "locations":
+                    locs_list = current_draft.get("locations") if isinstance(current_draft.get("locations"), list) else []
+                    targeted_camp_entry = locs_list[entry_index] if 0 <= entry_index < len(locs_list) else {}
+                    prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
+                elif field == "gm_secrets":
+                    sec_list = current_draft.get("secret_entries") if isinstance(current_draft.get("secret_entries"), list) else []
+                    targeted_camp_entry = sec_list[entry_index] if 0 <= entry_index < len(sec_list) else {}
+                    prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
+                else:
+                    raw_map = current_draft.get(field)
+                    if isinstance(raw_map, dict):
+                        items = [{"key": k, "val": v} for k, v in raw_map.items()]
+                        targeted_camp_entry = items[entry_index] if 0 <= entry_index < len(items) else {}
+                    elif isinstance(raw_map, list):
+                        targeted_camp_entry = raw_map[entry_index] if 0 <= entry_index < len(raw_map) else {}
+                    prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
+                requested_schema = {"value": f"Concise updated text for '{field}[{entry_index}].{sub_field}'"}
+                target_label = f"{field}[{entry_index}].{sub_field}"
             else:
                 requested_schema = {field: full_schema[field]}
                 target_label = field
@@ -1460,6 +1566,9 @@ async def generate_creation_ai_assist(
             "task": "campaign_setup",
             "mode": mode,
             **({"target_field": field} if field else {}),
+            **({"target_entry_index": entry_index} if entry_index is not None else {}),
+            **({"target_sub_field": sub_field} if sub_field else {}),
+            **({"target_entry": targeted_camp_entry} if targeted_camp_entry is not None else {}),
             "instruction": mode_rule,
             "user_guidance": guidance or "(none)",
             "campaign_seed": effective_seed,
@@ -1581,10 +1690,20 @@ async def generate_creation_ai_assist(
         )
         if field:
             out = {"target": "campaign", "mode": mode, "field": field, "citations": citations}
-            if field in _BEAT_KEY_TO_FIELD:
+            if entry_index is not None and sub_field is not None:
+                out["entry_index"] = entry_index
+                out["sub_field"] = sub_field
+                out["value"] = str(parsed.get("value") or parsed.get(sub_field) or "").strip()
+            elif field in _BEAT_KEY_TO_FIELD:
                 beat_key = _BEAT_KEY_TO_FIELD[field][0]
                 val = str(raw_beats.get(beat_key) or parsed.get(beat_key) or parsed.get(field) or "").strip()
                 out["beat_chart"] = {beat_key: val}
+            elif field in _CAMPAIGN_GIG_FIELDS:
+                gig_key = _CAMPAIGN_GIG_FIELDS[field][0]
+                out[field] = str(parsed.get(field) or raw_gig.get(gig_key) or "").strip()
+            elif field in _CAMPAIGN_CLOCK_FIELDS:
+                clock_key = _CAMPAIGN_CLOCK_FIELDS[field][0]
+                out[field] = str(parsed.get(field) or raw_clock.get(clock_key) or "").strip()
             elif field == "beat_chart":
                 out["beat_chart"] = beat_chart_out
             elif field == "npcs":
@@ -1656,7 +1775,11 @@ async def generate_creation_ai_assist(
             })
     if field:
         out = {"target": "contacts", "mode": mode, "field": field, "citations": citations}
-        if field == "friends":
+        if entry_index is not None and sub_field is not None:
+            out["entry_index"] = entry_index
+            out["sub_field"] = sub_field
+            out["value"] = str(parsed.get("value") or parsed.get(sub_field) or "").strip()
+        elif field == "friends":
             out["friends"] = friends_out
         elif field == "enemies":
             out["enemies"] = enemies_out

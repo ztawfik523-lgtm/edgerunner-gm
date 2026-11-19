@@ -363,6 +363,7 @@ export function CharacterCreatorModal({
 }: CharacterCreatorModalProps) {
   const [refData, setRefData] = useState<CreationReference | null>(null);
   const [loadingRef, setLoadingRef] = useState(false);
+  const roleExtrasRef = useRef<HTMLDivElement | null>(null);
   const [step, setStep] = useState<CreatorStep>("identity");
   const [inspector, setInspector] = useState<InspectorCard>(DEFAULT_INSPECTOR);
   const [busy, setBusy] = useState(false);
@@ -456,7 +457,7 @@ export function CharacterCreatorModal({
   const [traumaHook, setTraumaHook] = useState("");
   const [addictionHook, setAddictionHook] = useState("");
   const [debtHook, setDebtHook] = useState("");
-  const [showRepHooks, setShowRepHooks] = useState(false);
+  const [showRepHooks, setShowRepHooks] = useState(true);
   const [ammoCaliber, setAmmoCaliber] = useState("");
   const [aiBioGuidance, setAiBioGuidance] = useState("");
   const [aiContactsGuidance, setAiContactsGuidance] = useState("");
@@ -1558,15 +1559,24 @@ export function CharacterCreatorModal({
 
   const aiBusy = aiBusyKey !== null;
 
-  const handleAiAssist = async (target: "bio" | "contacts", assistMode: "scratch" | "expand", field?: string) => {
+  const handleAiAssist = async (
+    target: "bio" | "contacts",
+    assistMode: "scratch" | "expand",
+    field?: string,
+    entryIndex?: number,
+    subField?: string,
+  ) => {
     if (aiBusy) return;
     setAiError("");
-    setAiBusyKey(`${target}:${assistMode}:${field ?? "all"}`);
+    const busySuffix = entryIndex !== undefined && subField ? `${field ?? "all"}:${entryIndex}:${subField}` : (field ?? "all");
+    setAiBusyKey(`${target}:${assistMode}:${busySuffix}`);
     try {
       const res = await assistCharacterCreation({
         target,
         mode: assistMode,
         ...(field ? { field } : {}),
+        ...(entryIndex !== undefined ? { entry_index: entryIndex } : {}),
+        ...(subField ? { sub_field: subField } : {}),
         guidance: (target === "bio" ? aiBioGuidance : aiContactsGuidance).trim() || undefined,
         character: {
           name: name.trim() || realName.trim() || "Unnamed Edgerunner",
@@ -1608,6 +1618,10 @@ export function CharacterCreatorModal({
           summary: backstorySummary.trim() || undefined,
           established_history: establishedHistory.trim() || undefined,
           appearance: appearanceNotes.trim() || undefined,
+          reputation_note: reputationNote.trim() || undefined,
+          trauma_hook: traumaHook.trim() || undefined,
+          addiction_hook: addictionHook.trim() || undefined,
+          debt_hook: debtHook.trim() || undefined,
           friends,
           enemies,
           tragic_love_affairs: loveAffairs,
@@ -1618,6 +1632,10 @@ export function CharacterCreatorModal({
         if ((!field || field === "summary") && res.summary) setBackstorySummary(res.summary);
         if ((!field || field === "established_history") && res.established_history) setEstablishedHistory(res.established_history);
         if ((!field || field === "appearance") && res.appearance) setAppearanceNotes(res.appearance);
+        if ((!field || field === "reputation_note") && res.reputation_note) setReputationNote(res.reputation_note);
+        if ((!field || field === "trauma_hook") && res.trauma_hook) setTraumaHook(res.trauma_hook);
+        if ((!field || field === "addiction_hook") && res.addiction_hook) setAddictionHook(res.addiction_hook);
+        if ((!field || field === "debt_hook") && res.debt_hook) setDebtHook(res.debt_hook);
         const label =
           field === "concept"
             ? "Concept"
@@ -1627,30 +1645,44 @@ export function CharacterCreatorModal({
                 ? "Established History"
                 : field === "appearance"
                   ? "Signature Look"
-                  : "backstory & history";
-        onNotify(assistMode === "scratch" ? "AI generated backstory & established history from sheet + Corebook." : `AI improved your ${label}.`);
+                  : field
+                    ? field.replace(/_/g, " ")
+                    : "backstory & history";
+        onNotify(assistMode === "scratch" ? `AI generated ${label}.` : `AI improved your ${label}.`);
       } else {
-        if ((!field || field === "friends") && res.friends?.length) setFriends(res.friends);
-        if ((!field || field === "enemies") && res.enemies?.length) {
-          setEnemies(
-            res.enemies.map((e) => ({
-              who: e.who,
-              name: e.name,
-              wronged: e.wronged === "I wronged them" ? "I wronged them" : "They wronged me",
-              cause: e.cause,
-              backup: e.backup,
-              revenge: e.revenge,
-            })),
+        if (entryIndex !== undefined && subField && res.value !== undefined) {
+          const val = res.value;
+          if (field === "friends") {
+            setFriends((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "enemies") {
+            setEnemies((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "tragic_love_affairs") {
+            setLoveAffairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          }
+          onNotify(assistMode === "scratch" ? `AI regenerated ${subField.replace(/_/g, " ")}.` : `AI improved ${subField.replace(/_/g, " ")}.`);
+        } else {
+          if ((!field || field === "friends") && res.friends?.length) setFriends(res.friends);
+          if ((!field || field === "enemies") && res.enemies?.length) {
+            setEnemies(
+              res.enemies.map((e) => ({
+                who: e.who,
+                name: e.name,
+                wronged: e.wronged === "I wronged them" ? "I wronged them" : "They wronged me",
+                cause: e.cause,
+                backup: e.backup,
+                revenge: e.revenge,
+              })),
+            );
+          }
+          if ((!field || field === "tragic_love_affairs") && res.tragic_love_affairs?.length) {
+            setLoveAffairs(res.tragic_love_affairs);
+          }
+          onNotify(
+            assistMode === "scratch"
+              ? "AI generated Friends, Enemies & Past Romances."
+              : `AI improved your ${field ? field.replace(/_/g, " ") : "Contacts"}.`,
           );
         }
-        if ((!field || field === "tragic_love_affairs") && res.tragic_love_affairs?.length) {
-          setLoveAffairs(res.tragic_love_affairs);
-        }
-        onNotify(
-          assistMode === "scratch"
-            ? "AI generated Friends, Enemies & Past Romances."
-            : `AI improved your ${field ? field.replace(/_/g, " ") : "Contacts"}.`,
-        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "AI assist failed";
@@ -2110,12 +2142,14 @@ export function CharacterCreatorModal({
 
   const currentStepIdx = STEPS.findIndex((s) => s.id === step);
 
-  const busyFor = (target: "bio" | "contacts", field: string): "improve" | "regen" | null =>
-    aiBusyKey === `${target}:expand:${field}`
+  const busyFor = (target: "bio" | "contacts", field: string, entryIndex?: number, subField?: string): "improve" | "regen" | null => {
+    const suffix = entryIndex !== undefined && subField ? `${field}:${entryIndex}:${subField}` : field;
+    return aiBusyKey === `${target}:expand:${suffix}`
       ? "improve"
-      : aiBusyKey === `${target}:scratch:${field}`
+      : aiBusyKey === `${target}:scratch:${suffix}`
         ? "regen"
         : null;
+  };
 
   const modalNode = (
     <div
@@ -2379,17 +2413,21 @@ export function CharacterCreatorModal({
                         );
                       })}
                       <label
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-200 hover:border-cyan-400"
+                        className="relative inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400"
                         style={isHexColor(characterColor) ? resolveCharacterColor(characterColor).nameBadgeStyle : undefined}
                       >
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full border border-white/25"
+                          style={{ backgroundColor: normalizeColorHex(characterColor) }}
+                        />
                         <input
                           type="color"
                           aria-label="Custom chat color wheel"
                           value={normalizeColorHex(characterColor)}
                           onChange={(e) => setCharacterColor(e.target.value)}
-                          className="h-3.5 w-4 cursor-pointer border-0 bg-transparent p-0"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                         />
-                        <span>{isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}</span>
+                        <span className="font-mono">{isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}</span>
                       </label>
                     </div>
                   </div>
@@ -2478,15 +2516,27 @@ export function CharacterCreatorModal({
 
                 {/* All 10 Roles Grid */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Choose Your Role (Starts at Rank 4)
                     </span>
-                    <span className="text-[11px] text-slate-400">Hover or select for Role Ability info</span>
+                    <div className="flex items-center gap-2">
+                      {["Tech", "Medtech", "Fixer", "Nomad", "Exec"].includes(selectedRole) && (
+                        <button
+                          type="button"
+                          onClick={() => roleExtrasRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
+                          className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+                        >
+                          Configure {selectedRole} Options ↓
+                        </button>
+                      )}
+                      <span className="text-[11px] text-slate-400">Hover or select for Role Ability info</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {(refData?.roles ?? []).map((role) => {
                       const active = selectedRole === role.name;
+                      const hasRoleExtras = ["Tech", "Medtech", "Fixer", "Nomad", "Exec"].includes(role.name);
                       return (
                         <button
                           key={role.name}
@@ -2507,8 +2557,15 @@ export function CharacterCreatorModal({
                               tip: role.best_for,
                             })
                           }
-                          onClick={() => setSelectedRole(role.name)}
-                          className={`rounded-lg border p-2.5 text-left transition ${
+                          onClick={() => {
+                            setSelectedRole(role.name);
+                            if (hasRoleExtras) {
+                              window.setTimeout(() => {
+                                roleExtrasRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                              }, 40);
+                            }
+                          }}
+                          className={`rounded-lg border p-2 text-left transition ${
                             active
                               ? "border-rose-500/80 bg-rose-500/10"
                               : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
@@ -2516,11 +2573,18 @@ export function CharacterCreatorModal({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-bold text-slate-100">{role.name}</span>
-                            <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                              {role.ability}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              {hasRoleExtras && (
+                                <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 font-mono text-[9px] text-amber-200">
+                                  Role Options
+                                </span>
+                              )}
+                              <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                                {role.ability}
+                              </span>
+                            </div>
                           </div>
-                          <p className="mt-1 text-[11px] text-slate-400">{role.tagline}</p>
+                          <p className="mt-0.5 text-[11px] text-slate-400">{role.tagline}</p>
                         </button>
                       );
                     })}
@@ -2528,6 +2592,7 @@ export function CharacterCreatorModal({
                 </div>
 
                 {/* Role-Specific Ability Choices */}
+                <div ref={roleExtrasRef} className="space-y-2">
                 {selectedRole === "Tech" && (
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -2724,6 +2789,7 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             )}
 
@@ -2942,15 +3008,15 @@ export function CharacterCreatorModal({
                 </div>
 
                 {/* Native Cultural Language (+4 FREE!) & Choice Specializations */}
-                <div className="grid grid-cols-1 gap-2 rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3 sm:grid-cols-3">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold text-cyan-200">
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-500/30 bg-cyan-950/15 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
                       Free +4 Cultural Native Language
                     </label>
                     <select
                       value={culturalLanguage}
                       onChange={(e) => setCulturalLanguage(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                     >
                       {Array.from(
                         new Set(
@@ -2961,9 +3027,9 @@ export function CharacterCreatorModal({
                       ))}
                     </select>
                     {culturalLanguageOverlap && (
-                      <p className="mt-1 text-[10px] text-amber-300">
+                      <span className="text-[10px] text-amber-300">
                         Overlaps a paid skill above—pick another tongue (e.g. Spanish/Japanese) to avoid a stacking ruling.
-                      </p>
+                      </span>
                     )}
                   </div>
                   {(() => {
@@ -2978,14 +3044,14 @@ export function CharacterCreatorModal({
                       }),
                     );
                     return bases.map((specBase) => (
-                      <div key={specBase}>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                      <div key={specBase} className="flex items-center gap-2">
+                        <label className="text-[11px] font-semibold text-slate-300 whitespace-nowrap">
                           {specBase} Specialization
                         </label>
                         <select
                           value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
                           onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                         >
                           {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
@@ -3601,37 +3667,60 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-emerald-300">Friends ({friends.length})</span>
-                        <FieldAiActions
-                          label="Friends"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "friends")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "friends")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "friends")}
-                        />
                       </div>
                       {friends.map((fr, idx) => (
                         <div key={idx} className="grid grid-cols-1 gap-2 rounded border border-emerald-500/30 bg-emerald-950/15 p-2.5 sm:grid-cols-12">
-                          <input
-                            type="text"
-                            value={fr.name}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                            placeholder="Friend name"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-3"
-                          />
-                          <input
-                            type="text"
-                            value={fr.relationship}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, relationship: e.target.value } : x)))}
-                            placeholder="Relationship"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-4"
-                          />
-                          <input
-                            type="text"
-                            value={fr.note}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))}
-                            placeholder="Shared history / favor"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-4"
-                          />
+                          <div className="flex items-center gap-1 sm:col-span-3">
+                            <input
+                              type="text"
+                              value={fr.name}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                              placeholder="Friend name"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              compact
+                              label={`Friend ${idx + 1} Name`}
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "name")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "name")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "name")}
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 sm:col-span-4">
+                            <input
+                              type="text"
+                              value={fr.relationship}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, relationship: e.target.value } : x)))}
+                              placeholder="Relationship"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              compact
+                              label={`Friend ${idx + 1} Relationship`}
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "relationship")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "relationship")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "relationship")}
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 sm:col-span-4">
+                            <input
+                              type="text"
+                              value={fr.note}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))}
+                              placeholder="Shared history / favor"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              compact
+                              label={`Friend ${idx + 1} Note`}
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "note")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "note")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "note")}
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => setFriends((p) => p.filter((_, i) => i !== idx))}
@@ -3648,31 +3737,44 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-rose-300">Enemies ({enemies.length})</span>
-                        <FieldAiActions
-                          label="Enemies"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "enemies")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "enemies")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "enemies")}
-                        />
                       </div>
                       {enemies.map((en, idx) => (
                         <div key={idx} className="space-y-1.5 rounded border border-rose-500/30 bg-rose-950/15 p-2.5 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              type="text"
-                              value={en.name}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                              placeholder="Enemy name"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                            />
-                            <input
-                              type="text"
-                              value={en.who}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, who: e.target.value } : x)))}
-                              placeholder="Who they are"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.name}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                                placeholder="Enemy name"
+                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              />
+                              <FieldAiActions
+                                compact
+                                label={`Enemy ${idx + 1} Name`}
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "name")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "name")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "name")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.who}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, who: e.target.value } : x)))}
+                                placeholder="Who they are"
+                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              />
+                              <FieldAiActions
+                                compact
+                                label={`Enemy ${idx + 1} Archetype`}
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "who")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "who")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "who")}
+                              />
+                            </div>
                             <select
                               value={en.wronged}
                               onChange={(e) =>
@@ -3694,27 +3796,57 @@ export function CharacterCreatorModal({
                             </button>
                           </div>
                           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                            <input
-                              type="text"
-                              value={en.cause}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, cause: e.target.value } : x)))}
-                              placeholder="What caused it"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
-                            <input
-                              type="text"
-                              value={en.backup}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, backup: e.target.value } : x)))}
-                              placeholder="What they can throw at you"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
-                            <input
-                              type="text"
-                              value={en.revenge}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, revenge: e.target.value } : x)))}
-                              placeholder="Sweet revenge"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.cause}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, cause: e.target.value } : x)))}
+                                placeholder="What caused it"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                compact
+                                label={`Enemy ${idx + 1} Cause`}
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "cause")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "cause")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "cause")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.backup}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, backup: e.target.value } : x)))}
+                                placeholder="What they can throw at you"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                compact
+                                label={`Enemy ${idx + 1} Backup`}
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "backup")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "backup")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "backup")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.revenge}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, revenge: e.target.value } : x)))}
+                                placeholder="Sweet revenge"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                compact
+                                label={`Enemy ${idx + 1} Revenge`}
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "revenge")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "revenge")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "revenge")}
+                              />
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -3725,30 +3857,43 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-violet-300">Past Romances ({loveAffairs.length})</span>
-                        <FieldAiActions
-                          label="Romances"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "tragic_love_affairs")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs")}
-                        />
                       </div>
                       {loveAffairs.map((lv, idx) => (
                         <div key={idx} className="flex flex-wrap items-center gap-2 rounded border border-violet-500/30 bg-violet-950/15 p-2.5 text-xs">
-                          <input
-                            type="text"
-                            value={lv.name}
-                            onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                            placeholder="Lover's name"
-                            className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
-                          <input
-                            type="text"
-                            value={lv.outcome}
-                            onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, outcome: e.target.value } : x)))}
-                            placeholder="What happened?"
-                            className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={lv.name}
+                              onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                              placeholder="Lover's name"
+                              className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              compact
+                              label={`Romance ${idx + 1} Name`}
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "tragic_love_affairs", idx, "name")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs", idx, "name")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs", idx, "name")}
+                            />
+                          </div>
+                          <div className="flex min-w-[200px] flex-1 items-center gap-1">
+                            <input
+                              type="text"
+                              value={lv.outcome}
+                              onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, outcome: e.target.value } : x)))}
+                              placeholder="What happened?"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              compact
+                              label={`Romance ${idx + 1} Outcome`}
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "tragic_love_affairs", idx, "outcome")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs", idx, "outcome")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs", idx, "outcome")}
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => setLoveAffairs((p) => p.filter((_, i) => i !== idx))}
@@ -3769,7 +3914,7 @@ export function CharacterCreatorModal({
                     onClick={() => setShowRepHooks((v) => !v)}
                     className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-200 hover:text-cyan-200"
                   >
-                    <span>Street Reputation &amp; Starting Hooks (p. 193 · Optional)</span>
+                    <span>Street Reputation &amp; Starting Hooks</span>
                     <span className="font-mono text-[10px] text-cyan-400">{showRepHooks ? "▲ Hide" : "▼ Expand"}</span>
                   </button>
                   {showRepHooks && (
@@ -3789,9 +3934,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Reputation Reason / Word on the Street
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Reputation Reason / Word on the Street
+                          </label>
+                          <FieldAiActions
+                            compact
+                            label="Reputation Reason"
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "reputation_note")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "reputation_note")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "reputation_note")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={reputationNote}
@@ -3801,9 +3956,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Trauma / Cyberpsychosis Scar
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Trauma / Cyberpsychosis Scar
+                          </label>
+                          <FieldAiActions
+                            compact
+                            label="Trauma Hook"
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "trauma_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "trauma_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "trauma_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={traumaHook}
@@ -3813,9 +3978,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Addiction / Vice
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Addiction / Vice
+                          </label>
+                          <FieldAiActions
+                            compact
+                            label="Addiction Hook"
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "addiction_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "addiction_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "addiction_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={addictionHook}
@@ -3825,9 +4000,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Starting Debt / Obligation
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Starting Debt / Obligation
+                          </label>
+                          <FieldAiActions
+                            compact
+                            label="Debt Hook"
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "debt_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "debt_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "debt_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={debtHook}
@@ -3845,6 +4030,86 @@ export function CharacterCreatorModal({
             {/* STEP 5: GEAR, ARMOR & CYBERWARE */}
             {step === "gear" && (
               <div className="space-y-4">
+                {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
+                      Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Month 1 baseline rent paid; monthly upkeep applies from Month 2.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
+                      <select
+                        aria-label="Character Housing"
+                        value={housing}
+                        onChange={(e) => setHousing(e.target.value)}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        {(
+                          refData?.housing_tiers ?? [
+                            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
+                            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
+                            { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
+                            { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
+                            { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
+                            { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
+                            { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
+                            { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
+                            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
+                          ]
+                        )
+                          .filter((h) => !h.exec_only || selectedRole === "Exec")
+                          .map((h) => (
+                            <option key={h.id} value={h.id}>
+                              {h.name} ({h.monthly_eb} eb/mo)
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
+                      <select
+                        aria-label="Character Lifestyle"
+                        value={lifestyle}
+                        onChange={(e) => setLifestyle(e.target.value)}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        {(
+                          refData?.lifestyles ?? [
+                            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
+                            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
+                            { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
+                            { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
+                          ]
+                        ).map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name} ({l.monthly_eb} eb/mo)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
+                      <select
+                        aria-label="Trauma Team Plan"
+                        value={traumaTeam}
+                        onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      >
+                        <option value="None">None (0 eb/mo)</option>
+                        <option value="Silver">
+                          Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
+                        </option>
+                        <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
                 {(method === "streetrat" || method === "edgerunner") && roleInfo ? (
                   <div className="space-y-4">
                     <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 flex flex-wrap items-center justify-between gap-2">
@@ -4747,86 +5012,6 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
                 )}
-
-                {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
-                      Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      Month 1 baseline rent paid; monthly upkeep applies from Month 2.
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
-                      <select
-                        aria-label="Character Housing"
-                        value={housing}
-                        onChange={(e) => setHousing(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        {(
-                          refData?.housing_tiers ?? [
-                            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
-                            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
-                            { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
-                            { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
-                            { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
-                            { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
-                            { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
-                            { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
-                            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
-                          ]
-                        )
-                          .filter((h) => !h.exec_only || selectedRole === "Exec")
-                          .map((h) => (
-                            <option key={h.id} value={h.id}>
-                              {h.name} ({h.monthly_eb} eb/mo)
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
-                      <select
-                        aria-label="Character Lifestyle"
-                        value={lifestyle}
-                        onChange={(e) => setLifestyle(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        {(
-                          refData?.lifestyles ?? [
-                            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
-                            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
-                            { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
-                            { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
-                          ]
-                        ).map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.name} ({l.monthly_eb} eb/mo)
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
-                      <select
-                        aria-label="Trauma Team Plan"
-                        value={traumaTeam}
-                        onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        <option value="None">None (0 eb/mo)</option>
-                        <option value="Silver">
-                          Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
-                        </option>
-                        <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
