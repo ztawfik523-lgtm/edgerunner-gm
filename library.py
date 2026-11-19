@@ -210,9 +210,20 @@ def _extract_skill_entries(
     return entries
 
 
+def _parse_hl_int(raw: Any) -> int:
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return max(0, raw)
+    if isinstance(raw, str):
+        m = re.match(r"^\s*(\d+)", raw.strip())
+        if m:
+            return int(m.group(1))
+    return 0
+
+
 def _parse_item_stats(headers: list[str], cells: list[str], cost_eb: int) -> tuple[dict[str, Any], list[str]]:
     stats: dict[str, Any] = {"cost_eb": cost_eb}
     notes: list[str] = []
+    skip_cols = (sourcecatalog._NAME_HEADER_KEYS | sourcecatalog._COST_HEADER_KEYS) - {"style", "garment"}
     for idx, header in enumerate(headers):
         if idx >= len(cells):
             break
@@ -220,9 +231,13 @@ def _parse_item_stats(headers: list[str], cells: list[str], cost_eb: int) -> tup
         if not val:
             continue
         norm_h = re.sub(r"[^a-z]", "", header.casefold())
-        if norm_h in {"name", "item", "weaponname", "cyberwarename", "weapontype", "meleeweapontype", "armortype", "cost", "price", "costeb", "priceeb"}:
+        if norm_h in skip_cols:
+            if norm_h in {"rent", "renteb", "rentebmo", "monthlyeb"}:
+                parsed_rent = sourcecatalog._cost(val, allow_bare_int=True)
+                if parsed_rent is not None:
+                    stats["rent_eb_mo"] = parsed_rent
             continue
-        if norm_h in {"description", "notes", "effect", "data", "details", "examples"}:
+        if norm_h in {"description", "notes", "effect", "data", "details", "examples", "summary"}:
             notes.append(val)
             continue
         if norm_h in {"dmg", "damage"}:
@@ -235,6 +250,7 @@ def _parse_item_stats(headers: list[str], cells: list[str], cost_eb: int) -> tup
             stats["armor_penalty"] = int(val) if re.fullmatch(r"-?\d+", val) else val
         elif norm_h in {"hl", "humanityloss"}:
             stats["humanity_loss"] = int(val) if val.isdigit() else val
+            stats["hl"] = _parse_hl_int(val)
         elif norm_h in {"install", "installation"}:
             stats["install"] = val
         elif norm_h in {"skill", "weaponskill"}:
@@ -244,9 +260,20 @@ def _parse_item_stats(headers: list[str], cells: list[str], cost_eb: int) -> tup
         elif norm_h in {"hands", "handsrequired"}:
             stats["hands"] = int(val) if val.isdigit() else val
         elif norm_h in {"concealable", "conceal", "concealability"}:
-            stats["concealable"] = val
-        elif norm_h in {"atk", "per", "def", "spd", "rez", "class"}:
-            stats[norm_h] = int(val) if re.fullmatch(r"-?\d+", val) else val
+            low = val.casefold()
+            stats["concealable"] = True if low in {"yes", "true", "y"} else (False if low in {"no", "false", "n"} else val)
+        elif norm_h in {"buy", "buyeb"}:
+            parsed_buy = sourcecatalog._cost(val, allow_bare_int=True)
+            stats["buy_eb"] = parsed_buy if parsed_buy is not None else val
+        elif norm_h in {"atk", "per", "def", "spd", "rez", "class", "sdp", "seats", "interface", "netactions", "combatnumber", "ablation", "resistdv", "bodyreq", "slots", "slotsrequired"}:
+            key_map = {
+                "netactions": "net_actions",
+                "combatnumber": "combat_number",
+                "resistdv": "resist_dv",
+                "bodyreq": "body_req",
+            }
+            out_key = key_map.get(norm_h, norm_h)
+            stats[out_key] = int(val) if re.fullmatch(r"-?\d+", val) else val
         else:
             key = re.sub(r"[^a-z0-9]+", "_", header.strip().casefold()).strip("_")
             if key:
@@ -272,7 +299,7 @@ def _extract_item_entries(
                 continue
             header_index = next(
                 (i for i, r in enumerate(rows)
-                 if any(re.sub(r"[^a-z]", "", c.casefold()) in {"cost", "price", "costeb", "priceeb"} for c in r)),
+                 if any(re.sub(r"[^a-z]", "", c.casefold()) in sourcecatalog._COST_HEADER_KEYS for c in r)),
                 None,
             )
             if header_index is None:
@@ -280,22 +307,22 @@ def _extract_item_entries(
             headers = rows[header_index]
             norm_headers = [re.sub(r"[^a-z]", "", h.casefold()) for h in headers]
             name_col = next(
-                (i for i, h in enumerate(norm_headers)
-                 if h in {"name", "item", "weaponname", "cyberwarename", "weapontype", "meleeweapontype", "armortype"}),
+                (i for i, h in enumerate(norm_headers) if h in sourcecatalog._NAME_HEADER_KEYS),
                 None,
             )
             cost_col = next(
-                (i for i, h in enumerate(norm_headers) if h in {"cost", "price", "costeb", "priceeb"}),
+                (i for i, h in enumerate(norm_headers) if h in sourcecatalog._COST_HEADER_KEYS),
                 None,
             )
             if name_col is None or cost_col is None:
                 continue
+            allow_bare = norm_headers[cost_col] in sourcecatalog._EB_HEADER_KEYS
             category = sourcecatalog._category(headers)
             for row_no, cells in enumerate(rows[header_index + 1:], header_index + 1):
                 if max(name_col, cost_col) >= len(cells):
                     continue
                 name = cells[name_col].strip()
-                cost_eb = sourcecatalog._cost(cells[cost_col])
+                cost_eb = sourcecatalog._cost(cells[cost_col], allow_bare_int=allow_bare)
                 if not name or cost_eb is None:
                     continue
                 stats, notes = _parse_item_stats(headers, cells, cost_eb)
@@ -309,6 +336,9 @@ def _extract_item_entries(
                 base_id = f"corebook:{category}:{_slug(name)}"
                 entry_id = base_id if base_id not in used_ids else f"{base_id}-p{pdf_page}-t{table_no}-r{row_no}"
                 used_ids.add(entry_id)
+                tags = [category, f"{cost_eb}eb"]
+                if "lifestyle" in " ".join(norm_headers) or name.casefold().startswith("lifestyle:"):
+                    tags.append("lifestyle")
                 entries.append(
                     {
                         "id": entry_id,
@@ -319,13 +349,303 @@ def _extract_item_entries(
                         "summary": _summarize(desc),
                         "description": desc,
                         "stats": stats,
-                        "tags": [category, f"{cost_eb}eb"],
+                        "tags": tags,
                         "pdf_page": pdf_page,
                         "printed_page": printed,
                         "section_id": None,
                         "source_sha256": digest,
                     }
                 )
+    return entries
+
+
+_LIFEPATH_TABLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "personality": ("personality",),
+    "clothing_style": ("clothing style", "clothing"),
+    "hairstyle": ("hairstyle", "hair style"),
+    "affectation": ("affectation", "affectations"),
+    "value_most": ("what do you value most", "value most"),
+    "feelings_about_people": ("how do you feel about most people", "feelings about people"),
+    "valued_person": ("most valued person", "valued person"),
+    "valued_possession": ("most valued possession", "valued possession"),
+    "original_background": ("original background", "family background"),
+    "childhood_environment": ("childhood environment",),
+    "family_crisis": ("family crisis",),
+    "life_goals": ("life goals",),
+    "friend_relationship": ("friend relationship", "friends", "who is this friend"),
+    "enemy_who": ("enemy who", "who is this enemy"),
+    "enemy_cause": ("enemy cause", "what caused it"),
+    "enemy_backup": ("enemy backup", "what can they throw at you"),
+    "sweet_revenge": ("sweet revenge", "what are you gonna do"),
+    "tragic_love": ("tragic love", "tragic love affairs"),
+}
+
+
+def _match_lifepath_key(label: str) -> str | None:
+    low = re.sub(r"[^a-z0-9 ]+", " ", label.casefold()).strip()
+    for key, aliases in _LIFEPATH_TABLE_ALIASES.items():
+        if any(alias in low for alias in aliases):
+            return key
+    return None
+
+
+def _extract_structured_table_entries(
+    conn: sqlite3.Connection, pages: list[sqlite3.Row], digest: str
+) -> list[dict[str, Any]]:
+    stored: dict[int, list[list[list[str]]]] = {}
+    if _table_exists(conn, "source_tables"):
+        for row in conn.execute("SELECT pdf_page,ordinal,cells_json FROM source_tables ORDER BY pdf_page,ordinal"):
+            stored.setdefault(int(row["pdf_page"]), []).append(sourcecatalog._cell_rows(row["cells_json"]))
+
+    entries: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for page in pages:
+        printed = sourcecatalog._page_number(page)
+        pdf_page = int(page["pdf_page"])
+        page_lines = [ln.strip() for ln in str(page["text"]).splitlines() if ln.strip()]
+        page_heading = page_lines[1] if len(page_lines) > 1 and page_lines[0].isdigit() else (page_lines[0] if page_lines else "")
+
+        for table_no, rows in enumerate(sourcecatalog._tables_for_page(page, stored.get(pdf_page, [])), 1):
+            if len(rows) < 2:
+                continue
+            headers = rows[0]
+            norm_headers = [re.sub(r"[^a-z0-9]", "", h.casefold()) for h in headers]
+
+            # 1. Cultural Regions table
+            if "region" in norm_headers and any("language" in h for h in norm_headers):
+                reg_col = norm_headers.index("region")
+                lang_col = next(i for i, h in enumerate(norm_headers) if "language" in h)
+                regions = []
+                for cells in rows[1:]:
+                    if max(reg_col, lang_col) >= len(cells):
+                        continue
+                    reg = cells[reg_col].strip()
+                    langs = [x.strip() for x in re.split(r"[,;/]", cells[lang_col]) if x.strip()]
+                    if reg and langs:
+                        regions.append({"region": reg, "languages": langs})
+                if regions:
+                    entries.append({
+                        "id": f"corebook:rule:lifepath-cultural-regions-p{pdf_page}-t{table_no}",
+                        "name": "Cultural Regions",
+                        "norm_name": "cultural regions",
+                        "category": "rule",
+                        "source": "corebook",
+                        "summary": f"Cultural regions and languages ({len(regions)} regions).",
+                        "description": ", ".join(r["region"] for r in regions),
+                        "stats": {"table_key": "cultural_regions", "regions": regions},
+                        "tags": ["rule", "lifepath", "cultural_regions"],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            # 2. Districts / Locations table
+            if any(h in {"district", "districtname", "sector", "location"} for h in norm_headers):
+                d_col = next(i for i, h in enumerate(norm_headers) if h in {"district", "districtname", "sector", "location"})
+                zt_col = next((i for i, h in enumerate(norm_headers) if h in {"zonetype", "zone"}), None)
+                tr_col = next((i for i, h in enumerate(norm_headers) if h in {"threatrating", "threat"}), None)
+                sum_col = next((i for i, h in enumerate(norm_headers) if h in {"summary", "description", "notes"}), None)
+                for row_no, cells in enumerate(rows[1:], 1):
+                    if d_col >= len(cells) or not cells[d_col].strip():
+                        continue
+                    name = cells[d_col].strip()
+                    zt = cells[zt_col].strip() if zt_col is not None and zt_col < len(cells) else ""
+                    tr = cells[tr_col].strip() if tr_col is not None and tr_col < len(cells) else ""
+                    desc = cells[sum_col].strip() if sum_col is not None and sum_col < len(cells) else f"{name} ({zt or 'District'})."
+                    eid = f"corebook:location:{_slug(name)}"
+                    if eid in used_ids:
+                        eid = f"{eid}-p{pdf_page}-r{row_no}"
+                    used_ids.add(eid)
+                    entries.append({
+                        "id": eid,
+                        "name": name,
+                        "norm_name": sourcecatalog._normalize(name),
+                        "category": "location",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"zone_type": zt, "threat_rating": tr},
+                        "tags": ["location", "district"] + ([_slug(zt)] if zt else []),
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            # 3. Factions table
+            if any(h in {"faction", "factionname", "corporation", "gang", "organization"} for h in norm_headers):
+                f_col = next(i for i, h in enumerate(norm_headers) if h in {"faction", "factionname", "corporation", "gang", "organization"})
+                t_col = next((i for i, h in enumerate(norm_headers) if h in {"type", "factiontype", "kind", "category"}), None)
+                sum_col = next((i for i, h in enumerate(norm_headers) if h in {"summary", "description", "notes"}), None)
+                for row_no, cells in enumerate(rows[1:], 1):
+                    if f_col >= len(cells) or not cells[f_col].strip():
+                        continue
+                    name = cells[f_col].strip()
+                    ftype = cells[t_col].strip() if t_col is not None and t_col < len(cells) else "Faction"
+                    desc = cells[sum_col].strip() if sum_col is not None and sum_col < len(cells) else f"{name} ({ftype})."
+                    eid = f"corebook:faction:{_slug(name)}"
+                    if eid in used_ids:
+                        eid = f"{eid}-p{pdf_page}-r{row_no}"
+                    used_ids.add(eid)
+                    entries.append({
+                        "id": eid,
+                        "name": name,
+                        "norm_name": sourcecatalog._normalize(name),
+                        "category": "faction",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"type": ftype},
+                        "tags": ["faction", _slug(ftype)],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            # 4. Zone Types / Threat Ratings / Caper Styles / Screamsheets
+            if "zonetype" in norm_headers and any(h in {"summary", "description"} for h in norm_headers):
+                zt_col = norm_headers.index("zonetype")
+                sum_col = next(i for i, h in enumerate(norm_headers) if h in {"summary", "description"})
+                for row_no, cells in enumerate(rows[1:], 1):
+                    if max(zt_col, sum_col) >= len(cells) or not cells[zt_col].strip():
+                        continue
+                    name = cells[zt_col].strip()
+                    desc = cells[sum_col].strip()
+                    entries.append({
+                        "id": f"corebook:rule:zone-type-{_slug(name)}-p{pdf_page}-r{row_no}",
+                        "name": name,
+                        "norm_name": sourcecatalog._normalize(name),
+                        "category": "rule",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"zone_type": name},
+                        "tags": ["rule", "zone-type"],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            if "threatrating" in norm_headers and any(h in {"summary", "description", "ncpdresponse"} for h in norm_headers):
+                tr_col = norm_headers.index("threatrating")
+                resp_col = next((i for i, h in enumerate(norm_headers) if h in {"ncpdresponse", "response"}), None)
+                sum_col = next((i for i, h in enumerate(norm_headers) if h in {"summary", "description"}), None)
+                for row_no, cells in enumerate(rows[1:], 1):
+                    if tr_col >= len(cells) or not cells[tr_col].strip():
+                        continue
+                    name = cells[tr_col].strip()
+                    resp = cells[resp_col].strip() if resp_col is not None and resp_col < len(cells) else ""
+                    desc = cells[sum_col].strip() if sum_col is not None and sum_col < len(cells) else resp
+                    entries.append({
+                        "id": f"corebook:rule:threat-rating-{_slug(name)}-p{pdf_page}-r{row_no}",
+                        "name": name,
+                        "norm_name": sourcecatalog._normalize(name),
+                        "category": "rule",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"threat_rating": name, "ncpd_response": resp},
+                        "tags": ["rule", "threat-rating"],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            if any(h in {"caperstyle", "caper"} for h in norm_headers) or ({"hook", "climax", "resolution"} <= set(norm_headers)):
+                name_col = next((i for i, h in enumerate(norm_headers) if h in {"caperstyle", "caper", "name", "title"}), None)
+                sum_col = next((i for i, h in enumerate(norm_headers) if h in {"summary", "description"}), None)
+                beat_cols = {b: norm_headers.index(b) for b in ("hook", "developments", "cliffhanger", "climax", "resolution") if b in norm_headers}
+                for row_no, cells in enumerate(rows[1:], 1):
+                    name = cells[name_col].strip() if name_col is not None and name_col < len(cells) else f"Caper Style {row_no}"
+                    if not name:
+                        continue
+                    beats = {b: cells[idx].strip() for b, idx in beat_cols.items() if idx < len(cells) and cells[idx].strip()}
+                    desc = cells[sum_col].strip() if sum_col is not None and sum_col < len(cells) else "; ".join(f"{k}: {v}" for k, v in beats.items())
+                    entries.append({
+                        "id": f"corebook:rule:caper-{_slug(name)}-p{pdf_page}-r{row_no}",
+                        "name": name,
+                        "norm_name": sourcecatalog._normalize(name),
+                        "category": "rule",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"caper_id": _slug(name), "default_beats": beats},
+                        "tags": ["rule", "caper-style", "beat-chart"],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            if "headline" in norm_headers:
+                hl_col = norm_headers.index("headline")
+                dist_col = next((i for i, h in enumerate(norm_headers) if h in {"district", "location"}), None)
+                fac_col = next((i for i, h in enumerate(norm_headers) if h in {"factions", "faction"}), None)
+                pay_col = next((i for i, h in enumerate(norm_headers) if h in {"payout", "payouteb", "reward"}), None)
+                sum_col = next((i for i, h in enumerate(norm_headers) if h in {"summary", "hook", "description"}), None)
+                for row_no, cells in enumerate(rows[1:], 1):
+                    if hl_col >= len(cells) or not cells[hl_col].strip():
+                        continue
+                    headline = cells[hl_col].strip()
+                    dist = cells[dist_col].strip() if dist_col is not None and dist_col < len(cells) else ""
+                    facs = [x.strip() for x in re.split(r"[,;/]", cells[fac_col]) if x.strip()] if fac_col is not None and fac_col < len(cells) else []
+                    pay = sourcecatalog._cost(cells[pay_col], allow_bare_int=True) if pay_col is not None and pay_col < len(cells) else None
+                    desc = cells[sum_col].strip() if sum_col is not None and sum_col < len(cells) else headline
+                    entries.append({
+                        "id": f"corebook:screamsheet:{_slug(headline)}-p{pdf_page}-r{row_no}",
+                        "name": headline,
+                        "norm_name": sourcecatalog._normalize(headline),
+                        "category": "screamsheet",
+                        "source": "corebook",
+                        "summary": _summarize(desc),
+                        "description": desc,
+                        "stats": {"headline": headline, "district": dist, "factions": facs, "payout_eb": pay or 0},
+                        "tags": ["screamsheet"],
+                        "pdf_page": pdf_page,
+                        "printed_page": printed,
+                        "section_id": None,
+                        "source_sha256": digest,
+                    })
+                continue
+
+            # 5. Rollable Lifepath tables
+            roll_col = next((i for i, h in enumerate(norm_headers) if h in {"roll", "d10", "1d10", "d6", "1d6"}), None)
+            if roll_col is not None and len(headers) >= 2:
+                val_col = next((i for i in range(len(headers)) if i != roll_col), None)
+                if val_col is not None:
+                    lp_key = _match_lifepath_key(headers[val_col]) or _match_lifepath_key(page_heading)
+                    if lp_key:
+                        options = [
+                            cells[val_col].strip()
+                            for cells in rows[1:]
+                            if val_col < len(cells) and cells[val_col].strip()
+                        ]
+                        if options:
+                            entries.append({
+                                "id": f"corebook:rule:lifepath-{lp_key}-p{pdf_page}-t{table_no}",
+                                "name": f"Lifepath: {headers[val_col].strip()}",
+                                "norm_name": sourcecatalog._normalize(f"lifepath {lp_key}"),
+                                "category": "rule",
+                                "source": "corebook",
+                                "summary": f"Lifepath table {lp_key} ({len(options)} entries).",
+                                "description": "; ".join(options[:6]),
+                                "stats": {"table_key": lp_key, "options": options},
+                                "tags": ["rule", "lifepath", lp_key],
+                                "pdf_page": pdf_page,
+                                "printed_page": printed,
+                                "section_id": None,
+                                "source_sha256": digest,
+                            })
     return entries
 
 
@@ -345,18 +665,30 @@ def _extract_section_entries(
         start_pdf = int(row["start_pdf"])
         end_pdf = int(row["end_pdf"])
         printed_start = row["printed_start"]
-        page_row = pages_by_pdf.get(start_pdf)
-        excerpt = ""
-        if page_row is not None:
-            raw_lines = [
-                ln.strip()
-                for ln in str(page_row["text"]).splitlines()
-                if ln.strip() and not ln.strip().startswith("Supplemental extracted table rows")
-            ]
-            excerpt = _clean_prose(raw_lines[:18])
+        raw_lines: list[str] = []
+        for pno in range(start_pdf, min(end_pdf, start_pdf + 2) + 1):
+            page_row = pages_by_pdf.get(pno)
+            if page_row is not None:
+                raw_lines.extend(
+                    ln.strip()
+                    for ln in str(page_row["text"]).splitlines()
+                    if ln.strip() and not ln.strip().startswith("Supplemental extracted table rows")
+                )
+        excerpt = _clean_prose(raw_lines[:24])
         lower_title = title.casefold()
         is_role = any(re.search(rf"\b{role}\b", lower_title) for role in ROLE_NAMES)
-        category = "role" if is_role else "rule"
+        is_location = any(kw in lower_title for kw in ("district", "combat zone", "hot zone", "corporate center", "executive zone", "moderate zone", "badlands", "open road"))
+        is_faction = any(kw in lower_title for kw in ("faction", "corporation", "megacorp", "gang", "nomad nation"))
+        category = "role" if is_role else ("location" if is_location else ("faction" if is_faction else "rule"))
+        stats: dict[str, Any] = {"start_pdf": start_pdf, "end_pdf": end_pdf}
+        if is_role and raw_lines:
+            joined_raw = "\n".join(raw_lines)
+            m_ability = re.search(r"(?:Role|Special)\s+Ability\s*:\s*([^\n.;]+)", joined_raw, re.I)
+            if m_ability:
+                stats["role_ability"] = m_ability.group(1).strip()
+            m_stats = re.search(r"Key\s+STATs?\s*:\s*([^\n]+)", joined_raw, re.I)
+            if m_stats:
+                stats["key_stats"] = [s.strip().upper() for s in re.split(r"[,/\s]+", m_stats.group(1)) if s.strip().upper() in STAT_NAMES]
         desc = excerpt or f"{title} (pages {start_pdf}–{end_pdf})."
         entries.append(
             {
@@ -367,7 +699,7 @@ def _extract_section_entries(
                 "source": "corebook",
                 "summary": _summarize(desc),
                 "description": desc[:2000],
-                "stats": {"start_pdf": start_pdf, "end_pdf": end_pdf},
+                "stats": stats,
                 "tags": [category, str(row["id"])],
                 "pdf_page": start_pdf,
                 "printed_page": int(printed_start) if printed_start is not None else None,
@@ -394,20 +726,17 @@ def _extract_all_entries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         except ValueError:
             pass
         entries.extend(_extract_item_entries(conn, pages, digest))
+        entries.extend(_extract_structured_table_entries(conn, pages, digest))
         entries.extend(_extract_section_entries(conn, pages_by_pdf, digest))
 
-        import creation_catalog
-
-        seen_pairs = {(e["category"], e["norm_name"]) for e in entries}
-        seen_ids = {e["id"] for e in entries}
-        for cur in creation_catalog.build_library_corebook_entries(digest):
-            pair = (cur["category"], cur["norm_name"])
-            if pair in seen_pairs or cur["id"] in seen_ids:
+        deduped: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for entry in entries:
+            if entry["id"] in seen_ids:
                 continue
-            seen_pairs.add(pair)
-            seen_ids.add(cur["id"])
-            entries.append(cur)
-        return entries
+            seen_ids.add(entry["id"])
+            deduped.append(entry)
+        return deduped
     finally:
         conn.row_factory = old_factory
 
@@ -1148,3 +1477,147 @@ def get_library_entry(
     if campaign_path is not None and campaign_id:
         return CampaignLibrary(campaign_path, rules_path=rules_path).get_entry(campaign_id, entry_id)
     return None
+
+
+def load_corebook_entries(rules_path: str | Path | None) -> list[dict[str, Any]]:
+    """Return all rule_entries from rules.sqlite (or extract on the fly if unmaterialized)."""
+    if rules_path is None:
+        return []
+    resolved = Path(rules_path).expanduser().resolve()
+    if not resolved.is_file():
+        return []
+    conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        has_entries = (
+            _table_exists(conn, "rule_entries")
+            and conn.execute("SELECT 1 FROM rule_entries LIMIT 1").fetchone() is not None
+        )
+        if has_entries:
+            rows = conn.execute("SELECT * FROM rule_entries ORDER BY category, name").fetchall()
+            return [_row_to_entry(r) for r in rows]
+        return _load_corebook_entries(resolved, conn)
+    finally:
+        conn.close()
+
+
+def query_roles_data(rules_path: str | Path | None) -> dict[str, dict[str, Any]]:
+    """Return role summaries/abilities extracted from rules.sqlite keyed by canonical role title."""
+    entries = load_corebook_entries(rules_path)
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if entry.get("category") != "role":
+            continue
+        name = str(entry.get("name") or "").strip()
+        matched_role = next((r.title() for r in ROLE_NAMES if re.search(rf"\b{r}\b", name, re.I)), None)
+        if not matched_role:
+            continue
+        stats = entry.get("stats") if isinstance(entry.get("stats"), dict) else {}
+        out.setdefault(
+            matched_role,
+            {
+                "name": matched_role,
+                "ability": str(stats.get("role_ability") or ""),
+                "ability_summary": str(entry.get("summary") or ""),
+                "description": str(entry.get("description") or ""),
+                "key_stats": list(stats.get("key_stats") or []),
+                "printed_page": entry.get("printed_page"),
+            },
+        )
+    return out
+
+
+def query_lifepath_data(rules_path: str | Path | None) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+    """Return (cultural_regions, lifepath_tables) extracted from rules.sqlite."""
+    entries = load_corebook_entries(rules_path)
+    cultural_regions: list[dict[str, Any]] = []
+    lifepath_tables: dict[str, list[str]] = {}
+    for entry in entries:
+        if entry.get("category") != "rule":
+            continue
+        tags = set(entry.get("tags") or [])
+        if "lifepath" not in tags:
+            continue
+        stats = entry.get("stats") if isinstance(entry.get("stats"), dict) else {}
+        tkey = stats.get("table_key")
+        if tkey == "cultural_regions" and isinstance(stats.get("regions"), list):
+            cultural_regions = list(stats["regions"])
+        elif isinstance(tkey, str) and isinstance(stats.get("options"), list):
+            lifepath_tables[tkey] = [str(opt) for opt in stats["options"] if str(opt).strip()]
+    return cultural_regions, lifepath_tables
+
+
+def query_campaign_presets(rules_path: str | Path | None) -> dict[str, Any]:
+    """Return districts, factions, caper styles, zone types, threat ratings, and screamsheets from rules.sqlite."""
+    entries = load_corebook_entries(rules_path)
+    districts: list[dict[str, Any]] = []
+    factions: list[dict[str, Any]] = []
+    caper_styles: list[dict[str, Any]] = []
+    zone_types: list[dict[str, Any]] = []
+    threat_ratings: list[dict[str, Any]] = []
+    screamsheets: list[dict[str, Any]] = []
+    screamsheet_hooks: list[str] = []
+
+    for entry in entries:
+        cat = entry.get("category")
+        stats = entry.get("stats") if isinstance(entry.get("stats"), dict) else {}
+        tags = set(entry.get("tags") or [])
+        if cat == "location":
+            districts.append({
+                "name": entry["name"],
+                "zone_type": str(stats.get("zone_type") or ""),
+                "threat_rating": str(stats.get("threat_rating") or ""),
+                "summary": entry.get("summary") or "",
+                "printed_page": entry.get("printed_page"),
+            })
+        elif cat == "faction":
+            factions.append({
+                "name": entry["name"],
+                "type": str(stats.get("type") or "Faction"),
+                "summary": entry.get("summary") or "",
+                "printed_page": entry.get("printed_page"),
+            })
+        elif cat == "screamsheet":
+            hook_text = str(entry.get("description") or entry.get("summary") or "")
+            screamsheets.append({
+                "id": entry["id"],
+                "headline": str(stats.get("headline") or entry["name"]),
+                "district": str(stats.get("district") or ""),
+                "factions": list(stats.get("factions") or []),
+                "payout_eb": int(stats.get("payout_eb") or 0),
+                "summary": entry.get("summary") or "",
+                "hook": hook_text,
+            })
+            if hook_text:
+                screamsheet_hooks.append(hook_text)
+        elif cat == "rule":
+            if "zone-type" in tags:
+                zone_types.append({
+                    "name": entry["name"],
+                    "printed_page": entry.get("printed_page"),
+                    "summary": entry.get("summary") or "",
+                })
+            elif "threat-rating" in tags:
+                threat_ratings.append({
+                    "name": entry["name"],
+                    "ncpd_response": str(stats.get("ncpd_response") or ""),
+                    "summary": entry.get("summary") or "",
+                })
+            elif "caper-style" in tags or "beat-chart" in tags:
+                caper_styles.append({
+                    "id": str(stats.get("caper_id") or _slug(entry["name"])),
+                    "name": entry["name"],
+                    "printed_page": entry.get("printed_page"),
+                    "summary": entry.get("summary") or "",
+                    "default_beats": dict(stats.get("default_beats") or {}),
+                })
+
+    return {
+        "districts": districts,
+        "factions": factions,
+        "caper_styles": caper_styles,
+        "screamsheet_hooks": screamsheet_hooks,
+        "zone_types": zone_types,
+        "threat_ratings": threat_ratings,
+        "screamsheets": screamsheets,
+    }

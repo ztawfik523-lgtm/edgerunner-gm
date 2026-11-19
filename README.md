@@ -6,12 +6,11 @@ Play solo or co-op **Cyberpunk RED (2045)** campaigns in your browser with an AI
 
 ---
 
-## Bring Your Own Corebook
+## Bring Your Own Corebook (Required)
 
 This repository includes **no** copyrighted Corebook PDF, rulebook text, or private campaign data.
 
-- **Works out of the box (Freeform Mode):** Start playing right away with Freeform characters, custom homebrew items/NPCs/rules, automatic `d10`/`d6` skill checks, LUCK & Overclock, world clocks, and branching story chat.
-- **Upload your Corebook PDF anytime in the app:** If you own the Cyberpunk RED Corebook PDF, open **Settings → Corebook PDF** in your browser and upload it with one click. A live progress bar builds your private rules database on your server and unlocks official Roles, `Streetrat` / `Edgerunner` / `Complete Package` character creation, gear catalogs, and exact page lookup.
+- **BYOC Required:** You must own and upload your own **Cyberpunk RED Corebook PDF** to use this app. Open **Settings → BYOC** in your browser and upload your PDF with one click. A live progress bar builds your private rules database on your server and unlocks **Character Creator** (`Streetrat` / `Edgerunner` / `Complete Package`), **Campaign Architect**, gear catalogs, and exact page lookup.
 
 ---
 
@@ -31,7 +30,7 @@ docker compose up -d --build
 Then open **`http://YOUR-SERVER-IP:8765`** (or `http://127.0.0.1:8765` if local) in your browser:
 1. Create your **Admin** username and password on the welcome screen (if hosting publicly, this keeps your settings private).
 2. Click the model button in the top-right to open **Settings → Connection**, pick a preset (Ollama, OpenRouter, NVIDIA NIM, OpenAI, etc.), paste your API key if needed, and click **Test Connection** then **Save Settings**.
-3. *(Optional)* Open **Settings → Corebook PDF**, click **Upload Corebook PDF**, and wait for the progress bar to reach 100%.
+3. **Required:** Open **Settings → BYOC**, click **Upload Corebook PDF**, and wait for the progress bar to reach 100% to unlock Character Creator, Campaign Architect, and rulebook search.
 
 *(Tip: To also enable optional local AI meaning search inside Docker, set `INSTALL_SEMANTIC=true` in `.env` before building.)*
 
@@ -78,6 +77,6 @@ All architecture details, CLI commands, HTTP API endpoints, environment variable
 
 ## License & Attribution
 
-- **Source Code:** Licensed under the **[MIT License](LICENSE)** — free to use, modify, self-host, and distribute as long as credit and the copyright notice are preserved.
+- **Source Code:** Licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)** — free for personal and noncommercial use, modification, self-hosting, and sharing; commercial use or selling forks is prohibited.
 - **Tabletop IP Notice:** *Edgerunner GM is unofficial content provided under the Homebrew Content Policy of R. Talsorian Games and is not approved or endorsed by RTG. This content references materials that are the property of R. Talsorian Games and its licensees. No copyrighted Corebook text or PDF is included in this repository.*
 

@@ -557,7 +557,7 @@ export function CharacterPanel({
     const cost = tier === "extreme" ? 1000 : 500;
     const diceCount = tier === "extreme" ? 4 : 2;
     if (active.money < cost) {
-      onNotify(`Insufficient eddies: ${tier === "extreme" ? "Extreme" : "Standard"} Therapy costs ${cost} eb (p. 230).`);
+      onNotify(`Insufficient eddies: ${tier === "extreme" ? "Extreme" : "Standard"} Therapy costs ${cost} eb.`);
       return;
     }
     const maxHum = maxHumanity;
@@ -574,7 +574,7 @@ export function CharacterPanel({
         active.id,
         active.revision,
         { humanity: nextHum, money: active.money - cost },
-        `${tier === "extreme" ? "Extreme" : "Standard"} Therapy (-${cost}eb, +${nextHum - active.humanity} Humanity, p. 230)`,
+        `${tier === "extreme" ? "Extreme" : "Standard"} Therapy (-${cost}eb, +${nextHum - active.humanity} Humanity)`,
       );
       await onRefresh();
       onNotify(`Completed ${tier} Therapy (+${nextHum - active.humanity} Humanity, -${cost} eb).`);
@@ -1133,7 +1133,7 @@ export function CharacterPanel({
                   type="button"
                   disabled={busy || sheetLocked || active.money < 500}
                   onClick={() => void handleTherapy("standard")}
-                  title="Standard Therapy: 500 eb, +2d6 Humanity (p. 230)"
+                  title="Standard Therapy: 500 eb, +2d6 Humanity"
                   className="flex-1 rounded border border-slate-800 bg-slate-900 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
                 >
                   Therapy 500eb
@@ -1142,7 +1142,7 @@ export function CharacterPanel({
                   type="button"
                   disabled={busy || sheetLocked || active.money < 1000}
                   onClick={() => void handleTherapy("extreme")}
-                  title="Extreme Therapy: 1,000 eb, +4d6 Humanity (p. 230)"
+                  title="Extreme Therapy: 1,000 eb, +4d6 Humanity"
                   className="flex-1 rounded border border-slate-800 bg-slate-900 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
                 >
                   +4d6 1k eb
@@ -1435,7 +1435,7 @@ export function CharacterPanel({
                   Skills ({Object.keys(active.skills).length})
                 </span>
                 <span
-                  title="Improvement Points earned from gigs & missions (Corebook pp. 408-411)"
+                  title="Improvement Points earned from gigs & missions"
                   className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-300"
                 >
                   {currentIp} IP

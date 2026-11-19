@@ -40,24 +40,65 @@ def test_api_search_trace(tmp_path, monkeypatch, caplog):
     assert 'sensitive player question' not in caplog.text
 
 
+def _create_minimal_rules_db(path: Path) -> Path:
+    import json
+    import sqlite3
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE metadata(key TEXT, value TEXT)")
+        db.execute("INSERT INTO metadata VALUES('source_sha256', 'test-sha')")
+        db.execute("CREATE TABLE pages(pdf_page INTEGER, printed_page INTEGER, text TEXT)")
+        db.execute("INSERT INTO pages VALUES(1, 1, 'Cyberpunk RED Corebook')")
+        db.execute("INSERT INTO pages VALUES(83, 82, 'Handgun........REF')")
+        db.execute("INSERT INTO pages VALUES(340, 340, '340\nGear')")
+        db.execute("CREATE TABLE source_tables(pdf_page INTEGER, ordinal INTEGER, bbox_json TEXT, cells_json TEXT)")
+        db.execute("INSERT INTO source_tables VALUES(340, 1, NULL, ?)", (json.dumps([
+            ["Weapon Type", "Skill", "Damage", "ROF", "Cost"],
+            ["Heavy Pistol", "Handgun", "3d6", "2", "100eb"],
+            ["Assault Rifle", "Shoulder Arms", "5d6", "1", "500eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(340, 2, NULL, ?)", (json.dumps([
+            ["Armor Type", "SP", "Cost"],
+            ["Light Armorjack", "11", "100eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(340, 3, NULL, ?)", (json.dumps([
+            ["Hardware", "Cost"],
+            ["Cyberdeck", "500eb"],
+        ]),))
+    return path
+
+
 def test_creation_reference_endpoint(tmp_path):
     httpx = pytest.importorskip('httpx')
     import asyncio
 
     async def run():
-        app = redkb.make_api(tmp_path / 'missing_rules.sqlite')
+        app_missing = redkb.make_api(tmp_path / 'missing_rules.sqlite')
+        transport_missing = httpx.ASGITransport(app=app_missing)
+        async with httpx.AsyncClient(transport=transport_missing, base_url='http://test') as client:
+            r_missing = await client.get('/v1/creation/reference')
+            assert r_missing.status_code == 200
+            missing_data = r_missing.json()
+            assert missing_data['rules_indexed'] is False
+            assert missing_data['roles'] == []
+            assert missing_data['methods'] == []
+            assert missing_data['campaign_presets']['districts'] == []
+
+        rules_db = _create_minimal_rules_db(tmp_path / 'rules.sqlite')
+        app = redkb.make_api(rules_db)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
             response = await client.get('/v1/creation/reference')
             assert response.status_code == 200
             data = response.json()
             assert data['request_id']
+            assert data['rules_indexed'] is True
             assert len(data['roles']) == 10
             assert len(data['stats']) == 10
-            assert len(data['methods']) == 4
-            assert len(data['shop']['weapon']) >= 50
-            assert len(data['shop']['armor']) >= 14
-            assert len(data['shop']['hardware']) >= 6
+            assert len(data['methods']) == 3
+            assert all(m['id'] != 'freeform' for m in data['methods'])
+            assert len(data['shop']['weapon']) >= 2
+            assert len(data['shop']['armor']) >= 1
+            assert len(data['shop']['hardware']) >= 1
     asyncio.run(run())
 
 
@@ -94,7 +135,14 @@ def test_creation_ai_assist_endpoint_bio_and_contacts(tmp_path):
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / 'missing_rules.sqlite', llm=StubCreationLLM())
+        # Missing Corebook returns 409 Conflict on AI assist
+        app_missing = redkb.make_api(tmp_path / 'missing_rules.sqlite', llm=StubCreationLLM())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_missing), base_url='http://test') as client:
+            r_conflict = await client.post('/v1/creation/ai-assist', json={"target": "character_bio", "mode": "scratch"})
+            assert r_conflict.status_code == 409
+
+        rules_db = _create_minimal_rules_db(tmp_path / 'rules.sqlite')
+        app = redkb.make_api(rules_db, llm=StubCreationLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
             base_char = {
@@ -193,7 +241,8 @@ def test_campaign_ai_assist_and_bootstrap_endpoint(tmp_path: Path):
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite", llm=StubCampaignLLM())
+        rules_db = _create_minimal_rules_db(tmp_path / "rules.sqlite")
+        app = redkb.make_api(rules_db, campaign_path=tmp_path / "camp.sqlite", llm=StubCampaignLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             r_ai = await client.post("/v1/creation/ai-assist", json={
@@ -278,7 +327,8 @@ def test_campaign_ai_assist_auto_and_locked_plus_per_field_regen(tmp_path: Path)
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite", llm=InspectCampaignLLM())
+        rules_db = _create_minimal_rules_db(tmp_path / "rules.sqlite")
+        app = redkb.make_api(rules_db, campaign_path=tmp_path / "camp.sqlite", llm=InspectCampaignLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             # 1. Unlocked scratch: AI decides district, caper_style, factions
@@ -331,7 +381,17 @@ def test_expanded_campaign_bootstrap_rename_library_clocks_and_session_zero(tmp_
     from library import CampaignLibrary
 
     async def run():
-        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite")
+        # Unindexed Corebook rejects character creation with 409 Conflict
+        app_missing = redkb.make_api(tmp_path / "missing_char.sqlite", campaign_path=tmp_path / "camp_missing.sqlite")
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app_missing), base_url="http://test") as client:
+            r_blocked = await client.post("/v1/game", json={
+                "action": "create_character",
+                "arguments": {"name": "Blocked", "stats": {"INT": 6, "REF": 6, "DEX": 6, "TECH": 6, "COOL": 6, "WILL": 6, "LUCK": 6, "MOVE": 6, "BODY": 6, "EMP": 6}},
+            })
+            assert r_blocked.status_code == 409
+
+        rules_db = _create_minimal_rules_db(tmp_path / "rules.sqlite")
+        app = redkb.make_api(rules_db, campaign_path=tmp_path / "camp.sqlite")
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             # Create a standalone character first so we can attach via attach_character_ids

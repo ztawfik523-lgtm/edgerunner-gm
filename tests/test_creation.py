@@ -167,6 +167,19 @@ def test_exec_empty_separator_and_creation_reference(tmp_path):
         db.execute("INSERT INTO pages VALUES(78, 77, ?)", (text,))
         db.execute("INSERT INTO pages VALUES(83, 82, ?)", (defs,))
         db.execute("INSERT INTO pages VALUES(88, 87, ?)", (skills,))
+        db.execute("CREATE TABLE source_tables(pdf_page INTEGER, ordinal INTEGER, bbox_json TEXT, cells_json TEXT)")
+        import json as _json
+        db.execute("INSERT INTO pages VALUES(45, 45, '45\nPersonality\nLifepath')")
+        db.execute("INSERT INTO source_tables VALUES(45, 1, NULL, ?)", (_json.dumps([
+            ["Region", "Languages"],
+            ["North American", "English, Spanish"],
+            ["East Asian", "Japanese, Mandarin Chinese"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(45, 2, NULL, ?)", (_json.dumps([
+            ["Roll", "Personality"],
+            ["1", "Quiet and guarded"],
+            ["2", "Steady and grounded"],
+        ]),))
 
     ref = build_creation_reference(path)
     assert ref["rules_indexed"] is True
@@ -178,20 +191,27 @@ def test_exec_empty_separator_and_creation_reference(tmp_path):
     assert exec_role["skills"]["Business"] == 4
     assert len(exec_role["skills"]) == 20
     assert len(ref["stats"]) == 10
-    assert len(ref["cultural_regions"]) >= 10
-    assert len(ref["lifepath_tables"]) >= 5
+    assert len(ref["cultural_regions"]) == 2
+    assert ref["lifepath_tables"]["personality"] == ["Quiet and guarded", "Steady and grounded"]
 
-    missing_ref = build_creation_reference(tmp_path / "does-not-exist.sqlite")
-    assert missing_ref["rules_indexed"] is False
-    assert len(missing_ref["roles"]) == 10
-    assert any(item["name"] == "Malorian Arms 3516" for item in missing_ref["shop"]["weapon"])
-    assert any(item["name"] == 'Militech "Ronin" (Assault Rifle)' for item in missing_ref["shop"]["weapon"])
-    assert any(item["stats"].get("sp") == 18 and item["stats"].get("location") == "Body" for item in missing_ref["shop"]["armor"])
-    assert any(item["name"] == "Heavy Armorjack Head Armor / Helmet (SP 13)" for item in missing_ref["shop"]["armor"])
-    assert any("Cyberdeck" in item["name"] or "KRASH" in item["name"] for item in missing_ref["shop"]["hardware"])
+    for empty_arg in (None, tmp_path / "does-not-exist.sqlite"):
+        missing_ref = build_creation_reference(empty_arg)
+        assert missing_ref["rules_indexed"] is False
+        assert missing_ref["roles"] == []
+        assert missing_ref["methods"] == []
+        assert missing_ref["stats"] == {}
+        assert missing_ref["skills"] == []
+        assert missing_ref["lifepath_tables"] == {}
+        assert missing_ref["shop"]["weapon"] == []
+        assert missing_ref["shop"]["armor"] == []
+        assert missing_ref["shop"]["hardware"] == []
+        assert missing_ref["campaign_presets"]["districts"] == []
+        assert missing_ref["campaign_presets"]["factions"] == []
+        assert missing_ref["campaign_presets"]["caper_styles"] == []
 
 
-def test_corebook_catalog_builders_and_parsers():
+def test_corebook_catalog_builders_and_parsers(tmp_path):
+    import json as _json
     from creation_catalog import (
         build_corebook_armor,
         build_corebook_hardware,
@@ -207,34 +227,37 @@ def test_corebook_catalog_builders_and_parsers():
     assert parse_sp_int("13") == 13
     assert parse_sp_int("SP 18") == 18
 
-    weapons = build_corebook_weapons()
-    names = {w["name"] for w in weapons}
-    for exotic in (
-        "Malorian Arms 3516",
-        "Kendachi Mono-Three",
-        "Tsunami Arms Helix",
-        "Rhinemetall EMG-86 Railgun",
-        "Battleglove (Exotic Cyberarm Gauntlet)",
-        "Dartgun (Exotic)",
-    ):
-        assert exotic in names
-    assert any("Poor" in str(w["stats"].get("quality")) for w in weapons)
-    assert any("Standard" in str(w["stats"].get("quality")) for w in weapons)
-    assert any("Excellent" in str(w["stats"].get("quality")) for w in weapons)
-    assert any(w["stats"].get("subtype") == "Attachment" for w in weapons)
-    assert any(w["stats"].get("subtype") == "Ammo" for w in weapons)
+    assert build_corebook_weapons() == []
+    assert build_corebook_armor() == []
+    assert build_corebook_hardware() == []
 
-    armor = build_corebook_armor()
-    assert any(a["name"] == "Kevlar® Body Armor (SP 7)" and a["stats"]["sp"] == 7 for a in armor)
-    assert any(a["name"] == "Metalgear® Head Armor / Helmet (SP 18)" and a["stats"]["location"] == "Head" for a in armor)
-    assert any(a["name"] == "Bulletproof Shield (10 HP)" and a["stats"]["location"] == "Shield" for a in armor)
+    db_path = tmp_path / "catalog.sqlite"
+    with sqlite3.connect(db_path) as db:
+        db.execute("CREATE TABLE metadata(key TEXT, value TEXT)")
+        db.execute("INSERT INTO metadata VALUES('source_sha256', 'cat-digest')")
+        db.execute("CREATE TABLE pages(pdf_page INTEGER, printed_page INTEGER, text TEXT)")
+        db.execute("INSERT INTO pages VALUES(340, 340, '340\nGear')")
+        db.execute("CREATE TABLE source_tables(pdf_page INTEGER, ordinal INTEGER, bbox_json TEXT, cells_json TEXT)")
+        db.execute("INSERT INTO source_tables VALUES(340, 1, NULL, ?)", (_json.dumps([
+            ["Weapon Type", "Skill", "Damage", "ROF", "Cost"],
+            ["Heavy Pistol", "Handgun", "3d6", "2", "100eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(340, 2, NULL, ?)", (_json.dumps([
+            ["Armor Type", "SP", "Cost"],
+            ["Light Armorjack", "11", "100eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(340, 3, NULL, ?)", (_json.dumps([
+            ["Hardware", "Cost"],
+            ["Cyberdeck", "500eb"],
+        ]),))
 
-    hardware = build_corebook_hardware()
-    assert any("Cyberdeck" in h["name"] for h in hardware)
-    assert any("KRASH" in h["name"] for h in hardware)
+    assert build_corebook_weapons(db_path)[0]["name"] == "Heavy Pistol"
+    assert build_corebook_armor(db_path)[0]["stats"]["sp"] == 11
+    assert build_corebook_hardware(db_path)[0]["name"] == "Cyberdeck"
 
 
 def test_medtech_creation_applies_initial_benefits_and_reference_includes_vehicles_drugs_presets(rules):
+    import json as _json
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     skills = dict.fromkeys(basics, 2)
     skills.update({f"Skill {i}": 5 for i in range(1, 13)})
@@ -262,12 +285,28 @@ def test_medtech_creation_applies_initial_benefits_and_reference_includes_vehicl
     assert med["skills"]["Surgery"] == 4
     assert med["skills"]["Medical Tech"] == 2
 
+    with sqlite3.connect(rules) as db:
+        db.execute("CREATE TABLE IF NOT EXISTS source_tables(pdf_page INTEGER, ordinal INTEGER, bbox_json TEXT, cells_json TEXT)")
+        db.execute("INSERT INTO pages VALUES(350, 350, '350\nVehicles & Drugs')")
+        db.execute("INSERT INTO source_tables VALUES(350, 1, NULL, ?)", (_json.dumps([
+            ["Vehicle", "Cost", "SDP"],
+            ["Compact Groundcar", "30000eb", "50"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(350, 2, NULL, ?)", (_json.dumps([
+            ["Drug", "Cost", "Primary Effect"],
+            ["Synthcoke", "20eb", "+1 REF"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(350, 3, NULL, ?)", (_json.dumps([
+            ["District", "Zone Type", "Threat Rating", "Summary"],
+            ["Sector 4", "Moderate Zone", "Moderate", "Industrial block."],
+        ]),))
+
     from creation_reference import build_creation_reference
 
     ref = build_creation_reference(rules)
-    assert len(ref["shop"]["vehicle"]) >= 8
-    assert len(ref["shop"]["drug"]) >= 10
-    assert "districts" in ref["campaign_presets"]
+    assert len(ref["shop"]["vehicle"]) == 1
+    assert len(ref["shop"]["drug"]) == 1
+    assert len(ref["campaign_presets"]["districts"]) == 1
     assert "caper_styles" in ref["campaign_presets"]
 
 
@@ -384,19 +423,134 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     assert "Old repetitive Trauma Team story." in seen_prompts[-1]["avoid_repeating"]
 
 
+def test_creation_ai_assist_per_textfield_hooks_contacts_and_campaign():
+    import asyncio
+    import json
+    from creation_catalog import _BEAT_KEY_TO_FIELD, generate_creation_ai_assist
+
+    for _, (_, desc) in _BEAT_KEY_TO_FIELD.items():
+        assert "p." not in desc.lower() and "corebook" not in desc.lower()
+
+    class _EchoLLM:
+        async def complete(self, messages, json_mode=True, temperature=0.7):
+            payload = json.loads(messages[1]["content"])
+            field = payload.get("target_field")
+            if payload.get("target_entry_index") is not None and payload.get("target_sub_field"):
+                return json.dumps({"value": f"Updated {field}[{payload['target_entry_index']}].{payload['target_sub_field']}"})
+            if field in {"reputation_note", "trauma_hook", "addiction_hook", "debt_hook", "gig_title", "clock_name"}:
+                return json.dumps({field: f"Fresh {field}"})
+            return json.dumps({})
+
+    r_hook = asyncio.run(
+        generate_creation_ai_assist(
+            None,
+            _EchoLLM(),
+            {"target": "bio", "mode": "expand", "field": "debt_hook", "character": {"role": "Fixer"}, "current": {"debt_hook": "Owes 500 eb"}},
+        )
+    )
+    assert r_hook["debt_hook"] == "Fresh debt_hook"
+
+    r_friend_note = asyncio.run(
+        generate_creation_ai_assist(
+            None,
+            _EchoLLM(),
+            {
+                "target": "contacts",
+                "mode": "expand",
+                "field": "friends",
+                "entry_index": 0,
+                "sub_field": "note",
+                "character": {"role": "Fixer"},
+                "current": {"friends": [{"name": "Marek", "relationship": "Ripperdoc", "note": "Patches you up"}]},
+            },
+        )
+    )
+    assert r_friend_note["entry_index"] == 0
+    assert r_friend_note["sub_field"] == "note"
+    assert r_friend_note["value"] == "Updated friends[0].note"
+
+    r_gig = asyncio.run(
+        generate_creation_ai_assist(
+            None,
+            _EchoLLM(),
+            {"target": "campaign", "mode": "scratch", "field": "gig_title", "campaign": {"district": "Watson"}, "current": {}},
+        )
+    )
+    assert r_gig["gig_title"] == "Fresh gig_title"
+
+    r_clock = asyncio.run(
+        generate_creation_ai_assist(
+            None,
+            _EchoLLM(),
+            {"target": "campaign", "mode": "scratch", "field": "clock_name", "campaign": {"district": "Watson"}, "current": {}},
+        )
+    )
+    assert r_clock["clock_name"] == "Fresh clock_name"
+
+    r_npc_val = asyncio.run(
+        generate_creation_ai_assist(
+            None,
+            _EchoLLM(),
+            {
+                "target": "campaign",
+                "mode": "expand",
+                "field": "npcs",
+                "entry_index": 0,
+                "sub_field": "val",
+                "campaign": {"district": "Watson"},
+                "current": {"npcs": {"Marek (Fixer)": "Needs extraction"}},
+            },
+        )
+    )
+    assert r_npc_val["value"] == "Updated npcs[0].val"
+
+
 def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules):
+    import json as _json
     import economy
     import roles
     from creation_reference import build_creation_reference
 
-    # 1. Creation Reference includes full ammo, attachments, services, housing, 90-item fashion_matrix, housing_tiers, lifestyles
+    with sqlite3.connect(rules) as db:
+        db.execute("CREATE TABLE IF NOT EXISTS source_tables(pdf_page INTEGER, ordinal INTEGER, bbox_json TEXT, cells_json TEXT)")
+        db.execute("INSERT INTO pages VALUES(355, 355, '355\nExpanded Market')")
+        db.execute("INSERT INTO source_tables VALUES(355, 1, NULL, ?)", (_json.dumps([
+            ["Ammo", "Cost"],
+            ["Basic Ammunition", "10eb"],
+            ["Armor-Piercing Ammunition", "100eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(355, 2, NULL, ?)", (_json.dumps([
+            ["Attachment", "Cost"],
+            ["Sniping Scope", "500eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(355, 3, NULL, ?)", (_json.dumps([
+            ["Service", "Cost"],
+            ["Lifestyle: Kibble", "100eb"],
+            ["Trauma Team Silver", "500eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(355, 4, NULL, ?)", (_json.dumps([
+            ["Housing", "Rent (eb/mo)", "Summary"],
+            ["Cargo Container", "1000", "Standard container."],
+            ["Corporate Conapt", "0", "Exec corporate housing perk."],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(355, 5, NULL, ?)", (_json.dumps([
+            ["Name", "Style", "Garment", "Cost"],
+            ["Generic Chic Jacket", "Generic Chic", "Jacket", "50eb"],
+            ["High Fashion Jacket", "High Fashion", "Jacket", "1000eb"],
+        ]),))
+        db.execute("INSERT INTO source_tables VALUES(355, 6, NULL, ?)", (_json.dumps([
+            ["Cyberware Name", "Install", "HL", "Cost"],
+            ["Implanted Linear Frame ∑ (Sigma)", "Hospital", "14", "1000eb"],
+        ]),))
+
+    # 1. Creation Reference includes extracted ammo, attachments, services, housing, fashion_matrix, housing_tiers, lifestyles
     ref = build_creation_reference(rules)
-    assert len(ref["shop"]["ammo"]) >= 3
-    assert len(ref["shop"]["attachment"]) >= 3
-    assert len(ref["shop"]["service"]) >= 5
-    assert len(ref["shop"]["housing"]) >= 4
-    assert len(ref["fashion_matrix"]) == 90
-    assert any(h["id"] == "corporate" and h.get("exec_only") for h in ref["housing_tiers"])
+    assert len(ref["shop"]["ammo"]) >= 2
+    assert len(ref["shop"]["attachment"]) >= 1
+    assert len(ref["shop"]["service"]) >= 2
+    assert len(ref["shop"]["housing"]) >= 2
+    assert len(ref["fashion_matrix"]) >= 1
+    assert any("corporate" in h["id"] and h.get("exec_only") for h in ref["housing_tiers"])
     assert any(l["id"] == "Kibble" for l in ref["lifestyles"])
 
     basics = [

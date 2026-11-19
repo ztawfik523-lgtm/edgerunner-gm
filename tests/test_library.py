@@ -389,20 +389,94 @@ def test_upsert_and_dossier_categories(tmp_path: Path):
     assert npc_hits[0]["stats"]["disposition"] == 1
 
 
-def test_corebook_curated_catalogs_indexed_for_ai_search(tmp_path: Path):
+def test_dynamic_extraction_without_hardcoded_fallback(tmp_path: Path):
     rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=False)
     library._MEMORY_CACHE.clear()
 
-    mal = library.search_library(rules_db, q="Malorian Arms 3516", category="weapon")
-    assert mal and mal[0]["name"] == "Malorian Arms 3516"
+    # No hardcoded Corebook fallback injection when not present in rules.sqlite
+    assert not any(x["name"] == "Malorian Arms 3516" for x in library.search_library(rules_db, q="Malorian Arms 3516", category="weapon"))
+    assert library.search_library(rules_db, q="Netrunner", category="role") == []
 
-    lace = library.search_library(rules_db, q="Black Lace", category="gear")
-    assert any("Black Lace" in x["name"] for x in lace)
+    # Add synthetic districts, factions, capers, housing, lifestyles, and lifepath tables to rules.sqlite
+    conn = sqlite3.connect(rules_db)
+    try:
+        conn.execute(
+            "INSERT INTO pages(pdf_page, printed_page, header, text, chars) VALUES (?,?,?,?,?)",
+            (300, 300, "Districts & Factions", "300\nDistricts & Factions\nSynthetic source pages.", 46),
+        )
+        conn.execute(
+            "INSERT INTO pages(pdf_page, printed_page, header, text, chars) VALUES (?,?,?,?,?)",
+            (45, 45, "Lifepath", "45\nPersonality\nSynthetic lifepath tables.", 41),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (300, 1, 'null', ?)",
+            (json.dumps([
+                ["District", "Zone Type", "Threat Rating", "Summary"],
+                ["Sector Alpha", "Moderate Zone", "Moderate", "Busy commercial block."],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (300, 2, 'null', ?)",
+            (json.dumps([
+                ["Faction", "Type", "Summary"],
+                ["Dockers Union", "Crew", "Controls port cranes."],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (300, 3, 'null', ?)",
+            (json.dumps([
+                ["Caper Style", "Hook", "Developments", "Cliffhanger", "Climax", "Resolution"],
+                ["Data Heist", "Brokered blueprint", "Guard rotation", "Vault lockdown", "Server breach", "Clean payout"],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (300, 4, 'null', ?)",
+            (json.dumps([
+                ["Housing", "Rent (eb/mo)", "Summary"],
+                ["Cargo Container", "1000", "Standard container unit."],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (300, 5, 'null', ?)",
+            (json.dumps([
+                ["Lifestyle", "Cost", "Summary"],
+                ["Lifestyle: Kibble", "100eb", "Basic packaged rations."],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (45, 1, 'null', ?)",
+            (json.dumps([
+                ["Region", "Languages"],
+                ["North American", "English, Spanish"],
+            ]),),
+        )
+        conn.execute(
+            "INSERT INTO source_tables VALUES (45, 2, 'null', ?)",
+            (json.dumps([
+                ["Roll", "Personality"],
+                ["1", "Quiet and guarded"],
+                ["2", "Steady and grounded"],
+            ]),),
+        )
+        library.build_library(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    library._MEMORY_CACHE.clear()
 
-    bike = library.search_library(rules_db, q="Superbike", category="gear")
-    assert any(x["name"] == "Superbike" for x in bike)
+    presets = library.query_campaign_presets(rules_db)
+    assert len(presets["districts"]) == 1
+    assert presets["districts"][0]["name"] == "Sector Alpha"
+    assert len(presets["factions"]) == 1
+    assert presets["factions"][0]["name"] == "Dockers Union"
+    assert len(presets["caper_styles"]) == 1
+    assert presets["caper_styles"][0]["default_beats"]["hook"] == "Brokered blueprint"
 
-    net = library.search_library(rules_db, q="Netrunner", category="role")
-    assert net and net[0]["name"] == "Netrunner"
+    regions, lp_tables = library.query_lifepath_data(rules_db)
+    assert regions == [{"region": "North American", "languages": ["English", "Spanish"]}]
+    assert lp_tables["personality"] == ["Quiet and guarded", "Steady and grounded"]
+
+    assert library.search_library(rules_db, q="Cargo Container", category="housing")[0]["stats"]["cost_eb"] == 1000
+    assert library.search_library(rules_db, q="Kibble", category="service")[0]["stats"]["cost_eb"] == 100
 
 

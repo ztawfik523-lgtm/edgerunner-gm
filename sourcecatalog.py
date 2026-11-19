@@ -146,6 +146,18 @@ def _tables_for_page(row, stored) -> list[list[list[str]]]:
 
 def _category(headers: list[str]) -> str:
     joined = " ".join(re.sub(r"[^a-z]", "", h.lower()) for h in headers)
+    if "ammo" in joined or "ammunition" in joined:
+        return "ammo"
+    if "attachment" in joined or "optic" in joined or "rail" in joined:
+        return "attachment"
+    if "vehicle" in joined or "sdp" in joined or "seats" in joined or "mph" in joined:
+        return "vehicle"
+    if "drug" in joined or "streetdrug" in joined or "primaryeffect" in joined or "secondaryeffect" in joined:
+        return "drug"
+    if "housing" in joined or "rent" in joined or "accommodation" in joined:
+        return "housing"
+    if "service" in joined or "lifestyle" in joined or "trauma" in joined or "therapy" in joined:
+        return "service"
     if "weapontype" in joined or "weapon" in joined:
         return "weapon"
     if "armortype" in joined or "armor" in joined:
@@ -156,23 +168,36 @@ def _category(headers: list[str]) -> str:
         return "program"
     if "hardware" in joined:
         return "hardware"
-    if "fashion" in joined or "style" in joined or "clothing" in joined or "outfit" in joined:
+    if "fashion" in joined or "style" in joined or "clothing" in joined or "outfit" in joined or "garment" in joined:
         return "fashion"
     return "gear"
 
 
 _COST = re.compile(r"(?<![\w])\d[\d,]*\s*eb\b", re.I)
+_NAME_HEADER_KEYS = frozenset({
+    "name", "item", "itemname", "weaponname", "cyberwarename", "weapontype",
+    "meleeweapontype", "armortype", "vehicle", "vehiclename", "drug", "drugname",
+    "ammo", "ammotype", "attachment", "housing", "housingtype", "service",
+    "servicetype", "lifestyle", "fashion", "style", "garment", "program", "hardware",
+})
+_COST_HEADER_KEYS = frozenset({
+    "cost", "price", "costeb", "priceeb", "rent", "renteb", "rentebmo", "monthlyeb",
+})
+_EB_HEADER_KEYS = frozenset({"costeb", "priceeb", "renteb", "rentebmo", "monthlyeb"})
 
 
-def _cost(cell: str) -> int | None:
-    matches = list(_COST.finditer(cell))
-    if len(matches) != 1:
-        return None
-    token = matches[0].group(0)
-    # Cost columns containing ranges or multiple alternatives are deliberately unresolved.
+def _cost(cell: str, *, allow_bare_int: bool = False) -> int | None:
     if re.search(r"(?:\d\s*[-–—]|[-–—]\s*\d)|\bor\b|\bto\b", cell, re.I):
         return None
-    return int(re.sub(r"[^0-9]", "", token))
+    matches = list(_COST.finditer(cell))
+    if len(matches) == 1:
+        token = matches[0].group(0)
+        return int(re.sub(r"[^0-9]", "", token))
+    if allow_bare_int and not matches:
+        stripped = cell.strip().replace(",", "")
+        if re.fullmatch(r"\d+", stripped):
+            return int(stripped)
+    return None
 
 
 def items(rules_path: str | Path) -> dict[str, dict[str, Any]]:
@@ -185,20 +210,21 @@ def items(rules_path: str | Path) -> dict[str, dict[str, Any]]:
         for table_no, rows in enumerate(_tables_for_page(page, stored.get(int(page["pdf_page"]), [])), 1):
             if len(rows) < 2:
                 continue
-            header_index = next((i for i, row in enumerate(rows) if any(re.sub(r"[^a-z]", "", c.casefold()) in {"cost", "price", "costeb", "priceeb"} for c in row)), None)
+            header_index = next((i for i, row in enumerate(rows) if any(re.sub(r"[^a-z]", "", c.casefold()) in _COST_HEADER_KEYS for c in row)), None)
             if header_index is None: continue
             headers = rows[header_index]
             norm_headers = [re.sub(r"[^a-z]", "", h.casefold()) for h in headers]
-            name_col = next((i for i, h in enumerate(norm_headers) if h in {"name", "item", "weaponname", "cyberwarename", "weapontype", "meleeweapontype", "armortype"}), None)
-            cost_col = next((i for i, h in enumerate(norm_headers) if h in {"cost", "price", "costeb", "priceeb"}), None)
+            name_col = next((i for i, h in enumerate(norm_headers) if h in _NAME_HEADER_KEYS), None)
+            cost_col = next((i for i, h in enumerate(norm_headers) if h in _COST_HEADER_KEYS), None)
             if name_col is None or cost_col is None:
                 continue
+            allow_bare = norm_headers[cost_col] in _EB_HEADER_KEYS
             category = _category(headers)
             for row_no, cells in enumerate(rows[header_index+1:], header_index+1):
                 if max(name_col, cost_col) >= len(cells):
                     continue
                 name = cells[name_col].strip()
-                cost = _cost(cells[cost_col])
+                cost = _cost(cells[cost_col], allow_bare_int=allow_bare)
                 if not name or cost is None:
                     continue
                 key = _normalize(name)

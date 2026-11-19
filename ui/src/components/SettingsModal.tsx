@@ -1584,10 +1584,10 @@ export function SettingsModal({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-100">
-                      BYOC — Bring Your Own Corebook (Optional)
+                      BYOC — Bring Your Own Corebook (Required)
                     </h3>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      Upload your own Cyberpunk RED Corebook PDF to unlock official Roles, character builders, gear catalogs, and exact page citations. The file stays locally on your server.
+                      Upload your own Cyberpunk RED Corebook PDF to unlock Character Creator, Campaign Architect, official Roles, gear catalogs, and exact page citations. The file stays locally on your server.
                     </p>
                   </div>
                   <span
@@ -1599,7 +1599,7 @@ export function SettingsModal({
                   >
                     {corebookStatus?.rules_indexed
                       ? `BYOC Ready (${corebookStatus.indexed_pages} pages)`
-                      : "No BYOC Yet (Freeform Mode)"}
+                      : "BYOC Setup Required"}
                   </span>
                 </div>
 
@@ -1663,7 +1663,7 @@ export function SettingsModal({
                   <p className="mt-1 text-[11px] text-slate-400">
                     {corebookStatus?.rules_indexed
                       ? "Uploading a new PDF safely replaces the existing rulebook database."
-                      : "Without a PDF, you can still create Freeform characters and homebrew rules."}
+                      : "Upload your PDF to unlock Character Creator, Campaign Architect, and rulebook search."}
                   </p>
                   <button
                     type="button"
@@ -1725,6 +1725,10 @@ export function SettingsModal({
                     )}
                   </div>
                 )}
+
+                <p className="rounded-md border border-slate-800/80 bg-slate-900/40 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
+                  Edgerunner GM is unofficial content provided under the Homebrew Content Policy of R. Talsorian Games and is not approved or endorsed by RTG. This content references materials that are the property of R. Talsorian Games and its licensees.
+                </p>
               </div>
 
               <div className="flex justify-end">

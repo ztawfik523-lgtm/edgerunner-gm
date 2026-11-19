@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { clearAllDrafts } from "./draftStorage";
@@ -1159,7 +1159,6 @@ describe("Cyberpunk RED GM UI", () => {
         { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10 on your Role table." },
         { id: "edgerunner", name: "Edgerunner (Fast & Dirty)", badge: "Flexible", summary: "Roll STATs & tune skills", rules: "Roll 10 STAT columns & tune 86 skill pts." },
         { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "62 STAT pts, 86 skill pts, 2,550 eb." },
-        { id: "freeform", name: "Freeform / Custom Sheet", badge: "Custom", summary: "No budget locks", rules: "Unconstrained custom character." },
       ],
       roles: [
         {
@@ -1634,6 +1633,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
     expect(screen.getByRole("dialog", { name: /Campaign Creator/i })).toBeInTheDocument();
+    await screen.findByText(/Watson Development/i);
 
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), {
       target: { value: "Kabuki Neon" },
@@ -1708,7 +1708,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
       if (url === "/v1/settings/llm") {
         return jsonResponse({ base_url: "http://127.0.0.1:11434/v1", model: "llama3", has_api_key: false, api_key_masked: "", temperature: 0.4, max_tokens: 1200, timeout_s: 60, mode: "two_pass", gm_thinking_mode: "quality" });
       }
@@ -2034,7 +2034,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
       if (url === "/v1/settings/llm") {
         return jsonResponse({
           base_url: "http://127.0.0.1:11434/v1",
@@ -2049,10 +2049,10 @@ describe("Cyberpunk RED GM UI", () => {
           gm_thinking_mode: "balanced",
         });
       }
-      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
         return jsonResponse({
-          rules_indexed: false,
+          rules_indexed: true,
           stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
           stats: {},
           methods: [],
@@ -3095,14 +3095,16 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByDisplayValue("Corpo Hit")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /World Builder Extras/i }));
+    // World Builder Extras and Session Zero Dials are expanded by default (no page numbers or Optional labels inside Campaign Creator)
+    const creatorDialog = screen.getByRole("dialog", { name: /Campaign Creator/i });
+    expect(within(creatorDialog).queryByText(/pp\.\s*395|pp\.\s*298|pp\.\s*393|pp\.\s*168/i)).not.toBeInTheDocument();
+    expect(within(creatorDialog).queryByText(/\(Optional\)/i)).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("Existing Gig")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Afterlife")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Watson Reborn" } });
     fireEvent.change(screen.getByPlaceholderText(/Gig Title \(e\.g\. Kabuki Cold Drop\)/i), { target: { value: "Kabuki Cold Drop" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     fireEvent.change(screen.getByPlaceholderText(/Lines & Veils/i), { target: { value: "Keep it PG-13" } });
 
     fireEvent.click(screen.getByRole("button", { name: /^Clock$/i }));
@@ -3122,10 +3124,9 @@ describe("Cyberpunk RED GM UI", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Campaign Creator/i })).not.toBeInTheDocument());
 
-    // Create flow also allows attaching unattached PCs cleanly
+    // Create flow also allows attaching unattached PCs cleanly (Session Zero expanded by default)
     fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Crew Start" } });
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     const chromeCheckbox = await screen.findByLabelText("Chrome Vex");
     fireEvent.click(chromeCheckbox);
     fireEvent.change(screen.getByPlaceholderText(/Core stakes/i), { target: { value: "Run jobs out of Watson." } });
@@ -3170,7 +3171,7 @@ describe("Cyberpunk RED GM UI", () => {
           stats: {},
           methods: [
             { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
-            { id: "freeform", name: "Freeform / Custom Sheet", badge: "Custom", summary: "No budget locks", rules: "Unconstrained." },
+            { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "62 STAT pts, 86 skill pts, 2,550 eb." },
           ],
           roles: [
             {
@@ -3242,23 +3243,12 @@ describe("Cyberpunk RED GM UI", () => {
             result: { campaign, characters: [], clocks: [], solo: { revision: 0, runtime: { clock_minutes: 0, runs: {} }, characters: {} } },
           });
         }
-        if (body.action === "create_character") {
+        if (body.action === "create_player_character") {
           createdPayloads.push(body.arguments);
           return jsonResponse({
-            action: "create_character",
+            action: "create_player_character",
             result: {
-              id: "char-chrome-rocker",
-              name: body.arguments.name,
-              stats: body.arguments.stats,
-              skills: body.arguments.skills,
-              hp: 55,
-              max_hp: 55,
-              humanity: body.arguments.humanity ?? 49,
-              luck_remaining: 6,
-              money: body.arguments.money ?? 0,
-              inventory: body.arguments.inventory ?? {},
-              revision: 1,
-              detail: body.arguments.detail ?? {},
+              character_id: "char-chrome-rocker",
             },
           });
         }
@@ -3285,18 +3275,31 @@ describe("Cyberpunk RED GM UI", () => {
     expect(specSelect).toBeTruthy();
     fireEvent.change(specSelect, { target: { value: "Synthesizer" } });
 
-    // Switch to Freeform so custom cyberware, fashion, housing, and lifestyle submit cleanly
+    // Switch to Complete Package so custom cyberware, fashion, housing, and lifestyle submit cleanly
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Freeform \/ Custom Sheet/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Complete Package \(Calculated\)/i }));
+    fireEvent.click(screen.getByRole("button", { name: /2\. STATs/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Role Smart Fill \(62 pts\)/i }));
+    fireEvent.click(screen.getByRole("button", { name: /3\. Skills/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Role Starter Build \(86 pts\)/i }));
 
-    // Step 4: Street Reputation & Starting Hooks
+    // Step 4: Street Reputation & Starting Hooks (visible & expanded by default, no page number or Optional label)
     fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Street Reputation & Starting Hooks/i }));
+    expect(screen.getByRole("button", { name: /^Street Reputation & Starting Hooks/i })).toBeInTheDocument();
+    expect(screen.queryByText(/p\.\s*193/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Street Reputation & Starting Hooks.*Optional/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Starting Reputation")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Starting Reputation"), { target: { value: "4" } });
     fireEvent.change(screen.getByPlaceholderText(/Owes 500 eb to a Kabuki ripperdoc/i), { target: { value: "Owes 500 eb to Chromanticore" } });
 
     // Step 5: Housing, Lifestyle, Trauma Team, Fashion Matrix & Linear Frame Sigma / Skinweave
     fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
+    const housingHeading = screen.getByText(/^Housing, Lifestyle & Trauma Team$/i);
+    expect(screen.queryByText(/pp\.\s*223/i)).not.toBeInTheDocument();
+    const emptyCatalogNotice = screen.getByText(/No weapon items match/i);
+    expect(
+      Boolean(housingHeading.compareDocumentPosition(emptyCatalogNotice) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
     fireEvent.change(screen.getByLabelText("Character Housing"), { target: { value: "cube" } });
     fireEvent.change(screen.getByLabelText("Character Lifestyle"), { target: { value: "Generic Prepak" } });
     fireEvent.change(screen.getByLabelText("Trauma Team Plan"), { target: { value: "Silver" } });
@@ -3308,32 +3311,312 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "+100eb" }));
 
     fireEvent.click(screen.getByRole("button", { name: /^cyberware$/i }));
+    expect(screen.queryByText(/p\.365/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "+1000eb" }));
     fireEvent.click(screen.getByRole("button", { name: "+500eb" }));
 
-    expect(screen.getByText(/BODY 7→12/)).toBeInTheDocument();
+    expect(screen.getByText(/BODY \d+→12/)).toBeInTheDocument();
     expect(screen.getByText(/Passive Cyberware Armor: Skinweave \(SP 7\)/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /6\. Sheet Preview/i }));
     fireEvent.click(screen.getByRole("button", { name: /Create & Attach to Campaign/i }));
 
     await waitFor(() => expect(createdPayloads.length).toBe(1));
-    const detail = createdPayloads[0]?.detail as {
+    const payload = createdPayloads[0] as {
       housing?: string;
       lifestyle?: string;
       trauma_team?: string;
       reputation?: number;
       backstory?: { starting_hooks?: { debt?: string } };
-      cyberware?: Array<{ name: string }>;
-      fashion?: Array<{ name: string }>;
+      starting_gear?: {
+        cyberware?: Array<{ name: string }>;
+        fashion?: Array<{ name: string }>;
+      };
     };
-    expect(detail?.housing).toBe("cube");
-    expect(detail?.lifestyle).toBe("Generic Prepak");
-    expect(detail?.trauma_team).toBe("Silver");
-    expect(detail?.reputation).toBe(4);
-    expect(detail?.backstory?.starting_hooks?.debt).toContain("Chromanticore");
-    expect(detail?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
-    expect(detail?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
+    expect(payload?.housing).toBe("cube");
+    expect(payload?.lifestyle).toBe("Generic Prepak");
+    expect(payload?.trauma_team).toBe("Silver");
+    expect(payload?.reputation).toBe(4);
+    expect(payload?.backstory?.starting_hooks?.debt).toContain("Chromanticore");
+    expect(payload?.starting_gear?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
+    expect(payload?.starting_gear?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
+  });
+
+  it("gates Character Creator and Campaign Architect behind BYOC when rules_indexed is false", async () => {
+    const campaign = {
+      id: "camp-byoc-gate",
+      name: "Locked Run",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      revision: 1,
+      state: { summary: "", scene: "", npcs: {}, clocks: {}, objectives: {} },
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({ auth_enabled: false, authenticated: true, role: "open", username: null, can_bootstrap: false, allow_self_signup: false });
+      }
+      if (url === "/v1/settings/public") {
+        return jsonResponse({ gm_thinking_mode: "balanced", mode: "two_pass", temperature: 0.75, max_tokens: 1200, require_character_to_speak: true });
+      }
+      if (url === "/v1/corebook/status") {
+        return jsonResponse({ rules_indexed: false, indexed_pages: 0, semantic_available: false, semantic_indexed: false, job: { status: "idle", stage: "idle", percent: 0, current: 0, total: 0, message: "" } });
+      }
+      if (url === "/v1/settings/all") {
+        return jsonResponse({ llm: { base_url: "http://127.0.0.1:11434/v1", model: "test", has_api_key: false, api_key_masked: "", temperature: 0.75, max_tokens: 1200, intro_max_tokens: 4096, timeout_s: 60, mode: "two_pass", gm_thinking_mode: "balanced" }, prompts: {}, defaults: {}, server: { lan_enabled: false, host: "127.0.0.1", port: 8765, public_url: "", allowed_origins: [] }, auth: { auth_enabled: false, allow_self_signup: false, pin_only_mode: false }, runtime: { lan_enabled: false } });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: false,
+          stat_names: [],
+          stats: {},
+          methods: [],
+          roles: [],
+          skills: [],
+          cultural_regions: [],
+          lifepath_tables: {},
+          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
+          fashion: [],
+          campaign_presets: { districts: [], factions: [], caper_styles: [], screamsheet_hooks: [] },
+        });
+      }
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({ campaign_id: campaign.id, nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ action: "list_campaigns", result: [campaign] });
+        if (body.action === "list_characters") return jsonResponse({ action: "list_characters", result: [] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            action: "campaign_context",
+            result: { campaign, characters: [], clocks: [], solo: { revision: 0, runtime: { clock_minutes: 0, runs: {} }, characters: {} } },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    const campaignTab = await screen.findByRole("button", { name: /^Campaign$/i });
+    fireEvent.click(campaignTab);
+    const newCampaignBtn = await screen.findByRole("button", { name: /New Campaign/i });
+    fireEvent.click(newCampaignBtn);
+    expect(await screen.findByText(/BYOC Setup Required/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open BYOC Settings/i })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /^Close$/i })[0]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Character$/i }));
+    const newCharBtn = await screen.findByRole("button", { name: /Open Character Sheet Creator/i });
+    fireEvent.click(newCharBtn);
+    expect(await screen.findByText(/BYOC Setup Required/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Open BYOC Settings/i }));
+    expect(await screen.findByText(/BYOC — Bring Your Own Corebook \(Required\)/i)).toBeInTheDocument();
+  });
+
+  it("renders icon-only per-textfield AI buttons and consistently collapsible Campaign Architect sections without page clutter", async () => {
+    const campaign = {
+      id: "camp-phase3",
+      name: "Phase 3 Test",
+      district: "Watson",
+      caper_style: "Heist / Extraction",
+      factions: ["Maelstrom"],
+      summary: "Test premise.",
+      opening_scene: "Rain on the dock.",
+      revision: 1,
+      state: { summary: "", scene: "", npcs: {}, clocks: {}, objectives: {} },
+    };
+    const aiRequests: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({ auth_enabled: false, authenticated: true, role: "admin", username: null, can_bootstrap: false, allow_self_signup: false });
+      }
+      if (url === "/v1/settings/public") {
+        return jsonResponse({ gm_thinking_mode: "balanced", mode: "two_pass", temperature: 0.75, max_tokens: 1200, require_character_to_speak: true });
+      }
+      if (url === "/v1/corebook/status") {
+        return jsonResponse({ rules_indexed: true, indexed_pages: 458, semantic_available: false, semantic_indexed: false, job: { status: "idle", stage: "idle", percent: 0, current: 0, total: 0, message: "" } });
+      }
+      if (url === "/v1/settings/all") {
+        return jsonResponse({ llm: { base_url: "http://127.0.0.1:11434/v1", model: "test", has_api_key: false, api_key_masked: "", temperature: 0.75, max_tokens: 1200, intro_max_tokens: 4096, timeout_s: 60, mode: "two_pass", gm_thinking_mode: "balanced" }, prompts: {}, defaults: {}, server: { lan_enabled: false, host: "127.0.0.1", port: 8765, public_url: "", allowed_origins: [] }, auth: { auth_enabled: false, allow_self_signup: false, pin_only_mode: false }, runtime: { lan_enabled: false } });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url === "/v1/creation/reference") {
+        return jsonResponse({
+          rules_indexed: true,
+          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+          stats: { INT: {}, REF: {}, DEX: {}, TECH: {}, COOL: {}, WILL: {}, LUCK: {}, MOVE: {}, BODY: {}, EMP: {} },
+          methods: [
+            { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
+          ],
+          roles: [
+            {
+              name: "Solo",
+              ability: "Combat Awareness",
+              ability_summary: "Tactical edge.",
+              tagline: "Mercenary",
+              best_for: "Combat.",
+              key_stats: ["REF", "BODY"],
+              page: 144,
+              templates: [[6, 8, 7, 5, 7, 6, 6, 6, 7, 5]],
+              skills: {},
+              starting_weapons: [],
+              starting_armor: [],
+              starting_outfit: [],
+              starting_cyberware: [],
+              starting_hl: 0,
+              role_lifepath: [],
+              packages: { weapons: [], armor: [], gear: [], cyberware: [] },
+            },
+          ],
+          skills: [],
+          role_templates: { Solo: [{ INT: 6, REF: 8, DEX: 7, TECH: 5, COOL: 7, WILL: 6, LUCK: 6, MOVE: 6, BODY: 7, EMP: 5 }] },
+          role_starter_skills: { Solo: {} },
+          role_packages: { Solo: { weapons: [], armor: [], gear: [], cyberware: [] } },
+          shop: { weapon: [], armor: [], gear: [], cyberware: [], ammo: [], attachment: [], service: [], housing: [] },
+          fashion: [],
+          fashion_matrix: [],
+          housing_tiers: [],
+          lifestyles: [],
+          trauma_team_plans: [],
+          cultural_regions: ["North American"],
+          lifepath_tables: {
+            cultural_regions: ["North American"],
+            cultural_languages: { "North American": ["English"] },
+            personality: ["Stoic"],
+            clothing_style: ["Generic Chic"],
+            hairstyle: ["Short"],
+            affectation: ["Mirrorshades"],
+            value_most: ["Honor"],
+            feelings_about_people: ["Neutral"],
+            valued_person: ["Mentor"],
+            valued_possession: ["Watch"],
+            family_background: ["Corporate"],
+            childhood_environment: ["Suburbs"],
+            family_crisis: ["None"],
+            life_goal: ["Survive"],
+            friends: ["Partner in crime"],
+            enemies_who: ["Ex-friend"],
+            enemies_cause: ["Betrayal"],
+            enemies_backup: ["A gang"],
+            enemies_revenge: ["Get even"],
+            tragic_love: ["Lost contact"],
+            role_lifepath: {},
+          },
+          campaign_presets: {
+            districts: [{ name: "Watson", zone_type: "Moderate", threat_rating: "Moderate", summary: "Neon docks", printed_page: 298 }],
+            caper_styles: [{ id: "heist", name: "Heist / Extraction", summary: "Clean grab", printed_page: 393 }],
+            factions: [{ name: "Maelstrom", type: "Gang", summary: "Chrome fanatics", printed_page: 310 }],
+            screamsheet_hooks: ["Dock 4 lockdown"],
+          },
+        });
+      }
+      if (url === "/v1/campaigns/presets") {
+        return jsonResponse({
+          districts: [{ name: "Watson", zone_type: "Moderate", threat_rating: "Moderate", summary: "Neon docks", printed_page: 298 }],
+          caper_styles: [{ id: "heist", name: "Heist / Extraction", summary: "Clean grab", printed_page: 393 }],
+          factions: [{ name: "Maelstrom", type: "Gang", summary: "Chrome fanatics", printed_page: 310 }],
+          screamsheet_hooks: ["Dock 4 lockdown"],
+        });
+      }
+      if (url === "/v1/chat/tree") {
+        return jsonResponse({ campaign_id: campaign.id, nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/creation/ai-assist") {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        aiRequests.push(payload);
+        if (payload.entry_index !== undefined && payload.sub_field) {
+          return jsonResponse({
+            target: payload.target,
+            mode: payload.mode,
+            field: payload.field,
+            entry_index: payload.entry_index,
+            sub_field: payload.sub_field,
+            value: `AI ${payload.field} ${payload.sub_field}`,
+          });
+        }
+        if (payload.field) {
+          return jsonResponse({
+            target: payload.target,
+            mode: payload.mode,
+            field: payload.field,
+            [payload.field]: `AI ${payload.field}`,
+          });
+        }
+        return jsonResponse({});
+      }
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ action: "list_campaigns", result: [campaign] });
+        if (body.action === "list_characters") return jsonResponse({ action: "list_characters", result: [] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            action: "campaign_context",
+            result: { campaign, characters: [], clocks: [], solo: { revision: 0, runtime: { clock_minutes: 0, runs: {} }, characters: {} } },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    const campaignTab = await screen.findByRole("button", { name: /^Campaign$/i });
+    fireEvent.click(campaignTab);
+    const newCampaignBtn = await screen.findByRole("button", { name: /New Campaign/i });
+    fireEvent.click(newCampaignBtn);
+
+    // Campaign Architect sections are all expanded by default & consistently collapsible, without page numbers or Optional
+    await screen.findByRole("button", { name: /Setting & Style/i });
+    expect(screen.getByRole("button", { name: /Premise & Opening Scene/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Beat Chart Outline/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Starting NPCs .* & Objectives/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /World Builder Extras/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /GM Secrets & Opening Clocks/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Session Zero Dials/i })).toBeInTheDocument();
+
+    // No visible "Improve" or "Regen" text labels on icon-only FieldAiActions buttons
+    expect(screen.queryByText(/^Improve$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Regen$/)).not.toBeInTheDocument();
+
+    // No group-level AI buttons on Beat Chart, Starting NPCs, Starting Objectives, Opening Clock
+    expect(screen.queryByRole("button", { name: /Improve Beat Chart/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Improve Starting NPCs/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Improve Starting Objectives/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Improve Opening Clock/i })).not.toBeInTheDocument();
+
+    // Per-textfield AI button works on Gig Title and Clock Name
+    fireEvent.click(screen.getByRole("button", { name: /Improve Gig Title/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("AI gig_title")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate Clock Name/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("AI clock_name")).toBeInTheDocument());
+
+    // Close Campaign Creator and open Character Creator
+    fireEvent.click(screen.getByRole("button", { name: /Close Campaign Creator/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Character$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Open Character Sheet Creator/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /4\. Backstory & Lifepath/i }));
+
+    // Add a Friend and verify per-textfield AI buttons (no group-level Improve Friends)
+    fireEvent.click(screen.getByRole("button", { name: /^\+?\s*Friend$/i }));
+    expect(screen.queryByRole("button", { name: /Improve Friends/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Improve Friend 1 Note/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("AI friends note")).toBeInTheDocument());
+
+    // Per-textfield AI button on Street Reputation & Starting Hooks
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate Starting Debt/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("AI debt_hook")).toBeInTheDocument());
+
+    expect(aiRequests.some((r) => r.field === "gig_title" && r.mode === "expand")).toBe(true);
+    expect(aiRequests.some((r) => r.field === "friends" && r.entry_index === 0 && r.sub_field === "note")).toBe(true);
+    expect(aiRequests.some((r) => r.field === "debt_hook" && r.mode === "scratch")).toBe(true);
   });
 });
 

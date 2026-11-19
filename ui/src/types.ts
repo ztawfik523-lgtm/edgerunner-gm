@@ -538,7 +538,7 @@ export interface CreationStatInfo {
 }
 
 export interface CreationMethodInfo {
-  id: "streetrat" | "edgerunner" | "complete_package" | "freeform";
+  id: "streetrat" | "edgerunner" | "complete_package";
   name: string;
   badge: string;
   summary: string;
@@ -735,6 +735,8 @@ export interface CreationAiAssistRequest {
   target: "bio" | "contacts" | "campaign";
   mode: "scratch" | "expand";
   field?: string;
+  entry_index?: number;
+  sub_field?: string;
   guidance?: string;
   character?: {
     name?: string;
@@ -768,14 +770,29 @@ export interface CreationAiAssistRequest {
     summary?: string;
     established_history?: string;
     appearance?: string;
+    reputation_note?: string;
+    trauma_hook?: string;
+    addiction_hook?: string;
+    debt_hook?: string;
     friends?: CreationFriendEntry[];
     enemies?: CreationEnemyEntry[];
     tragic_love_affairs?: CreationLoveAffairEntry[];
     opening_scene?: string;
     gm_secrets?: string;
+    secret_entries?: Array<{ key: string; val: string }>;
     beats?: Record<string, string>;
     npcs?: Record<string, string>;
     objectives?: Record<string, string>;
+    discoveries?: Record<string, string>;
+    locations?: Array<{ name: string; district?: string; security?: string; notes?: string }>;
+    gig?: {
+      title?: string;
+      client?: string;
+      target?: string;
+      payout_eb?: number;
+      deadline?: string;
+      notes?: string;
+    };
     opening_clock?: { name?: string; segments?: number; note?: string };
   };
 }
@@ -784,6 +801,9 @@ export interface CreationAiAssistResponse {
   target: "bio" | "contacts" | "campaign";
   mode: "scratch" | "expand";
   field?: string;
+  entry_index?: number;
+  sub_field?: string;
+  value?: string;
   name?: string;
   district?: string;
   caper_style?: string;
@@ -792,6 +812,17 @@ export interface CreationAiAssistResponse {
   summary?: string;
   established_history?: string;
   appearance?: string;
+  reputation_note?: string;
+  trauma_hook?: string;
+  addiction_hook?: string;
+  debt_hook?: string;
+  gig_title?: string;
+  gig_client?: string;
+  gig_target?: string;
+  gig_deadline?: string;
+  gig_notes?: string;
+  clock_name?: string;
+  clock_note?: string;
   friends?: CreationFriendEntry[];
   enemies?: CreationEnemyEntry[];
   tragic_love_affairs?: CreationLoveAffairEntry[];

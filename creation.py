@@ -171,62 +171,48 @@ def _infer_body_armor_from_inventory(inventory: dict[str, int]) -> dict[str, Any
     return best
 
 
-_CREATION_CATALOG_CACHE: dict[str, dict[str, Any]] | None = None
+_CREATION_CATALOG_CACHE: dict[tuple[str, int, int], dict[str, dict[str, Any]]] = {}
 
 
-def _creation_catalog_by_norm() -> dict[str, dict[str, Any]]:
-    """Build a cached normalized lookup of canonical Corebook gear, weapons, armor, cyberware, etc."""
-    global _CREATION_CATALOG_CACHE
-    if _CREATION_CATALOG_CACHE is not None:
-        return _CREATION_CATALOG_CACHE
-    from creation_catalog import (
-        build_corebook_ammo_attachments_exotics,
-        build_corebook_armor,
-        build_corebook_cyberware_additions,
-        build_corebook_drugs,
-        build_corebook_gear,
-        build_corebook_hardware,
-        build_corebook_net_catalog,
-        build_corebook_services_housing_fashion,
-        build_corebook_vehicles,
-        build_corebook_weapons,
-        parse_hl_int,
-    )
+def _creation_catalog_by_norm(rules_path: str | Path | None = None) -> dict[str, dict[str, Any]]:
+    """Build a cached normalized lookup of gear, weapons, armor, cyberware, etc. from rules.sqlite."""
+    if rules_path is None:
+        return {}
+    resolved = Path(rules_path).expanduser().resolve()
+    if not resolved.is_file():
+        return {}
+    st = resolved.stat()
+    cache_key = (str(resolved), st.st_mtime_ns, st.st_size)
+    if cache_key in _CREATION_CATALOG_CACHE:
+        return _CREATION_CATALOG_CACHE[cache_key]
+
+    from creation_catalog import parse_hl_int
+    from library import load_corebook_entries
 
     index: dict[str, dict[str, Any]] = {}
-    groups = (
-        build_corebook_weapons(),
-        build_corebook_armor(),
-        build_corebook_gear(),
-        build_corebook_hardware(),
-        build_corebook_vehicles(),
-        build_corebook_drugs(),
-        build_corebook_cyberware_additions(),
-        build_corebook_net_catalog(),
-        build_corebook_ammo_attachments_exotics(),
-        build_corebook_services_housing_fashion(),
-    )
-    for entries in groups:
-        for entry in entries:
-            if not isinstance(entry, dict) or not entry.get("name"):
-                continue
-            stats = dict(entry.get("stats") or {})
-            cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else int(stats.get("cost_eb") or 0)
-            hl = stats.get("hl") if isinstance(stats.get("hl"), int) else parse_hl_int(stats.get("humanity_loss"))
-            item_meta = {
-                "id": str(entry.get("id") or f"corebook:{entry.get('category', 'gear')}:{_norm_skill(entry['name']).replace(' ', '_')}"),
-                "name": str(entry["name"]),
-                "category": str(entry.get("category") or "gear"),
-                "cost": cost_eb,
-                "hl": hl,
-                "stats": stats,
-            }
-            norm_key = _norm_skill(entry["name"])
-            index.setdefault(norm_key, item_meta)
-            collapsed = norm_key.replace(" ", "")
-            if collapsed:
-                index.setdefault(collapsed, item_meta)
-    _CREATION_CATALOG_CACHE = index
+    for entry in load_corebook_entries(resolved):
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        cat = str(entry.get("category") or "gear")
+        if cat in {"skill", "role", "rule", "location", "faction", "screamsheet"}:
+            continue
+        stats = dict(entry.get("stats") or {})
+        cost_eb = entry.get("cost_eb") if isinstance(entry.get("cost_eb"), int) else int(stats.get("cost_eb") or 0)
+        hl = stats.get("hl") if isinstance(stats.get("hl"), int) else parse_hl_int(stats.get("humanity_loss"))
+        item_meta = {
+            "id": str(entry.get("id") or f"corebook:{cat}:{_norm_skill(entry['name']).replace(' ', '_')}"),
+            "name": str(entry["name"]),
+            "category": cat,
+            "cost": cost_eb,
+            "hl": hl,
+            "stats": stats,
+        }
+        norm_key = _norm_skill(entry["name"])
+        index.setdefault(norm_key, item_meta)
+        collapsed = norm_key.replace(" ", "")
+        if collapsed:
+            index.setdefault(collapsed, item_meta)
+    _CREATION_CATALOG_CACHE[cache_key] = index
     return index
 
 
@@ -240,23 +226,9 @@ def _lookup_catalog_entry(cat_index: dict[str, dict[str, Any]], raw_name: str) -
     return cat_index.get(norm) or cat_index.get(norm.replace(" ", ""))
 
 
-def _fashion_matrix_price(raw_name: str) -> int | None:
-    try:
-        from creation_reference import FASHION_ITEMS
-    except Exception:
-        return None
-    norm = _norm_skill(raw_name)
-    collapsed = norm.replace(" ", "")
-    for item in FASHION_ITEMS:
-        fn = _norm_skill(str(item.get("name") or ""))
-        if fn == norm or (collapsed and fn.replace(" ", "") == collapsed):
-            return int(item.get("cost_eb") or 0)
-    return None
-
-
 def _match_catalog_items(inventory: dict[str, int], rules_path: str | Path) -> dict[str, dict[str, Any]]:
     matched: dict[str, dict[str, Any]] = {}
-    cat_index = _creation_catalog_by_norm()
+    cat_index = _creation_catalog_by_norm(rules_path)
     src_by_norm: dict[str, tuple[str, dict[str, Any]]] = {}
     try:
         from sourcecatalog import items as source_items
@@ -425,7 +397,7 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
                 equipment_detail["equipped_head_armor"] = inferred_head
         if isinstance(starting_gear.get("fashion"), list):
             fashion_items = [x for x in starting_gear["fashion"] if isinstance(x, (str, dict))]
-        cat_lookup = _creation_catalog_by_norm()
+        cat_lookup = _creation_catalog_by_norm(rules_path)
         fashion_names_norm: set[str] = set()
         fashion_total = 0
         for f_entry in fashion_items:
@@ -435,11 +407,8 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
                 if fnorm:
                     fashion_names_norm.add(fnorm)
                 meta_f = _lookup_catalog_entry(cat_lookup, fname) if fname else None
-                matrix_price = _fashion_matrix_price(fname) if fname else None
                 if meta_f is not None:
                     fashion_total += int(meta_f.get("cost") or 0)
-                elif matrix_price is not None:
-                    fashion_total += matrix_price
                 else:
                     fcost = f_entry.get("cost_eb")
                     if isinstance(fcost, int) and fcost >= 0:
@@ -450,10 +419,6 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
                 meta_f = _lookup_catalog_entry(cat_lookup, f_entry)
                 if meta_f is not None:
                     fashion_total += int(meta_f.get("cost") or 0)
-                else:
-                    mp = _fashion_matrix_price(f_entry)
-                    if mp is not None:
-                        fashion_total += mp
 
         known_cw_hl = 0
         known_gear_eb = 0
@@ -469,7 +434,7 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
         for inv_name, inv_qty in inventory.items():
             inv_norm = _norm_skill(inv_name)
             meta = _lookup_catalog_entry(cat_lookup, inv_name)
-            is_fashion = (meta is not None and meta.get("category") == "fashion") or (_fashion_matrix_price(inv_name) is not None)
+            is_fashion = meta is not None and meta.get("category") == "fashion"
             if inv_norm in fashion_names_norm:
                 continue
             if is_fashion:

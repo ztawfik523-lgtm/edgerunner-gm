@@ -1145,6 +1145,17 @@ export function App() {
       <CampaignCreatorModal
         open={campaignCreatorOpen}
         editCampaign={campaignCreatorEdit}
+        rulesIndexed={Boolean(health?.rules_indexed)}
+        onOpenByocSettings={
+          isEffectiveAdmin
+            ? () => {
+                setCampaignCreatorOpen(false);
+                setCampaignCreatorEdit(null);
+                setSettingsInitialTab("corebook");
+                setSettingsOpen(true);
+              }
+            : undefined
+        }
         onClose={() => {
           setCampaignCreatorOpen(false);
           setCampaignCreatorEdit(null);
@@ -1192,6 +1203,16 @@ export function App() {
           campaignId={campaignContext.campaign.id}
           campaignRevision={campaignContext.campaign.revision}
           soloRevision={campaignContext.solo.revision}
+          rulesIndexed={Boolean(health?.rules_indexed)}
+          onOpenByocSettings={
+            isEffectiveAdmin
+              ? () => {
+                  setCharacterCreatorOpen(false);
+                  setSettingsInitialTab("corebook");
+                  setSettingsOpen(true);
+                }
+              : undefined
+          }
           onClose={() => setCharacterCreatorOpen(false)}
           onCreated={async (id, charName) => {
             setPreferredCharacterId(id);

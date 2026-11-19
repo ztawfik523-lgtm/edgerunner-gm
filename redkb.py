@@ -935,6 +935,15 @@ def make_api(
                     content={"detail": "Admin permission required to create or modify campaigns and sessions.", "request_id": request_id},
                 )
 
+            if action_name in {"create_character", "create_player_character"} and not Path(db_path).expanduser().is_file():
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": "BYOC Required: Upload and index your Cyberpunk RED Corebook PDF in Settings -> BYOC before creating characters.",
+                        "request_id": request_id,
+                    },
+                )
+
             # Automatically stamp owner_username when a signed-in user creates a character
             if uname and action_name == "create_character":
                 det = dict(args_payload.get("detail") or {}) if isinstance(args_payload.get("detail"), dict) else {}
@@ -1136,7 +1145,7 @@ def make_api(
                 "lan_enabled": lan_enabled,
                 "pin_required": bool(resolved_pin),
                 "auth_enabled": sess["auth_enabled"],
-                "detail": "Corebook PDF not indexed yet. Homebrew and campaign play remain available.",
+                "detail": "BYOC PDF upload is required. Upload your Cyberpunk RED Corebook PDF in Settings -> BYOC.",
             }
             if sess["role"] in {"open", "admin"}:
                 payload["db_path"] = str(resolved)
@@ -1437,6 +1446,14 @@ def make_api(
         blocked = require_player(request, request_id)
         if blocked is not None:
             return blocked
+        if not Path(db_path).expanduser().is_file():
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "BYOC Required: Upload and index your Cyberpunk RED Corebook PDF in Settings -> BYOC before using AI assist.",
+                    "request_id": request_id,
+                },
+            )
         try:
             body = await request.json()
         except Exception:

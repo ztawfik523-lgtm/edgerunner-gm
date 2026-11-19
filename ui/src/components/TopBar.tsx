@@ -180,7 +180,7 @@ export function TopBar({
               <button
                 type="button"
                 onClick={onOpenCorebookSettings}
-                title="Upload your Cyberpunk RED Corebook PDF under Settings -> BYOC (Freeform & Homebrew play works without it)"
+                title="BYOC Required: Upload your Corebook PDF in Settings -> BYOC"
                 className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
               >
                 <BookOpen className="h-3 w-3" />
@@ -188,7 +188,7 @@ export function TopBar({
               </button>
             ) : (
               <span
-                title={health.detail ?? "No Corebook uploaded yet (Homebrew & Freeform play still active)"}
+                title={health.detail ?? "BYOC Required: Upload your Corebook PDF in Settings -> BYOC"}
                 className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200"
               >
                 <BookOpen className="h-3 w-3" />

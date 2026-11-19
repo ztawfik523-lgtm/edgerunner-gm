@@ -18,6 +18,7 @@ import {
   HelpCircle,
   Heart,
   ImagePlus,
+  Lock,
   Minus,
   Palette,
   Plus,
@@ -33,7 +34,6 @@ import {
 } from "lucide-react";
 import {
   assistCharacterCreation,
-  createAndAttachCharacter,
   createRulesPlayerCharacter,
   fetchCreationReference,
 } from "../api";
@@ -68,6 +68,8 @@ interface CharacterCreatorModalProps {
   campaignId: string;
   campaignRevision: number;
   soloRevision: number;
+  rulesIndexed?: boolean;
+  onOpenByocSettings?: () => void;
   onClose: () => void;
   onCreated: (characterId: string, name: string) => Promise<void>;
   onNotify: (msg: string) => void;
@@ -355,8 +357,9 @@ function defaultCompleteSkills(roleInfo: CreationRoleInfo | undefined): Record<s
 export function CharacterCreatorModal({
   open,
   campaignId,
-  campaignRevision,
   soloRevision,
+  rulesIndexed = true,
+  onOpenByocSettings,
   onClose,
   onCreated,
   onNotify,
@@ -377,7 +380,7 @@ export function CharacterCreatorModal({
   const [pronouns, setPronouns] = useState("");
   const [age, setAge] = useState("");
   const [conceptTagline, setConceptTagline] = useState("");
-  const [method, setMethod] = useState<"streetrat" | "edgerunner" | "complete_package" | "freeform">("streetrat");
+  const [method, setMethod] = useState<"streetrat" | "edgerunner" | "complete_package">("streetrat");
   const [selectedRole, setSelectedRole] = useState("Solo");
 
   // Role-specific mechanical choices
@@ -425,7 +428,6 @@ export function CharacterCreatorModal({
   });
   const [skillFilter, setSkillFilter] = useState("");
   const [skillGroupFilter, setSkillGroupFilter] = useState<string>("All");
-  const [customNewSkill, setCustomNewSkill] = useState("");
   const [specBasePick, setSpecBasePick] = useState<"Language" | "Local Expert" | "Science" | "Play Instrument" | "Martial Arts">("Language");
   const [specFocusInput, setSpecFocusInput] = useState("");
 
@@ -456,7 +458,12 @@ export function CharacterCreatorModal({
   const [traumaHook, setTraumaHook] = useState("");
   const [addictionHook, setAddictionHook] = useState("");
   const [debtHook, setDebtHook] = useState("");
-  const [showRepHooks, setShowRepHooks] = useState(false);
+  const [showBioSection, setShowBioSection] = useState(true);
+  const [showOriginsSection, setShowOriginsSection] = useState(true);
+  const [showRoleLifepathSection, setShowRoleLifepathSection] = useState(true);
+  const [showContactsSection, setShowContactsSection] = useState(true);
+  const [showRepHooks, setShowRepHooks] = useState(true);
+  const roleOptionsRef = useRef<HTMLDivElement | null>(null);
   const [ammoCaliber, setAmmoCaliber] = useState("");
   const [aiBioGuidance, setAiBioGuidance] = useState("");
   const [aiContactsGuidance, setAiContactsGuidance] = useState("");
@@ -487,7 +494,6 @@ export function CharacterCreatorModal({
   const [shopSearch, setShopSearch] = useState("");
   const [cartItems, setCartItems] = useState<Array<{ name: string; category: string; cost_eb: number; hl?: number; sp?: number; location?: string; install?: string; notes?: string; qty: number }>>([]);
   const [selectedFashion, setSelectedFashion] = useState<Array<{ name: string; cost_eb: number; style: string }>>([]);
-  const [freeformMoney, setFreeformMoney] = useState(1500);
   const [draftRestored, setDraftRestored] = useState(false);
 
   const draftKey = `character:${campaignId}`;
@@ -522,7 +528,7 @@ export function CharacterCreatorModal({
     setPronouns("");
     setAge("");
     setConceptTagline("");
-    setMethod(refData && !refData.rules_indexed ? "freeform" : "streetrat");
+    setMethod("streetrat");
     setSelectedRole("Solo");
     setTechMakerRanks({
       "Field Expertise": 2,
@@ -589,7 +595,6 @@ export function CharacterCreatorModal({
     setCyberwareChoice2("");
     setCartItems([]);
     setSelectedFashion([]);
-    setFreeformMoney(1500);
     setDraftRestored(false);
     prevRoleRef.current = null;
   };
@@ -669,7 +674,6 @@ export function CharacterCreatorModal({
       if (typeof saved.cyberwareChoice2 === "string") setCyberwareChoice2(saved.cyberwareChoice2);
       if (Array.isArray(saved.cartItems)) setCartItems(saved.cartItems as typeof cartItems);
       if (Array.isArray(saved.selectedFashion)) setSelectedFashion(saved.selectedFashion as typeof selectedFashion);
-      if (typeof saved.freeformMoney === "number") setFreeformMoney(saved.freeformMoney);
       setDraftRestored(true);
     } else {
       setDraftRestored(false);
@@ -765,7 +769,6 @@ export function CharacterCreatorModal({
       cyberwareChoice2,
       cartItems,
       selectedFashion,
-      freeformMoney,
     });
   }, [
     open,
@@ -834,7 +837,6 @@ export function CharacterCreatorModal({
     cyberwareChoice2,
     cartItems,
     selectedFashion,
-    freeformMoney,
   ]);
 
   useEffect(() => {
@@ -845,9 +847,6 @@ export function CharacterCreatorModal({
       .then((data) => {
         if (cancelled) return;
         setRefData(data);
-        if (!data.rules_indexed) {
-          setMethod("freeform");
-        }
       })
       .catch(() => {
         // Fallback works cleanly even if backend reference endpoint is unavailable
@@ -972,7 +971,7 @@ export function CharacterCreatorModal({
         resolved[langKey] = 4;
       }
     }
-    if (selectedRole === "Medtech" && method !== "freeform") {
+    if (selectedRole === "Medtech") {
       const surg = (medtechAlloc.Surgery ?? 0) * 2;
       const mtech = (medtechAlloc.Pharmaceuticals ?? 0) + (medtechAlloc["Cryosystem Operation"] ?? 0);
       if (surg > 0) resolved["Surgery"] = Math.max(resolved["Surgery"] ?? 0, surg);
@@ -1013,7 +1012,7 @@ export function CharacterCreatorModal({
     let equippedWeapon: string | undefined;
     let equippedArmor: { name: string; sp: number } | undefined;
     let equippedHeadArmor: { name: string; sp: number } | undefined;
-    let money = freeformMoney;
+    let money = 500;
     let fashionSpent = 0;
     let spent = 0;
 
@@ -1104,7 +1103,7 @@ export function CharacterCreatorModal({
         inventory[f.name] = (inventory[f.name] ?? 0) + 1;
         fashionSpent += f.cost_eb;
       }
-      money = method === "complete_package" ? Math.max(0, 2550 - spent) : freeformMoney;
+      money = Math.max(0, 2550 - spent);
     }
 
     const totalHl = cyberware.reduce((acc, c) => acc + (Number.isFinite(c.hl) ? c.hl : 0), 0);
@@ -1119,7 +1118,7 @@ export function CharacterCreatorModal({
       spentEb: method === "complete_package" ? spent : 0,
       totalHl,
     };
-  }, [method, roleInfo, weaponChoices, outfitChoice, cyberwareChoice, cyberwareChoice2, cartItems, selectedFashion, freeformMoney]);
+  }, [method, roleInfo, weaponChoices, outfitChoice, cyberwareChoice, cyberwareChoice2, cartItems, selectedFashion]);
 
   const { effectiveBody, subdermalSp, subdermalName } = useMemo(() => {
     const graftedCount = gearSummary.cyberware.filter((c) => /grafted muscle/i.test(c.name)).length;
@@ -1237,7 +1236,7 @@ export function CharacterCreatorModal({
       }),
       ...gearSummary.cyberware.filter((c) => isCyberdeckUnit(c.name)).map((c) => ({ name: c.name, qty: 1 })),
     ];
-    const hasDeck = deckCandidates.length > 0 || (method !== "complete_package" && method !== "freeform" && selectedRole === "Netrunner");
+    const hasDeck = deckCandidates.length > 0 || (method !== "complete_package" && selectedRole === "Netrunner");
     let capacity = 0;
     if (deckCandidates.length > 0) {
       for (const dItem of deckCandidates) {
@@ -1409,11 +1408,11 @@ export function CharacterCreatorModal({
         issues.push("All 20 Role Skills in Edgerunner must be between 2 and 6.");
       }
     }
-    if (selectedRole === "Tech" && method !== "freeform") {
+    if (selectedRole === "Tech") {
       const sum = Object.values(techMakerRanks).reduce((a, b) => a + b, 0);
       if (sum !== 8) issues.push(`Tech Maker specialty points must total 8 (currently ${sum}).`);
     }
-    if (selectedRole === "Medtech" && method !== "freeform") {
+    if (selectedRole === "Medtech") {
       const sum = Object.values(medtechAlloc).reduce((a, b) => a + b, 0);
       if (sum !== 4) issues.push(`Medtech Medicine specialty points must total 4 (currently ${sum}).`);
     }
@@ -1558,15 +1557,27 @@ export function CharacterCreatorModal({
 
   const aiBusy = aiBusyKey !== null;
 
-  const handleAiAssist = async (target: "bio" | "contacts", assistMode: "scratch" | "expand", field?: string) => {
+  const handleAiAssist = async (
+    target: "bio" | "contacts",
+    assistMode: "scratch" | "expand",
+    field?: string,
+    entryIndex?: number,
+    subField?: string,
+  ) => {
     if (aiBusy) return;
     setAiError("");
-    setAiBusyKey(`${target}:${assistMode}:${field ?? "all"}`);
+    const busyKey =
+      entryIndex !== undefined && subField
+        ? `${target}:${assistMode}:${field ?? "all"}:${entryIndex}:${subField}`
+        : `${target}:${assistMode}:${field ?? "all"}`;
+    setAiBusyKey(busyKey);
     try {
       const res = await assistCharacterCreation({
         target,
         mode: assistMode,
         ...(field ? { field } : {}),
+        ...(entryIndex !== undefined ? { entry_index: entryIndex } : {}),
+        ...(subField ? { sub_field: subField } : {}),
         guidance: (target === "bio" ? aiBioGuidance : aiContactsGuidance).trim() || undefined,
         character: {
           name: name.trim() || realName.trim() || "Unnamed Edgerunner",
@@ -1608,6 +1619,10 @@ export function CharacterCreatorModal({
           summary: backstorySummary.trim() || undefined,
           established_history: establishedHistory.trim() || undefined,
           appearance: appearanceNotes.trim() || undefined,
+          reputation_note: reputationNote.trim() || undefined,
+          trauma_hook: traumaHook.trim() || undefined,
+          addiction_hook: addictionHook.trim() || undefined,
+          debt_hook: debtHook.trim() || undefined,
           friends,
           enemies,
           tragic_love_affairs: loveAffairs,
@@ -1618,6 +1633,10 @@ export function CharacterCreatorModal({
         if ((!field || field === "summary") && res.summary) setBackstorySummary(res.summary);
         if ((!field || field === "established_history") && res.established_history) setEstablishedHistory(res.established_history);
         if ((!field || field === "appearance") && res.appearance) setAppearanceNotes(res.appearance);
+        if (field === "reputation_note" && res.reputation_note) setReputationNote(res.reputation_note);
+        if (field === "trauma_hook" && res.trauma_hook) setTraumaHook(res.trauma_hook);
+        if (field === "addiction_hook" && res.addiction_hook) setAddictionHook(res.addiction_hook);
+        if (field === "debt_hook" && res.debt_hook) setDebtHook(res.debt_hook);
         const label =
           field === "concept"
             ? "Concept"
@@ -1627,24 +1646,43 @@ export function CharacterCreatorModal({
                 ? "Established History"
                 : field === "appearance"
                   ? "Signature Look"
-                  : "backstory & history";
-        onNotify(assistMode === "scratch" ? "AI generated backstory & established history from sheet + Corebook." : `AI improved your ${label}.`);
+                  : field === "reputation_note"
+                    ? "Reputation Reason"
+                    : field === "trauma_hook"
+                      ? "Trauma Scar"
+                      : field === "addiction_hook"
+                        ? "Addiction / Vice"
+                        : field === "debt_hook"
+                          ? "Starting Debt"
+                          : "backstory & history";
+        onNotify(assistMode === "scratch" ? `AI generated ${label} from sheet + Corebook.` : `AI improved your ${label}.`);
       } else {
-        if ((!field || field === "friends") && res.friends?.length) setFriends(res.friends);
-        if ((!field || field === "enemies") && res.enemies?.length) {
-          setEnemies(
-            res.enemies.map((e) => ({
-              who: e.who,
-              name: e.name,
-              wronged: e.wronged === "I wronged them" ? "I wronged them" : "They wronged me",
-              cause: e.cause,
-              backup: e.backup,
-              revenge: e.revenge,
-            })),
-          );
-        }
-        if ((!field || field === "tragic_love_affairs") && res.tragic_love_affairs?.length) {
-          setLoveAffairs(res.tragic_love_affairs);
+        if (entryIndex !== undefined && subField && res.value !== undefined) {
+          const val = res.value;
+          if (field === "friends" && val) {
+            setFriends((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "enemies" && val) {
+            setEnemies((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          } else if (field === "tragic_love_affairs" && val) {
+            setLoveAffairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+          }
+        } else {
+          if ((!field || field === "friends") && res.friends?.length) setFriends(res.friends);
+          if ((!field || field === "enemies") && res.enemies?.length) {
+            setEnemies(
+              res.enemies.map((e) => ({
+                who: e.who,
+                name: e.name,
+                wronged: e.wronged === "I wronged them" ? "I wronged them" : "They wronged me",
+                cause: e.cause,
+                backup: e.backup,
+                revenge: e.revenge,
+              })),
+            );
+          }
+          if ((!field || field === "tragic_love_affairs") && res.tragic_love_affairs?.length) {
+            setLoveAffairs(res.tragic_love_affairs);
+          }
         }
         onNotify(
           assistMode === "scratch"
@@ -1740,99 +1778,43 @@ export function CharacterCreatorModal({
       const primaryName = name.trim() || realName.trim();
       const handleVal = name.trim() || primaryName;
       const realNameVal = realName.trim() || undefined;
-      let createdId = "";
-      if (method !== "freeform" && refData?.rules_indexed) {
-        const res = await createRulesPlayerCharacter(campaignId, soloRevision, {
-          name: primaryName,
-          handle: handleVal,
-          real_name: realNameVal,
-          real_name_hidden: realNameHidden,
-          gender: cleanGender || undefined,
-          pronouns: pronouns.trim() || undefined,
-          portrait_url: portraitUrl.trim() || undefined,
-          color: characterColor,
-          role: selectedRole,
-          method,
-          ...(method === "streetrat" ? { template_rolls: [streetratRoll] } : {}),
-          ...(method === "edgerunner" ? { template_rolls: edgerunnerRolls, skills: edgerunnerSkills } : {}),
-          ...(method === "complete_package" ? { stats: customStats, skills: customSkills } : {}),
-          specializations,
-          role_choices: buildRoleChoicesPayload(),
-          cultural_language: culturalLanguage.trim().toLowerCase() === "streetslang" ? undefined : culturalLanguage.trim() || undefined,
-          housing,
-          lifestyle,
-          trauma_team: traumaTeam,
-          reputation,
-          ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
-          ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
-          lifepath: lifepathPayload,
-          backstory: backstoryPayload,
-          starting_gear: {
-            inventory: gearSummary.inventory,
-            cyberware: gearSummary.cyberware,
-            humanity_loss: gearSummary.totalHl,
-            equipped_weapon: gearSummary.equippedWeapon,
-            equipped_armor: gearSummary.equippedArmor,
-            ...(gearSummary.equippedHeadArmor ? { equipped_head_armor: gearSummary.equippedHeadArmor } : {}),
-            fashion: selectedFashion,
-            money_spent_eb: gearSummary.spentEb,
-          },
-        });
-        createdId = res.character_id;
-      } else {
-        const created = await createAndAttachCharacter(campaignId, campaignRevision, {
-          name: primaryName,
-          stats: activeStats,
-          skills: effectiveSkills,
-          money: gearSummary.money,
+      const res = await createRulesPlayerCharacter(campaignId, soloRevision, {
+        name: primaryName,
+        handle: handleVal,
+        real_name: realNameVal,
+        real_name_hidden: realNameHidden,
+        gender: cleanGender || undefined,
+        pronouns: pronouns.trim() || undefined,
+        portrait_url: portraitUrl.trim() || undefined,
+        color: characterColor,
+        role: selectedRole,
+        method,
+        ...(method === "streetrat" ? { template_rolls: [streetratRoll] } : {}),
+        ...(method === "edgerunner" ? { template_rolls: edgerunnerRolls, skills: edgerunnerSkills } : {}),
+        ...(method === "complete_package" ? { stats: customStats, skills: customSkills } : {}),
+        specializations,
+        role_choices: buildRoleChoicesPayload(),
+        cultural_language: culturalLanguage.trim().toLowerCase() === "streetslang" ? undefined : culturalLanguage.trim() || undefined,
+        housing,
+        lifestyle,
+        trauma_team: traumaTeam,
+        reputation,
+        ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
+        ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
+        lifepath: lifepathPayload,
+        backstory: backstoryPayload,
+        starting_gear: {
           inventory: gearSummary.inventory,
-          humanity: startingHumanity,
-          detail: {
-            handle: handleVal,
-            ...(realNameVal ? { real_name: realNameVal } : {}),
-            real_name_hidden: realNameHidden,
-            ...(cleanGender ? { gender: cleanGender } : {}),
-            ...(pronouns.trim() ? { pronouns: pronouns.trim() } : {}),
-            ...(portraitUrl.trim() ? { portrait_url: portraitUrl.trim() } : {}),
-            color: characterColor,
-            roles: [{ role: selectedRole, rank: 4, choices: buildRoleChoicesPayload() }],
-            creation: {
-              method: "freeform",
-              initial_emp: activeStats.EMP,
-              ...(effectiveBody !== activeStats.BODY ? { effective_body: effectiveBody } : {}),
-              ...(effectiveBody !== activeStats.BODY || subdermalSp > 0
-                ? { cyberware_modifiers: { effective_body: effectiveBody, subdermal_sp: subdermalSp } }
-                : {}),
-            },
-            ...(effectiveBody !== activeStats.BODY ? { death_save: effectiveBody } : {}),
-            housing,
-            lifestyle,
-            ...(traumaTeam !== "None" ? { trauma_team: traumaTeam } : {}),
-            reputation,
-            ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
-            lifepath: lifepathPayload,
-            backstory: backstoryPayload,
-            cyberware: gearSummary.cyberware,
-            ...(gearSummary.equippedWeapon ? { equipped_weapon: gearSummary.equippedWeapon } : {}),
-            ...((() => {
-              const bodyArm = gearSummary.equippedArmor;
-              if (subdermalSp > 0 && (!bodyArm || bodyArm.sp < subdermalSp)) {
-                return { equipped_armor: { name: subdermalName, sp: subdermalSp } };
-              }
-              return bodyArm ? { equipped_armor: bodyArm } : {};
-            })()),
-            ...((() => {
-              const headArm = gearSummary.equippedHeadArmor;
-              if (subdermalSp > 0 && (!headArm || headArm.sp < subdermalSp)) {
-                return { equipped_head_armor: { name: subdermalName, sp: subdermalSp } };
-              }
-              return headArm ? { equipped_head_armor: headArm } : {};
-            })()),
-            ...(selectedFashion.length ? { fashion: selectedFashion } : {}),
-          },
-        });
-        createdId = created.id;
-      }
+          cyberware: gearSummary.cyberware,
+          humanity_loss: gearSummary.totalHl,
+          equipped_weapon: gearSummary.equippedWeapon,
+          equipped_armor: gearSummary.equippedArmor,
+          ...(gearSummary.equippedHeadArmor ? { equipped_head_armor: gearSummary.equippedHeadArmor } : {}),
+          fashion: selectedFashion,
+          money_spent_eb: gearSummary.spentEb,
+        },
+      });
+      const createdId = res.character_id;
 
       clearDraft(draftKey);
       await onCreated(createdId, primaryName);
@@ -1846,6 +1828,66 @@ export function CharacterCreatorModal({
   };
 
   if (!open) return null;
+
+  const effectiveRulesIndexed = rulesIndexed && (refData === null || refData.rules_indexed);
+  if (!effectiveRulesIndexed) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Character Creator"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+      >
+        <div className="cyber-hud-card w-full max-w-md rounded-xl border border-amber-500/40 bg-[#0b0f19] p-6 shadow-2xl space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Lock className="h-5 w-5 text-amber-400 shrink-0" />
+              <div>
+                <h2 className="font-cyber-display text-sm font-bold tracking-wide text-slate-100 uppercase">
+                  BYOC Setup Required
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Character Creator requires an indexed Cyberpunk RED Corebook PDF.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <p className="text-xs leading-relaxed text-slate-300">
+            Upload your own Cyberpunk RED Corebook PDF in <span className="font-semibold text-cyan-300">Settings → BYOC</span> to unlock Streetrat, Edgerunner, and Complete Package character creation.
+          </p>
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              Close
+            </button>
+            {onOpenByocSettings && (
+              <button
+                type="button"
+                onClick={onOpenByocSettings}
+                className="rounded-md bg-cyan-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500"
+              >
+                Open BYOC Settings
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const statDescriptions = refData?.stats;
   const methodsList: CreationMethodInfo[] = refData?.methods ?? [
@@ -1870,13 +1912,6 @@ export function CharacterCreatorModal({
       summary: "Full custom 62 STAT points, 86 Skill points, and 2,550 eb + 800 eb fashion.",
       rules: "13 Basic skills >= 2; buy any weapons, armor, and cyberware directly.",
     },
-    {
-      id: "freeform",
-      name: "Freeform / Custom Sheet",
-      badge: "Unrestricted",
-      summary: "Set any STATs, Skills, Backstory, and Gear with zero point-buy locks.",
-      rules: "Full creative freedom for house rules or imports.",
-    },
   ];
 
   const availableSkillsForEdit: CreationSkillInfo[] = (() => {
@@ -1897,7 +1932,7 @@ export function CharacterCreatorModal({
       });
     }
     const baseList = refData?.skills ?? [];
-    if (method === "complete_package" || method === "freeform") {
+    if (method === "complete_package") {
       const known = new Set(baseList.map((s) => (s.basic_skill_name || s.name).toLowerCase()));
       const extras: CreationSkillInfo[] = [];
       for (const skillName of Object.keys(customSkills)) {
@@ -2012,8 +2047,8 @@ export function CharacterCreatorModal({
     return "booster";
   };
 
-  const remainingGearEb = method === "complete_package" ? 2550 - gearSummary.spentEb : freeformMoney;
-  const remainingFashionEb = method === "complete_package" ? 800 - gearSummary.fashionSpent : freeformMoney;
+  const remainingGearEb = 2550 - gearSummary.spentEb;
+  const remainingFashionEb = 800 - gearSummary.fashionSpent;
 
   const shopItemsForCategory: CreationShopItem[] = (() => {
     if (shopCategory === "fashion") return [];
@@ -2110,12 +2145,95 @@ export function CharacterCreatorModal({
 
   const currentStepIdx = STEPS.findIndex((s) => s.id === step);
 
-  const busyFor = (target: "bio" | "contacts", field: string): "improve" | "regen" | null =>
-    aiBusyKey === `${target}:expand:${field}`
+  const busyFor = (target: "bio" | "contacts", field: string, entryIndex?: number, subField?: string): "improve" | "regen" | null => {
+    const suffix = entryIndex !== undefined && subField ? `${field}:${entryIndex}:${subField}` : field;
+    return aiBusyKey === `${target}:expand:${suffix}`
       ? "improve"
-      : aiBusyKey === `${target}:scratch:${field}`
+      : aiBusyKey === `${target}:scratch:${suffix}`
         ? "regen"
         : null;
+  };
+
+  const housingLifestyleCard = (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
+          Housing, Lifestyle &amp; Trauma Team
+        </span>
+        <span className="text-[11px] text-slate-400">
+          Month 1 baseline rent paid; monthly upkeep applies from Month 2.
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
+          <select
+            aria-label="Character Housing"
+            value={housing}
+            onChange={(e) => setHousing(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+          >
+            {(
+              refData?.housing_tiers ?? [
+                { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
+                { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
+                { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
+                { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
+                { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
+                { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
+                { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
+                { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
+                { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
+              ]
+            )
+              .filter((h) => !h.exec_only || selectedRole === "Exec")
+              .map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name} ({h.monthly_eb} eb/mo)
+                </option>
+              ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
+          <select
+            aria-label="Character Lifestyle"
+            value={lifestyle}
+            onChange={(e) => setLifestyle(e.target.value)}
+            className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+          >
+            {(
+              refData?.lifestyles ?? [
+                { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
+                { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
+                { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
+                { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
+              ]
+            ).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name} ({l.monthly_eb} eb/mo)
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
+          <select
+            aria-label="Trauma Team Plan"
+            value={traumaTeam}
+            onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
+            className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+          >
+            <option value="None">None (0 eb/mo)</option>
+            <option value="Silver">
+              Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
+            </option>
+            <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
 
   const modalNode = (
     <div
@@ -2379,7 +2497,11 @@ export function CharacterCreatorModal({
                         );
                       })}
                       <label
-                        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-200 hover:border-cyan-400"
+                        className={`relative inline-flex cursor-pointer items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-medium transition ${
+                          isHexColor(characterColor)
+                            ? "ring-1 ring-white/40"
+                            : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                        }`}
                         style={isHexColor(characterColor) ? resolveCharacterColor(characterColor).nameBadgeStyle : undefined}
                       >
                         <input
@@ -2387,7 +2509,11 @@ export function CharacterCreatorModal({
                           aria-label="Custom chat color wheel"
                           value={normalizeColorHex(characterColor)}
                           onChange={(e) => setCharacterColor(e.target.value)}
-                          className="h-3.5 w-4 cursor-pointer border-0 bg-transparent p-0"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        />
+                        <span
+                          className="h-2.5 w-2.5 rounded-full border border-white/20"
+                          style={{ backgroundColor: normalizeColorHex(characterColor) }}
                         />
                         <span>{isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}</span>
                       </label>
@@ -2428,7 +2554,7 @@ export function CharacterCreatorModal({
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {methodsList.map((m) => {
                       const active = method === m.id;
-                      const disabled = m.id !== "freeform" && refData !== null && !refData.rules_indexed;
+                      const disabled = refData !== null && !refData.rules_indexed;
                       return (
                         <button
                           key={m.id}
@@ -2478,15 +2604,31 @@ export function CharacterCreatorModal({
 
                 {/* All 10 Roles Grid */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Choose Your Role (Starts at Rank 4)
                     </span>
-                    <span className="text-[11px] text-slate-400">Hover or select for Role Ability info</span>
+                    <div className="flex items-center gap-2">
+                      {["Tech", "Medtech", "Fixer", "Nomad", "Exec"].includes(selectedRole) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (typeof roleOptionsRef.current?.scrollIntoView === "function") {
+                              roleOptionsRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                            }
+                          }}
+                          className="rounded-full border border-amber-500/50 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/25"
+                        >
+                          Configure {selectedRole} Options ↓
+                        </button>
+                      )}
+                      <span className="text-[11px] text-slate-400">Hover or select for Role Ability info</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {(refData?.roles ?? []).map((role) => {
                       const active = selectedRole === role.name;
+                      const hasRoleOptions = ["Tech", "Medtech", "Fixer", "Nomad", "Exec"].includes(role.name);
                       return (
                         <button
                           key={role.name}
@@ -2494,7 +2636,7 @@ export function CharacterCreatorModal({
                           onMouseEnter={() =>
                             setInspector({
                               title: `${role.name} · Role Ability: ${role.ability}`,
-                              subtitle: `Corebook p.${role.page} · Key STATs: ${role.key_stats.join(", ")}`,
+                              subtitle: `Key STATs: ${role.key_stats.join(", ")}`,
                               body: role.ability_summary,
                               tip: role.best_for,
                             })
@@ -2502,20 +2644,36 @@ export function CharacterCreatorModal({
                           onFocus={() =>
                             setInspector({
                               title: `${role.name} · Role Ability: ${role.ability}`,
-                              subtitle: `Corebook p.${role.page} · Key STATs: ${role.key_stats.join(", ")}`,
+                              subtitle: `Key STATs: ${role.key_stats.join(", ")}`,
                               body: role.ability_summary,
                               tip: role.best_for,
                             })
                           }
-                          onClick={() => setSelectedRole(role.name)}
-                          className={`rounded-lg border p-2.5 text-left transition ${
+                          onClick={() => {
+                            setSelectedRole(role.name);
+                            if (hasRoleOptions) {
+                              requestAnimationFrame(() => {
+                                if (typeof roleOptionsRef.current?.scrollIntoView === "function") {
+                                  roleOptionsRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                }
+                              });
+                            }
+                          }}
+                          className={`rounded-lg border p-2 text-left transition ${
                             active
                               ? "border-rose-500/80 bg-rose-500/10"
                               : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-slate-100">{role.name}</span>
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-slate-100">{role.name}</span>
+                              {hasRoleOptions && (
+                                <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 font-mono text-[9px] font-semibold text-amber-200">
+                                  Role Options
+                                </span>
+                              )}
+                            </div>
                             <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
                               {role.ability}
                             </span>
@@ -2528,6 +2686,7 @@ export function CharacterCreatorModal({
                 </div>
 
                 {/* Role-Specific Ability Choices */}
+                <div ref={roleOptionsRef}>
                 {selectedRole === "Tech" && (
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -2670,7 +2829,7 @@ export function CharacterCreatorModal({
                 {selectedRole === "Exec" && (
                   <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-violet-200">Exec Team Member &amp; Corporate Perks (p. 153)</span>
+                      <span className="text-xs font-bold text-violet-200">Exec Team Member &amp; Corporate Perks</span>
                       <span className="rounded border border-violet-400/40 bg-violet-500/15 px-2 py-0.5 font-mono text-[10px] text-violet-200">
                         Includes Corporate Conapt + Trauma Team Silver
                       </span>
@@ -2724,6 +2883,7 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             )}
 
@@ -2736,7 +2896,6 @@ export function CharacterCreatorModal({
                       {method === "streetrat" && `${selectedRole} Template Row #${streetratRoll}`}
                       {method === "edgerunner" && `${selectedRole} Per-STAT Template Rolls`}
                       {method === "complete_package" && `Complete Package Point-Buy: ${statSum} / 62 pts`}
-                      {method === "freeform" && `Freeform STATs (Total: ${statSum})`}
                     </div>
                     <div className="text-[11px] text-slate-400">
                       Hover or click any STAT below for Corebook rules, formulas, and beginner advice.
@@ -2761,7 +2920,7 @@ export function CharacterCreatorModal({
                         <Dices className="h-3.5 w-3.5" /> Roll 1d10 × 10 STATs
                       </button>
                     )}
-                    {(method === "complete_package" || method === "freeform") && roleInfo && (
+                    {method === "complete_package" && roleInfo && (
                       <button
                         type="button"
                         onClick={() => setCustomStats(buildSmart62Stats(roleInfo.key_stats))}
@@ -2912,7 +3071,6 @@ export function CharacterCreatorModal({
                       {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
                       {method === "edgerunner" && `Role Skill Allocation: ${skillPointsSpent} / 86 pts`}
                       {method === "complete_package" && `Full Skill Allocation: ${skillPointsSpent} / 86 pts (x2 costs double)`}
-                      {method === "freeform" && `Freeform Skills (${Object.keys(effectiveSkills).length} trained)`}
                     </div>
                     <p className="text-[11px] text-slate-400">
                       Skill Check = STAT + Skill Rank + 1d10. Hover any skill to see what it does &amp; what DVs you beat.
@@ -2942,15 +3100,15 @@ export function CharacterCreatorModal({
                 </div>
 
                 {/* Native Cultural Language (+4 FREE!) & Choice Specializations */}
-                <div className="grid grid-cols-1 gap-2 rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3 sm:grid-cols-3">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold text-cyan-200">
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-500/30 bg-cyan-950/15 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
                       Free +4 Cultural Native Language
                     </label>
                     <select
                       value={culturalLanguage}
                       onChange={(e) => setCulturalLanguage(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                     >
                       {Array.from(
                         new Set(
@@ -2961,7 +3119,7 @@ export function CharacterCreatorModal({
                       ))}
                     </select>
                     {culturalLanguageOverlap && (
-                      <p className="mt-1 text-[10px] text-amber-300">
+                      <p className="text-[10px] text-amber-300">
                         Overlaps a paid skill above—pick another tongue (e.g. Spanish/Japanese) to avoid a stacking ruling.
                       </p>
                     )}
@@ -2978,14 +3136,14 @@ export function CharacterCreatorModal({
                       }),
                     );
                     return bases.map((specBase) => (
-                      <div key={specBase}>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                      <div key={specBase} className="flex items-center gap-2">
+                        <label className="text-[11px] font-semibold text-slate-300 whitespace-nowrap">
                           {specBase} Specialization
                         </label>
                         <select
                           value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
                           onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
                         >
                           {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
@@ -3026,8 +3184,8 @@ export function CharacterCreatorModal({
                   </div>
                 </div>
 
-                {/* Specialization & Custom Skill Builder (Complete Package & Freeform) */}
-                {(method === "complete_package" || method === "freeform") && (
+                {/* Specialization & Custom Skill Builder (Complete Package) */}
+                {method === "complete_package" && (
                   <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2.5">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
                       Add Skill Specialization (Language, Local Expert, Science, Instrument, Martial Arts)
@@ -3072,29 +3230,6 @@ export function CharacterCreatorModal({
                         + Add Specialization
                       </button>
                     </div>
-                    {method === "freeform" && (
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={customNewSkill}
-                          onChange={(e) => setCustomNewSkill(e.target.value)}
-                          placeholder="Or add any custom skill name…"
-                          className="flex-1 rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const s = customNewSkill.trim();
-                            if (!s) return;
-                            setCustomSkills((p) => ({ ...p, [s]: p[s] ?? 4 }));
-                            setCustomNewSkill("");
-                          }}
-                          className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-slate-700"
-                        >
-                          + Add Skill
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -3119,13 +3254,13 @@ export function CharacterCreatorModal({
                         : method === "complete_package" && sk.basic
                           ? 2
                           : 0;
-                    const maxRank = method === "freeform" ? 10 : 6;
+                    const maxRank = 6;
                     const lockedMedtechSkill =
                       method === "complete_package" && /^(Surgery|Medical Tech)$/i.test(sk.name);
 
                     const hoverPayload: InspectorCard = {
                       title: `${sk.name} (${sk.stat}${sk.cost === 2 ? " · x2 Cost" : ""})`,
-                      subtitle: `Base = ${statVal} ${sk.stat} + ${rank} Skill = +${baseTotal}${sk.printed_page ? ` · Corebook p.${sk.printed_page}` : ""}`,
+                      subtitle: `Base = ${statVal} ${sk.stat} + ${rank} Skill = +${baseTotal}`,
                       body: sk.description,
                       mechanics: `With Base +${baseTotal} + 1d10 (avg ${baseTotal + 5}), you easily clear Simple (DV 9) and Everyday (DV 13) tasks.${sk.cost === 2 ? " Difficult (x2): every +1 rank costs 2 skill points." : ""}`,
                       tip: sk.basic ? "One of the 13 Basic Skills every Edgerunner starts at Rank 2+." : undefined,
@@ -3239,20 +3374,27 @@ export function CharacterCreatorModal({
 
                 {/* A. Written Backstory & Established History */}
                 <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
-                      Written Backstory &amp; Already-Established History
-                    </div>
-                    <button
-                      type="button"
-                      disabled={aiBusy}
-                      onClick={() => void handleAiAssist("bio", "scratch")}
-                      className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
-                    >
-                      <Sparkles className="h-3 w-3" />
-                      {aiBusyKey === "bio:scratch:all" ? "Generating…" : "Generate from Scratch"}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowBioSection((v) => !v)}
+                    className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-cyan-300 hover:text-cyan-200"
+                  >
+                    <span>Written Backstory &amp; Already-Established History</span>
+                    <span className="font-mono text-[10px] text-cyan-400">{showBioSection ? "▲ Hide" : "▼ Expand"}</span>
+                  </button>
+                  {showBioSection && (
+                    <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          disabled={aiBusy}
+                          onClick={() => void handleAiAssist("bio", "scratch")}
+                          className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
+                        >
+                          <Sparkles className="h-3 w-3" />
+                          {aiBusyKey === "bio:scratch:all" ? "Generating…" : "Generate from Scratch"}
+                        </button>
+                      </div>
                   {aiError && (
                     <div className="rounded border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-200">
                       {aiError}
@@ -3354,14 +3496,22 @@ export function CharacterCreatorModal({
                       className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* B. General Lifepath Tables */}
                 <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Street Origins &amp; Background
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowOriginsSection((v) => !v)}
+                    className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300 hover:text-cyan-200"
+                  >
+                    <span>Street Origins &amp; Background</span>
+                    <span className="font-mono text-[10px] text-cyan-400">{showOriginsSection ? "▲ Hide" : "▼ Expand"}</span>
+                  </button>
+                  {showOriginsSection && (
+                  <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 flex items-center justify-between text-[11px] text-slate-300">
                         <span>Cultural Region</span>
@@ -3466,15 +3616,22 @@ export function CharacterCreatorModal({
                       );
                     })}
                   </div>
+                  )}
                 </div>
 
                 {/* C. Role-Specific Lifepath */}
                 {roleInfo && roleInfo.role_lifepath.length > 0 && (
                   <div className="space-y-2.5 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                    <div className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                      {selectedRole} Role Lifepath
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoleLifepathSection((v) => !v)}
+                      className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-amber-300 hover:text-amber-200"
+                    >
+                      <span>{selectedRole} Role Lifepath</span>
+                      <span className="font-mono text-[10px] text-cyan-400">{showRoleLifepathSection ? "▲ Hide" : "▼ Expand"}</span>
+                    </button>
+                    {showRoleLifepathSection && (
+                    <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
                       {roleInfo.role_lifepath.map((f) => (
                         <div key={f.key}>
                           <label className="mb-1 flex items-center justify-between text-[11px] text-slate-300">
@@ -3511,17 +3668,26 @@ export function CharacterCreatorModal({
                         </div>
                       ))}
                     </div>
+                    )}
                   </div>
                 )}
 
                 {/* D. Established Contacts: Friends, Enemies, Tragic Loves */}
                 <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowContactsSection((v) => !v)}
+                    className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-200 hover:text-cyan-200"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
                       <Users className="h-3.5 w-3.5 text-cyan-400" />
                       Friends, Enemies &amp; Past Romances
                     </span>
-                    <div className="flex flex-wrap gap-1.5">
+                    <span className="font-mono text-[10px] text-cyan-400">{showContactsSection ? "▲ Hide" : "▼ Expand"}</span>
+                  </button>
+                  {showContactsSection && (
+                    <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
+                      <div className="flex flex-wrap justify-end gap-1.5">
                       <button
                         type="button"
                         disabled={aiBusy}
@@ -3582,7 +3748,6 @@ export function CharacterCreatorModal({
                         <Plus className="h-3 w-3" /> Tragic Love
                       </button>
                     </div>
-                  </div>
                   <input
                     type="text"
                     value={aiContactsGuidance}
@@ -3601,37 +3766,60 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-emerald-300">Friends ({friends.length})</span>
-                        <FieldAiActions
-                          label="Friends"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "friends")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "friends")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "friends")}
-                        />
                       </div>
                       {friends.map((fr, idx) => (
                         <div key={idx} className="grid grid-cols-1 gap-2 rounded border border-emerald-500/30 bg-emerald-950/15 p-2.5 sm:grid-cols-12">
-                          <input
-                            type="text"
-                            value={fr.name}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                            placeholder="Friend name"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-3"
-                          />
-                          <input
-                            type="text"
-                            value={fr.relationship}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, relationship: e.target.value } : x)))}
-                            placeholder="Relationship"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-4"
-                          />
-                          <input
-                            type="text"
-                            value={fr.note}
-                            onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))}
-                            placeholder="Shared history / favor"
-                            className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 sm:col-span-4"
-                          />
+                          <div className="flex items-center gap-1 sm:col-span-3">
+                            <input
+                              type="text"
+                              value={fr.name}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                              placeholder="Friend name"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Friend ${idx + 1} Name`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "name")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "name")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "name")}
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 sm:col-span-4">
+                            <input
+                              type="text"
+                              value={fr.relationship}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, relationship: e.target.value } : x)))}
+                              placeholder="Relationship"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Friend ${idx + 1} Relationship`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "relationship")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "relationship")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "relationship")}
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 sm:col-span-4">
+                            <input
+                              type="text"
+                              value={fr.note}
+                              onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))}
+                              placeholder="Shared history / favor"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Friend ${idx + 1} Note`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "friends", idx, "note")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "friends", idx, "note")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "friends", idx, "note")}
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => setFriends((p) => p.filter((_, i) => i !== idx))}
@@ -3648,31 +3836,44 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-rose-300">Enemies ({enemies.length})</span>
-                        <FieldAiActions
-                          label="Enemies"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "enemies")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "enemies")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "enemies")}
-                        />
                       </div>
                       {enemies.map((en, idx) => (
                         <div key={idx} className="space-y-1.5 rounded border border-rose-500/30 bg-rose-950/15 p-2.5 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              type="text"
-                              value={en.name}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                              placeholder="Enemy name"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                            />
-                            <input
-                              type="text"
-                              value={en.who}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, who: e.target.value } : x)))}
-                              placeholder="Who they are"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.name}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                                placeholder="Enemy name"
+                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              />
+                              <FieldAiActions
+                                label={`Enemy ${idx + 1} Name`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "name")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "name")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "name")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.who}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, who: e.target.value } : x)))}
+                                placeholder="Who they are"
+                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              />
+                              <FieldAiActions
+                                label={`Enemy ${idx + 1} Role`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "who")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "who")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "who")}
+                              />
+                            </div>
                             <select
                               value={en.wronged}
                               onChange={(e) =>
@@ -3694,27 +3895,57 @@ export function CharacterCreatorModal({
                             </button>
                           </div>
                           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                            <input
-                              type="text"
-                              value={en.cause}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, cause: e.target.value } : x)))}
-                              placeholder="What caused it"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
-                            <input
-                              type="text"
-                              value={en.backup}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, backup: e.target.value } : x)))}
-                              placeholder="What they can throw at you"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
-                            <input
-                              type="text"
-                              value={en.revenge}
-                              onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, revenge: e.target.value } : x)))}
-                              placeholder="Sweet revenge"
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.cause}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, cause: e.target.value } : x)))}
+                                placeholder="What caused it"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                label={`Enemy ${idx + 1} Cause`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "cause")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "cause")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "cause")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.backup}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, backup: e.target.value } : x)))}
+                                placeholder="What they can throw at you"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                label={`Enemy ${idx + 1} Backup`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "backup")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "backup")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "backup")}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={en.revenge}
+                                onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, revenge: e.target.value } : x)))}
+                                placeholder="Sweet revenge"
+                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                              />
+                              <FieldAiActions
+                                label={`Enemy ${idx + 1} Revenge`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("contacts", "enemies", idx, "revenge")}
+                                onImprove={() => void handleAiAssist("contacts", "expand", "enemies", idx, "revenge")}
+                                onRegen={() => void handleAiAssist("contacts", "scratch", "enemies", idx, "revenge")}
+                              />
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -3725,30 +3956,43 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-violet-300">Past Romances ({loveAffairs.length})</span>
-                        <FieldAiActions
-                          label="Romances"
-                          disabled={aiBusy}
-                          busyAction={busyFor("contacts", "tragic_love_affairs")}
-                          onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs")}
-                          onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs")}
-                        />
                       </div>
                       {loveAffairs.map((lv, idx) => (
                         <div key={idx} className="flex flex-wrap items-center gap-2 rounded border border-violet-500/30 bg-violet-950/15 p-2.5 text-xs">
-                          <input
-                            type="text"
-                            value={lv.name}
-                            onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
-                            placeholder="Lover's name"
-                            className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
-                          <input
-                            type="text"
-                            value={lv.outcome}
-                            onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, outcome: e.target.value } : x)))}
-                            placeholder="What happened?"
-                            className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={lv.name}
+                              onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                              placeholder="Lover's name"
+                              className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Romance ${idx + 1} Name`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "tragic_love_affairs", idx, "name")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs", idx, "name")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs", idx, "name")}
+                            />
+                          </div>
+                          <div className="flex min-w-[200px] flex-1 items-center gap-1">
+                            <input
+                              type="text"
+                              value={lv.outcome}
+                              onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, outcome: e.target.value } : x)))}
+                              placeholder="What happened?"
+                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            />
+                            <FieldAiActions
+                              label={`Romance ${idx + 1} Outcome`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("contacts", "tragic_love_affairs", idx, "outcome")}
+                              onImprove={() => void handleAiAssist("contacts", "expand", "tragic_love_affairs", idx, "outcome")}
+                              onRegen={() => void handleAiAssist("contacts", "scratch", "tragic_love_affairs", idx, "outcome")}
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => setLoveAffairs((p) => p.filter((_, i) => i !== idx))}
@@ -3760,6 +4004,8 @@ export function CharacterCreatorModal({
                       ))}
                     </div>
                   )}
+                    </div>
+                  )}
                 </div>
 
                 {/* E. Street Reputation & Starting Trauma / Debt Hooks */}
@@ -3769,7 +4015,7 @@ export function CharacterCreatorModal({
                     onClick={() => setShowRepHooks((v) => !v)}
                     className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-200 hover:text-cyan-200"
                   >
-                    <span>Street Reputation &amp; Starting Hooks (p. 193 · Optional)</span>
+                    <span>Street Reputation &amp; Starting Hooks</span>
                     <span className="font-mono text-[10px] text-cyan-400">{showRepHooks ? "▲ Hide" : "▼ Expand"}</span>
                   </button>
                   {showRepHooks && (
@@ -3789,9 +4035,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Reputation Reason / Word on the Street
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Reputation Reason / Word on the Street
+                          </label>
+                          <FieldAiActions
+                            label="Reputation Reason"
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "reputation_note")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "reputation_note")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "reputation_note")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={reputationNote}
@@ -3801,9 +4057,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Trauma / Cyberpsychosis Scar
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Trauma / Cyberpsychosis Scar
+                          </label>
+                          <FieldAiActions
+                            label="Trauma Scar"
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "trauma_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "trauma_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "trauma_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={traumaHook}
@@ -3813,9 +4079,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Addiction / Vice
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Addiction / Vice
+                          </label>
+                          <FieldAiActions
+                            label="Addiction / Vice"
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "addiction_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "addiction_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "addiction_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={addictionHook}
@@ -3825,9 +4101,19 @@ export function CharacterCreatorModal({
                         />
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                          Starting Debt / Obligation
-                        </label>
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <label className="block text-[11px] font-semibold text-slate-300">
+                            Starting Debt / Obligation
+                          </label>
+                          <FieldAiActions
+                            label="Starting Debt"
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor("bio", "debt_hook")}
+                            onImprove={() => void handleAiAssist("bio", "expand", "debt_hook")}
+                            onRegen={() => void handleAiAssist("bio", "scratch", "debt_hook")}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={debtHook}
@@ -3860,6 +4146,8 @@ export function CharacterCreatorModal({
                         Cyberware HL: -{gearSummary.totalHl} Humanity
                       </span>
                     </div>
+
+                    {housingLifestyleCard}
 
                     {/* Weapons & Choices */}
                     <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
@@ -4011,18 +4299,7 @@ export function CharacterCreatorModal({
                                 HL: <strong className="font-mono text-amber-300">-{gearSummary.totalHl}</strong>
                               </span>
                             </span>
-                          ) : (
-                            <label className="inline-flex items-center gap-2">
-                              <span>Starting Eurobucks:</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={freeformMoney}
-                                onChange={(e) => setFreeformMoney(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                className="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-emerald-300"
-                              />
-                            </label>
-                          )}
+                          ) : null}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <button
@@ -4130,7 +4407,7 @@ export function CharacterCreatorModal({
 
                           {cyberwarePrereqWarnings.length > 0 && (
                             <div className="space-y-1 rounded border border-amber-500/40 bg-amber-500/10 p-2">
-                              <div className="font-semibold text-amber-200">Cyberware Foundation Needed (p. 358):</div>
+                              <div className="font-semibold text-amber-200">Cyberware Foundation Needed:</div>
                               {cyberwarePrereqWarnings.map((w) => (
                                 <div key={w.foundation} className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-100/90">
                                   <span>
@@ -4512,6 +4789,8 @@ export function CharacterCreatorModal({
                       )}
                     </div>
 
+                    {housingLifestyleCard}
+
                     {/* Catalog Items (single smooth scroll flow, no nested scrollboxes or hover-thrash) */}
                     <div className="space-y-1.5 pt-1">
                       {shopCategory === "fashion" ? (
@@ -4591,7 +4870,7 @@ export function CharacterCreatorModal({
                           const overBudget = method === "complete_package" && item.cost_eb > remainingGearEb;
                           const inspectPayload: InspectorCard = {
                             title: `${item.name} (${item.cost_eb} eb)`,
-                            subtitle: `${item.category.toUpperCase()}${subtypeVal ? ` · ${subtypeVal.toUpperCase()}` : ""}${qualityVal ? ` · ${qualityVal}` : ""}${item.printed_page ? ` · Corebook p.${item.printed_page}` : ""}${hlVal ? ` · HL ${hlVal}` : ""}${spVal ? ` · SP ${spVal}` : ""}`,
+                            subtitle: `${item.category.toUpperCase()}${subtypeVal ? ` · ${subtypeVal.toUpperCase()}` : ""}${qualityVal ? ` · ${qualityVal}` : ""}${hlVal ? ` · HL ${hlVal}` : ""}${spVal ? ` · SP ${spVal}` : ""}`,
                             body: item.description || item.summary,
                             mechanics: dmgVal ? `Damage: ${dmgVal}` : undefined,
                           };
@@ -4663,9 +4942,6 @@ export function CharacterCreatorModal({
                                     <span className="rounded bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] text-violet-200">
                                       HL {hlVal}{installVal ? ` · ${installVal}` : ""}
                                     </span>
-                                  )}
-                                  {item.printed_page && (
-                                    <span className="font-mono text-[10px] text-slate-500">p.{item.printed_page}</span>
                                   )}
                                 </div>
                                 <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{item.summary}</p>
@@ -4747,86 +5023,6 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
                 )}
-
-                {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
-                      Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      Month 1 baseline rent paid; monthly upkeep applies from Month 2.
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
-                      <select
-                        aria-label="Character Housing"
-                        value={housing}
-                        onChange={(e) => setHousing(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        {(
-                          refData?.housing_tiers ?? [
-                            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
-                            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
-                            { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
-                            { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
-                            { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
-                            { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
-                            { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
-                            { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
-                            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
-                          ]
-                        )
-                          .filter((h) => !h.exec_only || selectedRole === "Exec")
-                          .map((h) => (
-                            <option key={h.id} value={h.id}>
-                              {h.name} ({h.monthly_eb} eb/mo)
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
-                      <select
-                        aria-label="Character Lifestyle"
-                        value={lifestyle}
-                        onChange={(e) => setLifestyle(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        {(
-                          refData?.lifestyles ?? [
-                            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
-                            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
-                            { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
-                            { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
-                          ]
-                        ).map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.name} ({l.monthly_eb} eb/mo)
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
-                      <select
-                        aria-label="Trauma Team Plan"
-                        value={traumaTeam}
-                        onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
-                      >
-                        <option value="None">None (0 eb/mo)</option>
-                        <option value="Silver">
-                          Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
-                        </option>
-                        <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -4839,15 +5035,6 @@ export function CharacterCreatorModal({
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-200">
                         <AlertTriangle className="h-4 w-4" /> Check Before Launching
                       </span>
-                      {method !== "freeform" && (
-                        <button
-                          type="button"
-                          onClick={() => setMethod("freeform")}
-                          className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[11px] text-amber-100 hover:bg-amber-500/30"
-                        >
-                          Switch to Freeform Instead
-                        </button>
-                      )}
                     </div>
                     <ul className="list-disc pl-5 text-xs text-amber-100/90 space-y-0.5">
                       {validationIssues.map((msg) => (
@@ -4968,7 +5155,7 @@ export function CharacterCreatorModal({
                       </p>
                     )}
                     <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-400">
-                      <strong className="text-slate-300">Starting Housing &amp; Lifestyle (pp. 377–378):</strong>{" "}
+                      <strong className="text-slate-300">Starting Housing &amp; Lifestyle:</strong>{" "}
                       {(refData?.housing_tiers ?? []).find((h) => h.id === housing)?.name ?? housing} + {lifestyle} Lifestyle
                       {traumaTeam !== "None" ? ` · Trauma Team ${traumaTeam}` : ""} (Month 1 covered).
                     </div>
