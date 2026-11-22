@@ -13,9 +13,11 @@ def character(cid, ref=6, dex=6, move=5, body=5, hp=25, weapon=None, armor=None)
             "hp": hp, "max_hp": 25, "luck_remaining": 2, "inventory": {"ammo:M Pistol": 20}, "detail": detail}
 
 
-def begun(chars):
+def begun(chars, init_sequence=None):
     # distinct initiative dice in input order
-    seq = iter([0, 1, 2, 9, 0, 6, 7, 8, 9, 4, 5])
+    if init_sequence is None:
+        init_sequence = [0, 1, 2, 9, 0, 6, 7, 8, 9, 4, 5]
+    seq = iter(init_sequence)
     e = start_encounter(chars, lambda _: next(seq))
     state = {c["id"]: c for c in chars}
     return e, state
@@ -85,8 +87,11 @@ def test_fixed_rng_tie_fails_explicitly_instead_of_looping_forever():
 def test_second_rof2_attack_is_allowed_but_action_then_exhausts():
     gun = {"id": "p", "type": "Medium Pistol", "loaded": 12, "ammo_kind": "M Pistol"}
     chars = [character("a", weapon=gun), character("b", ref=3), character("c", ref=2)]
-    e, cs = begun(chars); actor = e["queue"][0]
-    first = "b" if actor == "a" else "a"
+    # "a" (REF=6) rolls 9 -> initiative 15; "b" (REF=3) rolls 0 -> 3; "c" (REF=2) rolls 0 -> 2. "a" acts first.
+    e, cs = begun(chars, init_sequence=[9, 0, 0, 9, 0, 6, 7, 8, 9, 4, 5])
+    actor = e["queue"][0]
+    assert actor == "a"
+    first = "b"
     # Keep attack checks below hit threshold; attacks still consume rounds and their ROF slots.
     out = apply_action(e, cs, actor, "attack", {"target_id": first, "weapon_id": "p", "range_m": 5}, lambda _: 0)
     second = next(k for k in out["characters"] if k not in (actor, first))
@@ -97,9 +102,16 @@ def test_second_rof2_attack_is_allowed_but_action_then_exhausts():
 
 def test_brawling_uses_melee_reach_and_head_hit_preserves_negative_hp():
     chars = [character("a"), character("b", ref=3, hp=2)]
-    e, cs = begun(chars); actor = e["queue"][0]; target = "b" if actor == "a" else "a"
+    # "a" (REF=6) rolls 9 -> initiative 15; "b" (REF=3) rolls 0 -> 6. "a" acts first.
+    e, cs = begun(chars, init_sequence=[9, 0, 9, 0, 6, 7, 8, 9, 4, 5])
+    actor = e["queue"][0]
+    assert actor == "a"
+    target = "b"
     with pytest.raises(ValueError): apply_action(e, cs, actor, "attack", {"mode": "brawling", "target_id": target, "range_m": 3}, lambda _: 0)
-    out = apply_action(e, cs, actor, "attack", {"mode": "brawling", "target_id": target, "range_m": 1, "location": "head"}, lambda _: 0)
+    # Use RNG that makes attack hit: attacker rolls 10 (crit), defender rolls 1 (crit fail)
+    # Then damage: 3d6 for brawling (BODY=6) -> all 6s for max damage
+    rng_seq = iter([9, 0, 5, 0, 5, 5, 5])  # init a=9,b=0; atk=9(def=10), def=0(def=1); atk crit=5(def=6); def crit=0(def=1); dmg=5,5,5(def=6,6,6)
+    out = apply_action(e, cs, actor, "attack", {"mode": "brawling", "target_id": target, "range_m": 1, "location": "head"}, lambda _: next(rng_seq))
     assert out["characters"][target]["hp"] <= 0
 
 

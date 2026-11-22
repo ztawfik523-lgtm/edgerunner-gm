@@ -92,6 +92,7 @@ def create_run(character_id, interface, deck, architecture, access_point_id, dis
     for index,p in enumerate(installed):
         name=p if isinstance(p,str) else p.get("name") if isinstance(p,dict) else None
         if name not in PROGRAMS: raise ValueError(f"unknown/noncanonical program: {name}")
+        if isinstance(p, dict) and len(p) > 1: raise ValueError(f"noncanonical program metadata for {name}")
         canonical=_copy(PROGRAMS[name]); canonical.update(name=name, instance_id=f"p{index}", max_rez=canonical["rez"], rez=canonical["rez"], active=False, destroyed=False)
         programs.append(canonical)
     used=sum(2 if p["type"]=="Black ICE" else 1 for p in programs)
@@ -275,7 +276,13 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
                 elif fid in r["node_activated"]: result["success"]=False
                 else: r["node_activated"].append(fid); result["node"]=node.get("control")
             elif action=="virus_start":
-                if any(f["id"] in next(x for x in a["floors"] if x["id"]==r["floor_id"])["adjacent"] for f in a["floors"]): result["success"]=False
+                current = next(x for x in a["floors"] if x["id"]==r["floor_id"])
+                # Virus can only start on floors not adjacent to any rezzed, pursuing ICE
+                adjacent_ice = any(
+                    f["type"] == "ice" and f["ice"].get("rezzed") and f["ice"].get("pursuing")
+                    for f in a["floors"] if f["id"] in current.get("adjacent", [])
+                )
+                if adjacent_ice: result["success"]=False
                 else:
                     v=args.get("virus",{}); 
                     if not isinstance(v,dict) or set(v)!={"description","dv","actions_required"} or not isinstance(v["description"],str) or isinstance(v["dv"],bool) or not isinstance(v["dv"],int) or v["dv"]<=0 or isinstance(v["actions_required"],bool) or not isinstance(v["actions_required"],int) or v["actions_required"]<=0: raise ValueError("virus schema needs description, positive integer dv and actions_required")

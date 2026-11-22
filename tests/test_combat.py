@@ -18,7 +18,9 @@ def test_initiative_plain_d10_and_validation():
 
 
 def test_wound_thresholds():
-    assert wound_state(5, 10, 6)["name"] == "serious"
+    # Per Corebook p. 221: Light at >= 1/2 max HP, Serious at < 1/2 max HP
+    assert wound_state(5, 10, 6)["name"] == "light"   # exactly half = light
+    assert wound_state(4, 10, 6)["name"] == "serious"  # below half = serious
     assert wound_state(0, 10, 6) == {
         "name": "mortal", "action_penalty": -4, "move": 1,
         "source": "Cyberpunk RED Core Rulebook, p. 221",
@@ -40,24 +42,29 @@ def test_melee_armor_rounds_sp_down_and_does_not_mutate():
 
 def test_highest_armor_only_head_and_critical_bonus():
     out = damage_and_armor([6, 6], [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}], location="head")
-    assert out["critical_trigger"] and out["hp_damage"] == 9
+    # Head shot: penetration (12-8=4) * 2 = 8, critical bonus +5 = 13
+    assert out["critical_trigger"] and out["hp_damage"] == 13
     assert out["armor_after"] == [{"id": "a", "sp": 4}, {"id": "b", "sp": 7}]
 
 
-def test_autofire_and_brawling_armoring():
-    out = damage_and_armor([3, 4], [], brawling=True, autofire_margin=4, autofire_cap=3)
+def test_autofire_raw_damage_and_brawling_dice():
+    # Autofire: 2 dice, margin 4, cap 3 -> min(4,3)=3 hits, raw = (3+4)*3 = 21
+    out = damage_and_armor([3, 4], [], autofire_margin=4, autofire_cap=3)
     assert out["raw"] == 21
+    # Brawling dice by BODY
     assert brawling_dice(4, cyberarm=True) == 2
     assert brawling_dice(11, martial_arts=True) == 4
 
 
 def test_death_save_natural_ten_fails_and_penalty_increments():
-    result = death_save(2, randbelow=fixed(9))
+    result = death_save(body=2, penalty=2, randbelow=fixed(9))
     assert result["dead"] and result["next_penalty"] == 3
 
 
 def test_stabilization_dv_and_rest_healing():
-    assert stabilize_check(10, 2, "serious", randbelow=fixed(0))["dv"] == 13
+    # skill_check rolls 1d10, then on 1 or 10 rolls again for critical adjustment.
+    # fixed(0, 0) provides two values: initial=0->roll=1, further=0->adjustment=-1
+    assert stabilize_check(10, 2, "serious", randbelow=fixed(0, 0))["dv"] == 13
     assert daily_heal(5, 20, 4, True, True)["new_hp"] == 9
     assert daily_heal(5, 20, 4, False, True)["new_hp"] == 5
 

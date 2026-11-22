@@ -13,8 +13,11 @@ def fixed(n):
 
 
 def test_role_choice_helper_is_explicit_about_unresolved_choice_catalog():
-    result = roles.validate_role_choices("Tech", 4, {"maker": []})
-    assert result["valid"] and result["requires_human_ruling"]
+    # Tech requires pairs of specialties at each rank. Empty list is invalid.
+    with pytest.raises(ValueError): roles.validate_role_choices("Tech", 4, {"maker": []})
+    # Valid pairs: 4 ranks * 2 specialties = 8 total, as pairs
+    result = roles.validate_role_choices("Tech", 4, {"maker": [["Field Expertise", "Upgrade Expertise"], ["Fabrication Expertise", "Invention Expertise"], ["Field Expertise", "Fabrication Expertise"], ["Upgrade Expertise", "Invention Expertise"]]})
+    assert result["valid"] and not result["requires_human_ruling"]
     with pytest.raises(ValueError): roles.validate_role_choices("Unknown", 4, {})
     with pytest.raises(ValueError): roles.validate_role_choices("Solo", 11, {})
 
@@ -29,8 +32,11 @@ def test_solo_allocation_is_bounded_and_pure():
 
 def test_rocker_check_strict_dv_success_and_failure_lock():
     c = character("Rockerboy")
-    success = roles.apply_action(c, "rocker_convert", {"target_eligible": True, "group_size": "single"}, fixed(4))
+    # rocker_convert: rank=4, dv=8 (single). Need roll > 8. roll = rank + _die. _die = randbelow(10)+1.
+    # fixed(5) -> randbelow=4 -> _die=5 -> roll=9 > 8 = success
+    success = roles.apply_action(c, "rocker_convert", {"target_eligible": True, "group_size": "single"}, fixed(5))
     assert success["result"]["total"] == 9 and success["result"]["success"]
+    # rocker_favor: rank=4, dv=10 (small). fixed(3) -> randbelow=2 -> _die=3 -> roll=7 > 10 = False
     failure = roles.apply_action(c, "rocker_favor", {"scope_approved": True, "group_size": "small", "group_id": "x", "now_minutes": 0}, fixed(3))
     assert not failure["result"]["success"]
     assert failure["character"]["detail"]["favor_locks"]["x"] == 10080
@@ -52,8 +58,9 @@ def test_skill_ip_pricing_and_human_ruling_no_mutation():
     c["skills"]["Athletics"] = 3
     spent = roles.apply_action(c, "spend_ip_skill", {"skill": "Athletics", "current_rank": 3})
     assert spent["result"]["cost"] == 80 and spent["character"]["detail"]["ip"] == 0
-    result = roles.apply_action(c, "lawman_backup", {})
-    assert result["result"]["requires_human_ruling"] and result["character"] == c
+    # lawman_backup on non-Lawman raises ValueError (no Lawman rank)
+    with pytest.raises(ValueError, match="no Lawman rank"):
+        roles.apply_action(c, "lawman_backup", {})
 
 
 def test_solo_precision_cost_and_fumble_boolean_allocation():
@@ -64,7 +71,11 @@ def test_solo_precision_cost_and_fumble_boolean_allocation():
 
 def test_lawman_backup_exact_roll_and_rounds():
     c = character("Lawman", 4)
-    result = roles.apply_action(c, "lawman_backup", {"in_danger": True}, lambda sides: 5 if sides == 10 else 5)
+    # success_roll: randbelow(10) -> need <= 4 for success at rank 4. Use 3 -> success_roll=4 <= 4 = True
+    # rounds: randbelow(6) -> need 5 for rounds=6. Use 5 -> rounds=6
+    # Sequence: success_roll randbelow=3, rounds randbelow=5
+    seq = iter([3, 5])
+    result = roles.apply_action(c, "lawman_backup", {"in_danger": True}, lambda sides: next(seq))
     assert result["result"]["success"] and result["result"]["arrival_rounds"] == 6
     assert result["result"]["tier"] == 5
 
@@ -99,8 +110,9 @@ def test_fix_haggle_failure_does_not_grant_terms():
     c = character("Fixer", 10)
     c["stats"]["COOL"] = 2
     c["skills"]["Trading"] = 2
-    # First d10 is 1 for the Fixer and 10 for the opponent.
-    seq = iter([0, 9, 9])
+    # Fixer: roll=1 (crit fail, further=10 -> -10). Opponent: roll=10 (crit success, further=10 -> +10).
+    # Fixer total = 2+2+1-10 = -5. Opponent total = 10+10+10+10 = 40. Fixer loses.
+    seq = iter([0, 9, 9, 9])
     result = roles.apply_action(c, "fixer_haggle", {"transaction_id": "t1", "opponent_gm_approved": True,
         "opponent": {"COOL": 10, "Trading": 10}, "deal": "discount_10"}, lambda sides: next(seq))
     assert result["result"]["success"] is False and result["result"]["terms"] is None

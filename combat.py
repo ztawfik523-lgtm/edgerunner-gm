@@ -84,7 +84,13 @@ def damage_and_armor(dice: list, armor: list, location="body", melee=False, mart
     penetration = max(0, raw - effective)
     multiplier = (3 if cracked_skull else 2) if location == "head" else 1
     hp_damage = penetration * multiplier + (5 if sum(d == 6 for d in dice) >= 2 else 0)
-    armor_after = [dict(piece, sp=max(0, piece["sp"] - ablation) if penetration > 0 else piece["sp"]) for piece in armor]
+    # Only the armor piece that provided protection (highest SP) loses SP from ablation
+    armor_after = []
+    for piece in armor:
+        if piece is selected and penetration > 0:
+            armor_after.append(dict(piece, sp=max(0, piece["sp"] - ablation)))
+        else:
+            armor_after.append(dict(piece))
     return {"raw": raw, "effective_sp": effective, "penetration": penetration, "hp_damage": hp_damage,
             "critical_trigger": sum(d == 6 for d in dice) >= 2, "armor_after": armor_after, "source": "Cyberpunk RED Core Rulebook, pp. 174, 176–177, 186–188"}
 

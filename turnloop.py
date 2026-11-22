@@ -25,6 +25,7 @@ import httpx
 from campaign import STAT_NAMES, _json
 from combat import wound_state
 from gameplay import GameplayService
+from index_lock import index_lock
 from library import ALLOWED_CATEGORIES, CampaignLibrary, normalize_category, search_library
 import sourcecatalog
 
@@ -305,6 +306,18 @@ def write_settings_doc(doc: dict[str, Any], settings_path: Path | None = None) -
     return doc
 
 
+def _update_settings_doc(settings_path: Path | None, mutator) -> Any:
+    """Atomically read, mutate, and write settings.json under both thread and file locks."""
+    path = (settings_path or default_settings_path()).expanduser()
+    with _SETTINGS_LOCK:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with index_lock(path):
+            doc = read_settings_doc(path)
+            result = mutator(path, doc)
+            write_settings_doc(doc, path)
+            return result
+
+
 def _default_llm_dict() -> dict[str, Any]:
     return {
         "base_url": os.environ.get("REDGM_LLM_URL", "http://127.0.0.1:11434/v1"),
@@ -475,15 +488,15 @@ def load_llm_settings(settings_path: Path | None = None) -> dict[str, Any]:
 def save_llm_settings(updates: dict[str, Any], settings_path: Path | None = None) -> dict[str, Any]:
     if not isinstance(updates, dict):
         raise ValueError("settings payload must be an object")
-    path = (settings_path or default_settings_path()).expanduser()
-    with _SETTINGS_LOCK:
-        doc = read_settings_doc(path)
+
+    def _mutate(path: Path, doc: dict[str, Any]) -> dict[str, Any]:
         current = load_llm_settings(path)
         merged = _validate_llm_settings(updates, current)
         for key in _default_llm_dict():
             doc[key] = merged[key]
-        write_settings_doc(doc, path)
-    return merged
+        return merged
+
+    return _update_settings_doc(settings_path, _mutate)
 
 
 def masked_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -548,9 +561,8 @@ def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
 def save_prompt_settings(updates: dict[str, Any], settings_path: Path | None = None) -> dict[str, str]:
     if not isinstance(updates, dict):
         raise ValueError("prompt settings payload must be an object")
-    path = (settings_path or default_settings_path()).expanduser()
-    with _SETTINGS_LOCK:
-        doc = read_settings_doc(path)
+
+    def _mutate(path: Path, doc: dict[str, Any]) -> dict[str, str]:
         if updates.get("reset"):
             next_prompts = dict(DEFAULT_PROMPT_TEMPLATES)
         else:
@@ -565,8 +577,9 @@ def save_prompt_settings(updates: dict[str, Any], settings_path: Path | None = N
                     else:
                         next_prompts[key] = text
         doc["prompts"] = next_prompts
-        write_settings_doc(doc, path)
-    return next_prompts
+        return next_prompts
+
+    return _update_settings_doc(settings_path, _mutate)
 
 
 def _default_server_dict() -> dict[str, Any]:
@@ -659,14 +672,14 @@ def load_server_settings(settings_path: Path | None = None) -> dict[str, Any]:
 def save_server_settings(updates: dict[str, Any], settings_path: Path | None = None) -> dict[str, Any]:
     if not isinstance(updates, dict):
         raise ValueError("server settings payload must be an object")
-    path = (settings_path or default_settings_path()).expanduser()
-    with _SETTINGS_LOCK:
-        doc = read_settings_doc(path)
+
+    def _mutate(path: Path, doc: dict[str, Any]) -> dict[str, Any]:
         current = load_server_settings(path)
         merged = _validate_server_settings(updates, current)
         doc["server"] = merged
-        write_settings_doc(doc, path)
-    return merged
+        return merged
+
+    return _update_settings_doc(settings_path, _mutate)
 
 
 @dataclass(slots=True)

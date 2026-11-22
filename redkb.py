@@ -31,6 +31,103 @@ from index_lock import index_lock
 
 DEFAULT_DB = Path(os.environ.get("REDKB_DB", Path.home() / ".local/share/cyberpunk-red-gm/rules.sqlite"))
 STOP_WORDS = set("a an and are as at be by can could do does for from how i in into is it me of on or page pages please red rule rules show tell the this to under use using what when where with you cyberpunk corebook happens work my character book say".split())
+_AUTH_JSON_MAX_BYTES = 64 * 1024
+_JSON_MAX_BYTES = 8 * 1024 * 1024
+
+
+class _JsonBodyLimitMiddleware:
+    """Bound JSON request memory before FastAPI parses an untrusted payload."""
+
+    # Paths that unconditionally parse JSON via request.json()
+    _JSON_CONSUMING_PATHS = {
+        "/v1/auth/",  # prefix for auth sub-routes
+        "/v1/game",
+        "/v1/creation/ai-assist",
+        "/v1/library/homebrew",
+        "/v1/chat/branch",
+        "/v1/chat/delete",
+        "/v1/chat/message/update",
+        "/v1/campaigns/",  # prefix for campaign sub-routes
+        "/v1/settings/llm",
+        "/v1/settings/prompts",
+        "/v1/settings/server",
+        "/v1/settings/llm/test",
+        "/v1/chat/turn",
+        "/v1/chat/roll",
+        "/v1/chat/sync-revisions",
+        "/v1/chat/regenerate",
+        "/v1/chat/compress",
+    }
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") not in {"POST", "PUT", "PATCH", "DELETE"}:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+
+        # Determine if this path always consumes JSON
+        is_json_consumer = any(path.startswith(p) for p in self._JSON_CONSUMING_PATHS)
+
+        # Enforce limit if:
+        # - Content-Type is JSON, OR
+        # - Path is a known JSON consumer (regardless of Content-Type)
+        enforce_limit = (content_type == b"application/json" or content_type.endswith(b"+json")) or is_json_consumer
+
+        if not enforce_limit:
+            await self.app(scope, receive, send)
+            return
+
+        limit = _AUTH_JSON_MAX_BYTES if path.startswith("/v1/auth/") else _JSON_MAX_BYTES
+        raw_length = headers.get(b"content-length")
+        if raw_length:
+            try:
+                if int(raw_length) > limit:
+                    await self._too_large(send)
+                    return
+            except ValueError:
+                await self._too_large(send)
+                return
+
+        messages = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            body = message.get("body", b"")
+            total += len(body)
+            if total > limit:
+                await self._too_large(send)
+                return
+            messages.append(message)
+            if not message.get("more_body", False):
+                break
+        index = 0
+
+        async def replay_receive():
+            nonlocal index
+            if index < len(messages):
+                message = messages[index]
+                index += 1
+                return message
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    async def _too_large(send):
+        body = b'{"detail":"JSON request body exceeds the configured size limit."}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()), (b"connection", b"close")],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 def clean_text(text: str) -> str:
@@ -557,6 +654,7 @@ def make_api(
     from fastapi import FastAPI, HTTPException, Query, Request
 
     app = FastAPI(title="Cyberpunk RED Knowledge Engine", version="0.1")
+    app.add_middleware(_JsonBodyLimitMiddleware)
 
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
@@ -644,7 +742,8 @@ def make_api(
 
     def _session(request: Request) -> dict[str, Any]:
         pin = (request.headers.get("x-redgm-pin") or request.query_params.get("pin") or "").strip()
-        return auth.resolve_session(_extract_token(request), pin=pin)
+        client_host = request.client.host if request.client else "local"
+        return auth.resolve_session(_extract_token(request), pin=pin, pin_bucket=client_host)
 
     def _current_allowed_origins() -> set[str]:
         origins = set(dynamic_origins)
@@ -653,7 +752,7 @@ def make_api(
 
     def require_player(request: Request, request_id: str):
         sess = _session(request)
-        if not auth.has_account_auth():
+        if not auth.auth_enabled():
             return None
         if sess["authenticated"]:
             return None
@@ -662,8 +761,6 @@ def make_api(
     def require_admin(request: Request, request_id: str):
         sess = _session(request)
         if sess["role"] in {"open", "admin"}:
-            return None
-        if sess["pin_only_mode"] and sess["authenticated"] and not auth.is_admin_configured():
             return None
         if not sess["authenticated"]:
             if sess["pin_only_mode"]:
@@ -688,8 +785,7 @@ def make_api(
                     return JSONResponse(status_code=401, content={"detail": "Room PIN required", "pin_required": True, "request_id": request_id})
                 return JSONResponse(status_code=401, content={"detail": "Sign in required", "auth_required": True, "request_id": request_id})
             if min_role == "admin" and sess["role"] != "admin":
-                if not (sess["pin_only_mode"] and not auth.is_admin_configured()):
-                    return JSONResponse(status_code=403, content={"detail": "Admin privileges required", "admin_required": True, "request_id": request_id})
+                return JSONResponse(status_code=403, content={"detail": "Admin privileges required", "admin_required": True, "request_id": request_id})
         if require_json and request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
             return JSONResponse(status_code=415, content={"detail": "Content-Type must be application/json", "request_id": request_id})
         return None
@@ -725,6 +821,22 @@ def make_api(
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("Request body must be an object")
+            bootstrap_secret = os.environ.get("REDGM_BOOTSTRAP_TOKEN", "")
+            if len(bootstrap_secret) < 32:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Initial Admin setup is disabled until the server operator configures REDGM_BOOTSTRAP_TOKEN (at least 32 characters).", "request_id": request_id},
+                )
+            bucket = request.client.host if request.client else "local"
+            try:
+                auth._check_rate_limit(bucket)
+            except AuthRateLimitError as exc:
+                return JSONResponse(status_code=429, content={"detail": str(exc), "request_id": request_id})
+            supplied_secret = body.get("bootstrap_token")
+            if not isinstance(supplied_secret, str) or not hmac.compare_digest(supplied_secret, bootstrap_secret):
+                auth._record_failure(bucket)
+                return JSONResponse(status_code=403, content={"detail": "Invalid Admin bootstrap token.", "request_id": request_id})
+            auth._clear_failures(bucket)
             res = await asyncio.to_thread(
                 lambda: auth.setup_initial(
                     admin_username=str(body.get("admin_username") or "admin"),
@@ -892,12 +1004,7 @@ def make_api(
         eff_role = _effective_role(request, sess)
         if eff_role in {"admin", "open"}:
             return True
-        return bool(
-            sess.get("pin_only_mode")
-            and sess.get("authenticated")
-            and not auth.is_admin_configured()
-            and (request.headers.get("x-redgm-view-role") or "").strip().lower() != "user"
-        )
+        return False
 
     @app.post("/v1/game")
     async def game(request: Request):
@@ -925,11 +1032,7 @@ def make_api(
                 "delete_campaign",
                 "set_primary_campaign",
             }
-            if (
-                action_name in admin_campaign_actions
-                and eff_role == "user"
-                and not (sess.get("pin_only_mode") and sess.get("authenticated") and not auth.is_admin_configured())
-            ):
+            if action_name in admin_campaign_actions and eff_role == "user":
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Admin permission required to create or modify campaigns and sessions.", "request_id": request_id},
@@ -947,7 +1050,7 @@ def make_api(
                     inner_args["owner_username"] = uname
                 args_payload["arguments"] = inner_args
 
-            if eff_role == "user" and action_name == "delete_character" and not sess.get("pin_only_mode"):
+            if eff_role == "user" and action_name == "delete_character":
                 target_char_id = args_payload.get("character_id")
                 if isinstance(target_char_id, str) and target_char_id:
                     existing_char = await asyncio.to_thread(lambda: gameplay_service().store.get_character(target_char_id))

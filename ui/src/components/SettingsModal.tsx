@@ -624,6 +624,7 @@ export function SettingsModal({
   const [newUserPass, setNewUserPass] = useState("");
   const [newUserRole, setNewUserRole] = useState<"user" | "admin">("user");
   const [sharedPasscode, setSharedPasscode] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [bootAdminUser, setBootAdminUser] = useState("");
   const [bootAdminPass, setBootAdminPass] = useState("");
   const [bootPlayerUser, setBootPlayerUser] = useState("");
@@ -1007,6 +1008,7 @@ export function SettingsModal({
     setNotice(null);
     try {
       await setupInitialAuth({
+        bootstrap_token: bootstrapToken,
         admin_username: cleanAdmin,
         admin_password: bootAdminPass,
         user_username: bootPlayerPass.trim() ? (bootPlayerUser.trim() || "player") : "",
@@ -1014,6 +1016,7 @@ export function SettingsModal({
         user_passcode: sharedPasscode.trim(),
         allow_guest_users: allowGuests,
       });
+      setBootstrapToken("");
       setBootAdminPass("");
       setBootPlayerPass("");
       setSharedPasscode("");
@@ -2872,8 +2875,20 @@ export function SettingsModal({
                     Enable Admin &amp; User Sign-In
                   </div>
                   <p className="text-xs text-slate-400">
-                    Currently running in open loopback mode. Set an Admin account below to protect server settings, prompts, and IP/port controls.
+                    Enter the one-time setup token supplied by the server operator, then create the Admin account.
                   </p>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-slate-300">Admin Bootstrap Token</span>
+                    <input
+                      type="password"
+                      required
+                      minLength={32}
+                      autoComplete="off"
+                      value={bootstrapToken}
+                      onChange={(e) => setBootstrapToken(e.target.value)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100"
+                    />
+                  </label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block">
                       <span className="mb-1 block text-xs text-slate-300">Admin Username</span>

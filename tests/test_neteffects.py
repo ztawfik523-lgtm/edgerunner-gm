@@ -4,10 +4,10 @@ from neteffects import resolve_effect
 
 
 def run(*programs, hardware=()):
-    return {"deck": {"programs": [dict(id=str(i), name=n, type=t, active=a, rez=r,
+    return {"deck": {"programs": [dict(instance_id=str(i), name=n, type=t, active=a, rez=r,
                                             max_rez=r, destroyed=False)
-                                  for i, (n, t, a, r) in enumerate(programs)],
-                     "hardware": list(hardware)}, "conditions": {}}
+                                      for i, (n, t, a, r) in enumerate(programs)],
+                          "hardware": list(hardware)}, "conditions": {}}
 
 
 def fixed(value):
@@ -17,7 +17,8 @@ def fixed(value):
 def test_brain_damage_armor_shield_and_input_is_immutable():
     state = run(("Armor", "Defender", True, 7), ("Shield", "Defender", True, 7))
     before = copy.deepcopy(state)
-    result = resolve_effect("Vrizzbolt", state, randbelow=fixed(0))
+    # Vrizzbolt is an Anti-Personnel Attacker (runner vs runner), so black_ice=False
+    result = resolve_effect("Vrizzbolt", state, randbelow=fixed(0), black_ice=False)
     assert result["dice"] == [1]
     assert result["character_effects"][0]["amount"] == 0
     assert result["run"]["deck"]["programs"][1]["rez"] == 0

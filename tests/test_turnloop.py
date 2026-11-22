@@ -349,9 +349,11 @@ async def test_health_graceful_when_rules_missing(tmp_path: Path):
 
 
 @pytest.mark.anyio
-async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path):
+async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path, monkeypatch):
     rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     campaign_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
 
     captured_prompts: list[str] = []
 
@@ -378,21 +380,35 @@ async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path):
         room_pin="9911",
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765") as client:
+        # Bootstrap an admin first (required for create_campaign)
+        bootstrap_token = "test-bootstrap-token-" + ("a" * 40)
+        setup_res = await client.post(
+            "/v1/auth/setup",
+            headers={"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json"},
+            json={"admin_username": "admin", "admin_password": "admin-pass", "bootstrap_token": bootstrap_token},
+        )
+        assert setup_res.status_code == 200
+        admin_token = setup_res.json()["token"]
+        admin_headers = {"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json", "X-RedGM-Token": admin_token}
+
+        # Create campaign as admin
         camp_res = await client.post(
             "/v1/game",
-            headers={"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json", "X-RedGM-Pin": "9911"},
+            headers=admin_headers,
             json={"action": "create_campaign", "arguments": {"name": "LAN Night City", "operation_id": "op-coop-c1"}},
         )
+        assert camp_res.status_code == 200
         camp_id = camp_res.json()["result"]["id"]
 
-        # PIN blocks unauthorized mutating requests when room_pin is configured
-        unauth = await client.post(
-            "/v1/chat/turn",
-            headers={"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json"},
-            json={"campaign_id": camp_id, "user_text": "Sneak in"},
-        )
+        # After admin bootstrap, unauthenticated requests need sign-in (use fresh client to avoid cookie persistence)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765") as unauth_client:
+            unauth = await unauth_client.post(
+                "/v1/chat/turn",
+                headers={"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json"},
+                json={"campaign_id": camp_id, "user_text": "Sneak in"},
+            )
         assert unauth.status_code == 401
-        assert unauth.json()["pin_required"] is True
+        assert unauth.json()["auth_required"] is True
 
         pin_headers = {
             "Origin": "http://127.0.0.1:8765",
@@ -411,6 +427,7 @@ async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path):
         assert pres.json()["players"][0]["player_name"] == "Alex"
         net = (await client.get("/v1/network/info", params={"campaign_id": camp_id})).json()
         assert net["lan_enabled"] is True
+        # room_pin is configured, so pin_required is True regardless of PIN-only mode
         assert net["pin_required"] is True
 
         # Run initial turn with speaker attribution, then guided regenerate

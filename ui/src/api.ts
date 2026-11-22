@@ -200,6 +200,7 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
 }
 
 export async function setupInitialAuth(payload: {
+  bootstrap_token: string;
   admin_username: string;
   admin_password: string;
   user_username?: string;

@@ -8,6 +8,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolate_redgm_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("REDGM_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setenv("REDGM_BOOTSTRAP_TOKEN", "test-bootstrap-token-" + ("a" * 40))
     for var in (
         "REDGM_ADMIN_USER",
         "REDGM_ADMIN_PASS",

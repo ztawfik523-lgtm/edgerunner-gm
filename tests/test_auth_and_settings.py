@@ -1,7 +1,9 @@
 """Tests for Admin/User authentication, exposed turn options, prompt customization, and server settings."""
 from __future__ import annotations
 
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 
@@ -60,6 +62,16 @@ class RecordingLLM:
         yield "Neon static hangs over the street."
 
 
+_TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-" + ("a" * 40)
+
+
+def _bootstrap(client: TestClient, payload: dict):
+    return client.post(
+        "/v1/auth/setup",
+        json={**payload, "bootstrap_token": _TEST_BOOTSTRAP_TOKEN},
+    )
+
+
 def test_password_hashing_and_auth_manager_lifecycle(tmp_path: Path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
@@ -112,6 +124,153 @@ def test_password_hashing_and_auth_manager_lifecycle(tmp_path: Path, monkeypatch
         mgr.authenticate(mode="admin", username="boss", password="wrong", bucket="10.0.0.5")
 
 
+def test_account_security_changes_revoke_existing_sessions(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+    boot = mgr.setup_initial(admin_username="boss", admin_password="boss-password")
+    mgr.update_access({"username": "runner", "password": "runner-password"})
+    user_token = mgr.authenticate(mode="user", username="runner", password="runner-password")["token"]
+    assert mgr.resolve_session(user_token)["authenticated"]
+
+    mgr.update_access({"username": "runner", "role": "admin"})
+    assert not mgr.resolve_session(user_token)["authenticated"]
+
+    replacement = mgr.authenticate(mode="admin", username="runner", password="runner-password")["token"]
+    mgr.update_access({"username": "runner", "password": "new-runner-password"})
+    assert not mgr.resolve_session(replacement)["authenticated"]
+    replacement = mgr.authenticate(
+        mode="admin", username="runner", password="new-runner-password"
+    )["token"]
+    mgr.delete_account("runner")
+    assert not mgr.resolve_session(replacement)["authenticated"]
+    assert mgr.resolve_session(boot["token"])["authenticated"]
+
+
+def test_deleted_account_token_rejected_on_recreate(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+    mgr.setup_initial(admin_username="admin", admin_password="admin-pass")
+    mgr.update_access({"username": "target", "password": "pass1", "role": "user"})
+    token = mgr.authenticate(mode="user", username="target", password="pass1")["token"]
+    assert mgr.resolve_session(token)["authenticated"]
+
+    mgr.delete_account("target")
+    assert not mgr.resolve_session(token)["authenticated"]
+
+    # Recreate account with same username and password
+    mgr.update_access({"username": "target", "password": "pass1", "role": "user"})
+    # Old token should still be invalid (different account_id)
+    assert not mgr.resolve_session(token)["authenticated"]
+    # New login should work
+    new_token = mgr.authenticate(mode="user", username="target", password="pass1")["token"]
+    assert mgr.resolve_session(new_token)["authenticated"]
+
+
+def test_environment_account_tokens_follow_current_environment(tmp_path: Path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings))
+    monkeypatch.setenv("REDGM_ADMIN_USER", "env-admin")
+    monkeypatch.setenv("REDGM_ADMIN_PASS", "env-password")
+    mgr = AuthManager(settings)
+    mgr.update_access({"username": "saved-user", "password": "saved-password"})
+    token = mgr.authenticate(mode="admin", username="env-admin", password="env-password")["token"]
+    assert mgr.resolve_session(token)["role"] == "admin"
+    monkeypatch.delenv("REDGM_ADMIN_PASS")
+    assert not mgr.resolve_session(token)["authenticated"]
+
+
+def test_initial_admin_setup_is_atomic_and_rate_limit_buckets_are_bounded(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+
+    def setup(username):
+        try:
+            return mgr.setup_initial(admin_username=username, admin_password="strong-password")
+        except AuthError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(setup, ("first", "second")))
+    assert sum(result is not None for result in results) == 1
+
+    limiter = AuthManager(tmp_path / "other-settings.json")
+    for i in range(5000):
+        limiter._check_rate_limit(f"client-{i}")
+    assert len(limiter._failures) <= 4096
+
+
+def test_pin_is_player_only_and_json_bodies_are_bounded(tmp_path: Path, monkeypatch):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+    app = redkb.make_api(
+        rules_db, (), tmp_path / "campaign.sqlite", settings_path=settings_path,
+        room_pin="table-pin", server_host="127.0.0.1", server_port=8765,
+    )
+    client = TestClient(app)
+    pin_headers = {"X-RedGM-Pin": "table-pin"}
+
+    assert client.get("/v1/library").status_code == 401
+    assert client.get("/v1/library", headers=pin_headers).status_code == 200
+    assert client.get("/v1/settings/public", headers=pin_headers).status_code == 200
+    assert client.get("/v1/settings/all", headers=pin_headers).status_code == 403
+
+    bootstrap_payload = {
+        "admin_username": "first-admin",
+        "admin_password": "a-strong-admin-password",
+        "bootstrap_token": _TEST_BOOTSTRAP_TOKEN,
+    }
+    monkeypatch.delenv("REDGM_BOOTSTRAP_TOKEN")
+    assert client.post("/v1/auth/setup", json=bootstrap_payload).status_code == 503
+    monkeypatch.setenv("REDGM_BOOTSTRAP_TOKEN", _TEST_BOOTSTRAP_TOKEN)
+    wrong_token = {**bootstrap_payload, "bootstrap_token": "wrong-token"}
+    assert client.post("/v1/auth/setup", json=wrong_token).status_code == 403
+    assert client.post("/v1/auth/setup", json=bootstrap_payload).status_code == 200
+    client.cookies.clear()
+    assert client.get("/v1/settings/all", headers=pin_headers).status_code == 403
+
+    monkeypatch.setattr(redkb, "_AUTH_JSON_MAX_BYTES", 128)
+    oversized_auth = '{"username":"runner","password":"' + ("x" * 200) + '"}'
+    assert client.post(
+        "/v1/auth/login", content=oversized_auth,
+        headers={"Content-Type": "application/json"},
+    ).status_code == 413
+
+    monkeypatch.setattr(redkb, "_JSON_MAX_BYTES", 128)
+    oversized_json = '{"value":"' + ("x" * 200) + '"}'
+    assert client.post(
+        "/v1/chat/branch", content=oversized_json,
+        headers={"Content-Type": "application/json", **pin_headers},
+    ).status_code == 413
+
+    async def verify_chunked_body_limit():
+        reached_app = False
+        messages = iter((
+            {"type": "http.request", "body": b"x" * 100, "more_body": True},
+            {"type": "http.request", "body": b"y" * 60, "more_body": False},
+        ))
+        sent = []
+
+        async def receive():
+            return next(messages)
+
+        async def send(message):
+            sent.append(message)
+
+        async def inner_app(_scope, _receive, _send):
+            nonlocal reached_app
+            reached_app = True
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/turn",
+            "headers": [(b"content-type", b"application/json")],
+        }
+        await redkb._JsonBodyLimitMiddleware(inner_app)(scope, receive, send)
+        assert sent[0]["status"] == 413
+        assert not reached_app
+
+    asyncio.run(verify_chunked_body_limit())
+
+
 def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     campaign_db = tmp_path / "campaign.sqlite"
@@ -127,9 +286,9 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     assert status_open["role"] == "open"
     assert status_open["can_bootstrap"] is True
 
-    boot_resp = client.post(
-        "/v1/auth/setup",
-        json={
+    boot_resp = _bootstrap(
+        client,
+        {
             "admin_username": "netwatch",
             "admin_password": "admin-secret-99",
             "user_username": "edge",
@@ -400,9 +559,9 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
+    setup = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
     )
     assert setup.status_code == 200
     admin_token = setup.json()["token"]
@@ -452,9 +611,9 @@ def test_delete_character_requires_claim_or_admin(tmp_path, monkeypatch):
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
+    setup = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
     )
     admin_headers = {"X-RedGM-Token": setup.json()["token"]}
     client.cookies.clear()
@@ -583,9 +742,8 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "admin", "admin_password": "admin-password-1"},
+    setup = _bootstrap(
+        client, {"admin_username": "admin", "admin_password": "admin-password-1"}
     )
     assert setup.status_code == 200
     admin_headers = {"X-RedGM-Token": setup.json()["token"]}
@@ -696,3 +854,71 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     assert planner_user == "<<Vee>> Look around"
     assert narrator_user == "<<Vee>> Look around"
     assert "Visual UI flair" not in narrator_sys
+
+
+def test_legacy_account_id_backfill_no_temp_keys_and_auth_body_limit(tmp_path, monkeypatch):
+    import json
+    from auth import AuthManager, hash_password
+    from turnloop import read_settings_doc, write_settings_doc
+
+    rules_db = tmp_path / "rules.sqlite"
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    # Pre-seed a legacy account without account_id
+    auth = AuthManager(settings_path=settings_path)
+    write_settings_doc(
+        {
+            "auth": {
+                "secret": "s" * 64,
+                "token_version": 1,
+                "allow_self_signup": True,
+                "accounts": {
+                    "legacyuser": {
+                        "username": "legacyuser",
+                        "role": "user",
+                        "password_hash": hash_password("legacy-pass-1"),
+                        "token_version": 1,
+                    },
+                    "admin": {
+                        "username": "admin",
+                        "role": "admin",
+                        "password_hash": hash_password("admin-pass-1"),
+                        "token_version": 1,
+                        "account_id": "adm-1",
+                    },
+                },
+            }
+        },
+        settings_path,
+    )
+
+    # Logging in backfills account_id and issues a verifiable token
+    login_res = auth.authenticate(username="legacyuser", password="legacy-pass-1")
+    assert auth.verify_token(login_res["token"]) == {"username": "legacyuser", "role": "user"}
+    saved_doc = read_settings_doc(settings_path)
+    assert saved_doc["auth"]["accounts"]["legacyuser"].get("account_id")
+
+    # Deleting and recreating the same username invalidates the old token
+    auth.delete_account("legacyuser")
+    auth.register_user(username="legacyuser", password="legacy-pass-2")
+    assert auth.verify_token(login_res["token"]) is None
+
+    # Registering a new user does not leave _create_account_id in settings.json
+    reg_res = auth.register_user(username="newuser", password="newuser-pass-1")
+    assert auth.verify_token(reg_res["token"]) == {"username": "newuser", "role": "user"}
+    saved_auth = read_settings_doc(settings_path)["auth"]
+    assert "_create_account_id" not in saved_auth
+    assert "_setup_adm_id" not in saved_auth
+
+    # _JsonBodyLimitMiddleware enforces 64 KiB on /v1/auth/* even with non-JSON Content-Type
+    app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+    oversized = json.dumps({"username": "a", "password": "x" * (65 * 1024)}).encode("utf-8")
+    res = client.post(
+        "/v1/auth/login",
+        headers={"Content-Type": "text/plain"},
+        content=oversized,
+    )
+    assert res.status_code == 413
