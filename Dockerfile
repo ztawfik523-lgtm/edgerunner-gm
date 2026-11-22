@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_SEMANTIC" = "true" ]; then pip install --no-cache-dir -r requirements-semantic.txt; fi
 
 COPY *.py ./
+COPY server/ ./server/
+COPY turn_engine/ ./turn_engine/
 COPY --from=ui-builder /app/ui/dist ./ui/dist
 
 RUN useradd --create-home --shell /usr/sbin/nologin redgm \
