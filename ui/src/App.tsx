@@ -42,6 +42,8 @@ import { CoopModal } from "./components/CoopModal";
 import { LibraryPanel } from "./components/LibraryPanel";
 import {
   SettingsModal,
+  type HudFontPreset,
+  type HudTheme,
   type SettingsTab,
   type UiFontWeight,
   type UiTextScale,
@@ -150,15 +152,32 @@ export function App() {
     const raw = safeStorageGet("redgm:uiWeight");
     return raw === "normal" || raw === "bold" ? raw : "semibold";
   });
+  const [hudTheme, setHudTheme] = useState<HudTheme>(() => {
+    const raw = safeStorageGet("redgm:hudTheme");
+    return raw === "red-core" || raw === "red-deck" ? raw : "2077";
+  });
+  const [fontPreset, setFontPreset] = useState<HudFontPreset>(() => {
+    const raw = safeStorageGet("redgm:fontPreset");
+    return raw === "oxanium" || raw === "clean" || raw === "hyperlegible" ? raw : "cyber";
+  });
+  const [hudReducedFx, setHudReducedFx] = useState<boolean>(
+    () => safeStorageGet("redgm:hudReducedFx") === "true",
+  );
   const [activeChannelId, setActiveChannelId] = useState<string>("main");
 
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.dataset.uiScale = uiScale;
     document.documentElement.dataset.uiWeight = uiWeight;
+    document.documentElement.dataset.hudTheme = hudTheme;
+    document.documentElement.dataset.fontPreset = fontPreset;
+    document.documentElement.dataset.hudFx = hudReducedFx ? "reduced" : "full";
     safeStorageSet("redgm:uiScale", uiScale);
     safeStorageSet("redgm:uiWeight", uiWeight);
-  }, [uiScale, uiWeight]);
+    safeStorageSet("redgm:hudTheme", hudTheme);
+    safeStorageSet("redgm:fontPreset", fontPreset);
+    safeStorageSet("redgm:hudReducedFx", String(hudReducedFx));
+  }, [uiScale, uiWeight, hudTheme, fontPreset, hudReducedFx]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -932,8 +951,8 @@ export function App() {
   };
 
   const dashboardContent = (
-    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-[#0c101a]/88 backdrop-blur-[2px]">
-      <div className="flex border-b border-slate-800/90 bg-[#0d111a]/95 px-2 pt-1 sm:pt-1.5">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-[var(--hud-panel)] backdrop-blur-[2px]">
+      <div className="flex border-b border-[var(--hud-line)] bg-black/50 px-2 pt-1 sm:pt-1.5">
         {(
           [
             { id: "character", label: "Character", icon: User },
@@ -945,13 +964,17 @@ export function App() {
             key={id}
             type="button"
             onClick={() => setRightTab(id)}
-            className={`inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2.5 py-1.5 text-xs font-semibold transition sm:flex-none sm:justify-start sm:px-3.5 sm:py-2 ${
+            className={`inline-flex flex-1 items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition sm:flex-none sm:justify-start sm:px-3.5 sm:py-2 ${
               rightTab === id
-                ? "border-rose-500 text-slate-100"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-b-2 border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                : "border-b-2 border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
             }`}
           >
-            <Icon className="h-3.5 w-3.5 text-cyan-400" />
+            <Icon
+              className={`h-3.5 w-3.5 ${
+                rightTab === id ? "text-[var(--hud-accent)]" : "text-[var(--hud-label)]"
+              }`}
+            />
             {label}
           </button>
         ))}
@@ -986,7 +1009,7 @@ export function App() {
           />
         )}
         {rightTab === "character" && !campaignContext && (
-          <div className="p-6 text-center text-xs text-slate-400">
+          <div className="p-6 text-center text-xs text-[var(--hud-muted)]">
             Select or create a campaign to manage characters.
           </div>
         )}
@@ -1079,7 +1102,7 @@ export function App() {
     "";
 
   return (
-    <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-[#07090f] text-slate-100">
+    <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-[var(--hud-bg)] text-[var(--hud-text)] hud-backdrop">
       {/* Atmospheric Night City Backdrop */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <img
@@ -1089,7 +1112,7 @@ export function App() {
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#07090f]/80 via-[#080b13]/72 to-[#06080d]/92" />
         <div className="cyber-grid-overlay absolute inset-0 opacity-75" />
-        <div className="cyber-scanlines absolute inset-0 opacity-55" />
+        <div className="hud-scanlines absolute inset-0 opacity-55" />
       </div>
 
       <div className="relative z-10 flex h-full min-h-0 w-full flex-col overflow-hidden">
@@ -1116,12 +1139,14 @@ export function App() {
       />
 
       {/* Mobile pane switcher */}
-      <div className="flex shrink-0 border-b border-slate-800 bg-[#0d111a] md:hidden">
+      <div className="flex shrink-0 border-b border-[var(--hud-line)] bg-[var(--hud-panel)] md:hidden">
         <button
           type="button"
           onClick={() => setMobilePane("chat")}
-          className={`flex-1 py-1.5 text-xs font-semibold ${
-            mobilePane === "chat" ? "border-b-2 border-cyan-400 text-cyan-300" : "text-slate-400"
+          className={`flex-1 py-1.5 text-xs font-semibold transition ${
+            mobilePane === "chat"
+              ? "border-b-2 border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+              : "border-b-2 border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <MessageSquare className="mr-1.5 inline h-3.5 w-3.5" />
@@ -1130,8 +1155,10 @@ export function App() {
         <button
           type="button"
           onClick={() => setMobilePane("dashboard")}
-          className={`flex-1 py-1.5 text-xs font-semibold ${
-            mobilePane === "dashboard" ? "border-b-2 border-rose-500 text-rose-300" : "text-slate-400"
+          className={`flex-1 py-1.5 text-xs font-semibold transition ${
+            mobilePane === "dashboard"
+              ? "border-b-2 border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+              : "border-b-2 border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <User className="mr-1.5 inline h-3.5 w-3.5" />
@@ -1146,8 +1173,8 @@ export function App() {
               {chatPaneNode}
             </Panel>
 
-            <PanelResizeHandle className="flex w-1.5 items-center justify-center bg-slate-900 hover:bg-cyan-600/40 transition-colors">
-              <GripVertical className="h-4 w-3 text-slate-600" />
+            <PanelResizeHandle className="flex w-1.5 items-center justify-center border-x border-[var(--hud-line-soft)] bg-[var(--hud-bg)] hover:bg-[var(--hud-accent-navy)] transition-colors">
+              <GripVertical className="h-4 w-3 text-[var(--hud-muted)]" />
             </PanelResizeHandle>
 
             <Panel defaultSize={42} minSize={28}>
@@ -1259,8 +1286,14 @@ export function App() {
         authStatus={authStatus}
         uiScale={uiScale}
         uiWeight={uiWeight}
+        hudTheme={hudTheme}
+        fontPreset={fontPreset}
+        hudReducedFx={hudReducedFx}
         onChangeUiScale={setUiScale}
         onChangeUiWeight={setUiWeight}
+        onChangeHudTheme={setHudTheme}
+        onChangeFontPreset={setFontPreset}
+        onChangeHudReducedFx={setHudReducedFx}
         onClose={() => setSettingsOpen(false)}
         onSaved={(updated) => {
           setLlmSettings(updated);
@@ -1299,7 +1332,7 @@ export function App() {
           role="status"
           title="Click to dismiss"
           onClick={() => setToast(null)}
-          className="fixed bottom-4 right-4 z-50 cursor-pointer rounded-lg border border-cyan-500/40 bg-[#101828] px-4 py-2.5 text-left text-xs font-medium text-slate-100 shadow-xl hover:border-cyan-400"
+          className="fixed bottom-4 right-4 z-50 cursor-pointer border border-[var(--hud-accent-line)] bg-[var(--hud-panel)] px-4 py-2.5 text-left text-xs font-medium text-[var(--hud-text)] shadow-xl hover:border-[var(--hud-accent)]"
         >
           {toast}
         </button>

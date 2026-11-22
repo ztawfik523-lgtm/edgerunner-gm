@@ -3716,6 +3716,120 @@ describe("Cyberpunk RED GM UI", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Chronicler:\s*OFF/i })).toBeInTheDocument());
     expect(narratorField.value).toBe("Unsaved custom draft");
   });
+
+  it("persists Settings -> Display HUD theme, font preset, and reduced FX preferences", async () => {
+    const campaign = {
+      id: "camp-display-1",
+      name: "Watson",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const llmCfg = {
+      base_url: "http://127.0.0.1:11434/v1",
+      model: "llama3",
+      has_api_key: false,
+      api_key_masked: "",
+      temperature: 0.4,
+      max_tokens: 1200,
+      timeout_s: 60,
+      mode: "two_pass",
+      enable_chronicler: true,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") return jsonResponse(llmCfg);
+      if (url === "/v1/settings/all") {
+        return jsonResponse({
+          llm: llmCfg,
+          prompts: {},
+          prompt_defaults: {},
+          server: { bind_host: "127.0.0.1", port: 8765, allowed_origins: [] },
+          runtime: { bind_host: "127.0.0.1", port: 8765, lan_ips: [], tls: false, restarting: false },
+          auth_policy: { accounts: [], allow_guest_users: true, allow_self_signup: true, user_passcode_configured: false },
+        });
+      }
+      if (url === "/v1/corebook/status") return jsonResponse({ rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: [],
+          active_branch: [],
+          active_leaf_id: null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    const { unmount } = render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.hudTheme).toBe("2077");
+      expect(document.documentElement.dataset.fontPreset).toBe("cyber");
+      expect(document.documentElement.dataset.hudFx).toBe("full");
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Settings$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Display$/i }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /RED Core/i }));
+    await waitFor(() => {
+      expect(document.documentElement.dataset.hudTheme).toBe("red-core");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /RED Deck/i }));
+    await waitFor(() => {
+      expect(document.documentElement.dataset.hudTheme).toBe("red-deck");
+    });
+    if (typeof window.localStorage?.getItem === "function") {
+      expect(window.localStorage.getItem("redgm:hudTheme")).toBe("red-deck");
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /Atkinson Hyperlegible/i }));
+    await waitFor(() => {
+      expect(document.documentElement.dataset.fontPreset).toBe("hyperlegible");
+    });
+    if (typeof window.localStorage?.getItem === "function") {
+      expect(window.localStorage.getItem("redgm:fontPreset")).toBe("hyperlegible");
+    }
+
+    const reducedFxCheckbox = screen.getByRole("checkbox", { name: /Clean \/ Reduced FX/i });
+    fireEvent.click(reducedFxCheckbox);
+    await waitFor(() => {
+      expect(document.documentElement.dataset.hudFx).toBe("reduced");
+    });
+    if (typeof window.localStorage?.getItem === "function") {
+      expect(window.localStorage.getItem("redgm:hudReducedFx")).toBe("true");
+    }
+
+    // Re-mount App to confirm preferences persist from localStorage
+    unmount();
+    render(<App />);
+    await waitFor(() => {
+      expect(document.documentElement.dataset.hudTheme).toBe("red-deck");
+      expect(document.documentElement.dataset.fontPreset).toBe("hyperlegible");
+      expect(document.documentElement.dataset.hudFx).toBe("reduced");
+    });
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

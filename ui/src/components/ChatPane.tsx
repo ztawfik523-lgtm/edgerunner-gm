@@ -54,6 +54,7 @@ import type {
   StatePatchEvent,
   TurnIntent,
 } from "../types";
+import { CyberFrame, HudButton, RoleTag } from "./cyber";
 
 export { CHARACTER_COLOR_THEMES };
 
@@ -146,7 +147,11 @@ const STREAMDOWN_COMPONENTS = { a: ColorAwareLink };
 function FormattedUserText({ content, italic = false }: { content: string; italic?: boolean }) {
   const parts = content.split(/(\[\[[a-zA-Z]+:[^\]\n]+\]\])/g);
   return (
-    <p className={`whitespace-pre-wrap text-sm leading-relaxed ${italic ? "italic text-violet-100/95" : "text-slate-100"}`}>
+    <p
+      className={`whitespace-pre-wrap text-[13.5px] leading-relaxed ${
+        italic ? "italic text-violet-100/95" : "text-[var(--hud-text)]"
+      }`}
+    >
       {parts.map((part, idx) => {
         const m = /^\[\[([a-zA-Z]+):([^\]\n]+)\]\]$/.exec(part);
         if (m) {
@@ -164,6 +169,13 @@ function FormattedUserText({ content, italic = false }: { content: string; itali
       })}
     </p>
   );
+}
+
+function formatMsgTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 export interface StreamingTurnState {
@@ -240,19 +252,19 @@ const GM_MODES = [
     id: "auto" as const,
     label: "Smart GM",
     tip: "Smart GM: lets players chat together/OOC and triggers the GM on world/NPC actions. Click to cycle mode.",
-    cls: "border-cyan-500/45 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25",
+    cls: "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]",
   },
   {
     id: "hold_gm" as const,
     label: "Party Chat",
     tip: "Party Chat (Hold GM): post dialogue or queue actions without triggering the GM yet. Click to cycle mode.",
-    cls: "border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25",
+    cls: "border-[var(--hud-warn)]/70 bg-[var(--hud-row)] text-[var(--hud-warn)]",
   },
   {
     id: "force_gm" as const,
     label: "Force GM",
     tip: "Force GM: always trigger an AI GM response immediately on send. Click to cycle mode.",
-    cls: "border-rose-500/45 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25",
+    cls: "border-[var(--hud-primary-bright)] bg-[var(--hud-row)] text-[var(--hud-primary-bright)]",
   },
 ];
 
@@ -261,45 +273,57 @@ function RollCard({ roll, compact = false }: { roll: DiceRollResult; compact?: b
   const primaryDie =
     roll.die ?? (Array.isArray(roll.dice) && roll.dice.length > 0 ? roll.dice[0] : undefined);
   const explosion = roll.explosion ?? roll.critical_adjustment ?? 0;
-  const badgeStyle =
+  const resultColor =
     passed === true
-      ? "border-emerald-500/45 bg-emerald-950/35 text-emerald-200"
+      ? "text-[var(--hud-ok)]"
       : passed === false
-        ? "border-rose-500/45 bg-rose-950/35 text-rose-200"
-        : "border-cyan-500/45 bg-cyan-950/35 text-cyan-200";
+        ? "text-[var(--hud-primary-bright)]"
+        : "text-[var(--hud-accent)]";
 
   return (
-    <div className={`rounded-md border px-2.5 py-1.5 text-xs ${badgeStyle}`}>
+    <div
+      className={
+        compact
+          ? "border-t border-white/10 pt-1.5 font-cyber-data text-[11px]"
+          : `border px-3 py-2 font-cyber-data text-[11px] ${
+              passed === true
+                ? "border-[var(--hud-ok)]/45 bg-[var(--hud-accent-navy)]"
+                : passed === false
+                  ? "border-[var(--hud-line)] bg-[var(--hud-row)]"
+                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)]"
+            }`
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5 font-semibold">
-          <Dices className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span>{roll.actor ?? "Check"}</span>
-          <span className="opacity-70">·</span>
-          <span className="font-mono">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Dices className="h-3.5 w-3.5 shrink-0 text-[var(--hud-warn)]" />
+          <span className="font-semibold text-[var(--hud-text)]">{roll.actor ?? "Check"}</span>
+          <span className="text-[var(--hud-muted)]">·</span>
+          <span className="uppercase tracking-wide text-[var(--hud-muted)]">
             {roll.skill ? `${roll.skill} (${roll.stat})` : roll.stat ?? "Roll"}
           </span>
           {roll.overclock && (
-            <span className="rounded bg-rose-500/25 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
+            <span className="border border-[var(--hud-line)] px-1.5 font-cyber-data text-[9px] uppercase text-[var(--hud-primary-bright)]">
               OVERCLOCK +2
             </span>
           )}
           {(roll.luck_spent ?? 0) > 0 && (
-            <span className="rounded bg-amber-500/25 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+            <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/15 px-1.5 font-cyber-data text-[9px] text-[var(--hud-warn)]">
               LUCK +{roll.luck_spent}
             </span>
           )}
         </div>
-        <div className="font-mono font-bold">
+        <div className={`font-bold ${resultColor}`}>
           {roll.total}
           {roll.dv !== undefined ? ` vs DV ${roll.dv}` : ""}
           {passed === true ? " · PASS" : passed === false ? " · FAIL" : ""}
         </div>
       </div>
       {(!compact || primaryDie !== undefined || roll.reason) && (
-        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] opacity-85">
+        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-[var(--hud-muted)]">
           {roll.reason && <span>{roll.reason}</span>}
           {primaryDie !== undefined && (
-            <span className="font-mono text-[10px]">
+            <span>
               [d10={primaryDie}
               {explosion ? ` ${explosion > 0 ? `+${explosion} crit` : `${explosion} fumble`}` : ""}
               {roll.wound_modifier ? ` · wound ${roll.wound_modifier}` : ""}]
@@ -320,15 +344,15 @@ function PatchPill({ patch }: { patch: StatePatchEvent }) {
         ? patch.name ?? "Solo Ops"
         : "Campaign";
   return (
-    <div className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-900/90 px-2.5 py-1 text-[11px] text-slate-300">
-      <span className="font-semibold text-cyan-300">{label}:</span>
+    <div className="inline-flex flex-wrap items-center gap-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2.5 py-1 text-[11px] text-[var(--hud-text)]">
+      <span className="font-semibold text-[var(--hud-accent)]">{label}:</span>
       {entries.map(([k, val]) => {
         const prev = patch.before?.[k];
         const displayPrev = typeof prev === "object" ? JSON.stringify(prev) : String(prev ?? "—");
         const displayAfter = typeof val === "object" ? JSON.stringify(val) : String(val);
         return (
-          <span key={k} className="font-mono">
-            {k}: {displayPrev} → <strong className="text-slate-100">{displayAfter}</strong>
+          <span key={k} className="font-cyber-data">
+            {k}: {displayPrev} → <strong className="text-white">{displayAfter}</strong>
           </span>
         );
       })}
@@ -354,13 +378,13 @@ function BranchPager({
   const nextId = ids[(index + 1) % ids.length];
 
   return (
-    <div className="inline-flex items-center gap-0.5 rounded border border-slate-700/80 bg-slate-900/80 px-1 py-0.5 font-mono text-[11px] text-slate-300">
+    <div className="inline-flex items-center gap-0.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-1 py-0.5 font-cyber-data text-[11px] text-[var(--hud-text)]">
       <button
         type="button"
         disabled={disabled}
         onClick={() => onSwitch(prevId)}
         title="Previous branch"
-        className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-40"
+        className="p-0.5 hover:text-[var(--hud-accent)] disabled:opacity-40"
       >
         <ChevronLeft className="h-3 w-3" />
       </button>
@@ -372,7 +396,7 @@ function BranchPager({
         disabled={disabled}
         onClick={() => onSwitch(nextId)}
         title="Next branch"
-        className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-40"
+        className="p-0.5 hover:text-[var(--hud-accent)] disabled:opacity-40"
       >
         <ChevronRight className="h-3 w-3" />
       </button>
@@ -718,31 +742,31 @@ export function ChatPane({
 
   if (!campaignId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-6 sm:p-8 text-center bg-[#080b12]/75">
-        <div className="cyber-hud-card cyber-holo-sweep relative w-full max-w-lg overflow-hidden rounded-lg bg-[#0b101b] p-7">
+      <div className="flex h-full flex-col items-center justify-center p-6 sm:p-8 text-center">
+        <CyberFrame variant="hex" className="relative w-full max-w-lg overflow-hidden p-7">
           <img
             src={cyberHeroBackdrop}
             alt=""
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-40"
+            className="pointer-events-none absolute inset-0 -z-10 h-full w-full object-cover opacity-35"
           />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#070a11] via-[#0a0f1a]/82 to-[#070a11]/65" />
+          <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-t from-[var(--hud-bg)] via-[var(--hud-bg)]/80 to-[var(--hud-bg)]/60" />
           <div className="relative z-10 flex flex-col items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 rounded border border-rose-500/45 bg-rose-500/15 px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-rose-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_8px_#fb7185]" />
+            <span className="inline-flex items-center gap-1.5 border border-[var(--hud-line)] bg-[var(--hud-row)] px-2.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--hud-label)]">
+              <span className="cp-pulse h-1.5 w-1.5 bg-[var(--hud-primary-bright)]" />
               NETLINK // STANDBY
             </span>
             <h2
               data-text="Welcome to Night City"
-              className="cyber-glitch-title font-cyber-display text-xl font-bold tracking-[0.1em] text-slate-100 uppercase"
+              className="cp-glitch font-cyber-display text-xl font-bold uppercase tracking-[0.1em] text-[var(--hud-text)]"
             >
               Welcome to Night City
             </h2>
-            <p className="max-w-md font-cyber-hud text-sm leading-relaxed text-slate-300">
+            <p className="max-w-md font-cyber-ui text-sm leading-relaxed text-[var(--hud-muted)]">
               Create or select a campaign to jack into the Time of the Red.
             </p>
           </div>
-        </div>
+        </CyberFrame>
       </div>
     );
   }
@@ -770,20 +794,18 @@ export function ChatPane({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 w-full flex-col bg-[#080b12]/80">
+    <div className="relative flex h-full min-h-0 min-w-0 w-full flex-col">
       {/* Split-Scene Channel Bar (only shown when party is split into separate scene channels) */}
       {partyGrouping?.mode === "split" && visibleSplitChannels.length > 0 && onChangeChannelId && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-amber-500/25 bg-[#0e1422]/95 px-4 py-1.5 text-[11px]">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-4 py-1.5 text-[11px]">
+          <span className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
             Scene Channels:
           </span>
           <button
             type="button"
             onClick={() => onChangeChannelId("main")}
-            className={`rounded border px-2 py-0.5 font-mono text-[10px] transition ${
-              activeChannelId === "main"
-                ? "border-cyan-400 bg-cyan-500/20 font-bold text-cyan-100"
-                : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+            className={`cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[10px] ${
+              activeChannelId === "main" ? "is-active" : ""
             }`}
           >
             Main Table
@@ -793,10 +815,8 @@ export function ChatPane({
               key={ch.id}
               type="button"
               onClick={() => onChangeChannelId(ch.id)}
-              className={`rounded border px-2 py-0.5 font-mono text-[10px] transition ${
-                activeChannelId === ch.id
-                  ? "border-amber-400 bg-amber-500/20 font-bold text-amber-100"
-                  : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/50"
+              className={`cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[10px] ${
+                activeChannelId === ch.id ? "is-active" : ""
               }`}
             >
               {ch.location} ({ch.handles.join(", ")})
@@ -812,11 +832,11 @@ export function ChatPane({
           data-testid="chat-scroll-container"
           className="flex-1 overflow-y-auto px-2.5 py-3 sm:px-4 sm:py-5"
         >
-          <div className="mx-auto max-w-3xl space-y-3 sm:space-y-5">
+          <div className="mx-auto max-w-3xl space-y-3 sm:space-y-4">
             {visibleMessages.length === 0 && !streaming && (
-              <div className="rounded-lg border border-slate-800/80 bg-[#0b101b]/75 px-4 py-6 text-center text-xs text-slate-400">
-                No messages yet. Check the <strong className="text-slate-200">Campaign</strong> tab for story &amp; rules, or describe your opening move below.
-              </div>
+              <CyberFrame className="px-4 py-6 text-center text-xs text-[var(--hud-muted)]">
+                No messages yet. Check the <strong className="text-[var(--hud-text)]">Campaign</strong> tab for story &amp; rules, or describe your opening move below.
+              </CyberFrame>
             )}
 
             {visibleMessages.map((msg, msgIdx) => {
@@ -824,18 +844,18 @@ export function ChatPane({
                 const isSession = Boolean(msg.metadata?.session_started);
                 return (
                   <div key={msg.id} className="my-2 flex items-center gap-3 px-2">
-                    <div className="h-px flex-1 bg-slate-800/80" />
+                    <div className="h-px flex-1 bg-[var(--hud-line-soft)]" />
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                      className={`inline-flex items-center gap-1.5 border px-3 py-1 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider ${
                         isSession
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                          : "border-cyan-500/35 bg-cyan-950/30 text-cyan-200"
+                          ? "border-[var(--hud-warn)]/55 bg-[var(--hud-row)] text-[var(--hud-warn)]"
+                          : "border-[var(--hud-accent-line)]/55 bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
                       }`}
                     >
                       <Sparkles className="h-3 w-3" />
                       {msg.content}
                     </span>
-                    <div className="h-px flex-1 bg-slate-800/80" />
+                    <div className="h-px flex-1 bg-[var(--hud-line-soft)]" />
                   </div>
                 );
               }
@@ -877,6 +897,7 @@ export function ChatPane({
                 ? (charDetail.roles as Array<{ role?: string; rank?: number }>)
                 : [];
               const primaryRole = charRoles[0]?.role;
+              const primaryRank = charRoles[0]?.rank;
 
               const colorId = isUser
                 ? msg.metadata?.speaker_color ||
@@ -910,89 +931,323 @@ export function ChatPane({
               const patches = msg.metadata?.patches ?? [];
               const citations = msg.metadata?.citation_cards ?? [];
               const warnings = msg.metadata?.warnings ?? [];
-              const gmOpsCount = citations.length + patches.length + warnings.length;
+              const libraryAdded = msg.metadata?.library_added ?? [];
+              const gmOpsCount = citations.length + patches.length + warnings.length + libraryAdded.length;
               const gmOpsOpen = Boolean(gmOpsOpenIds[msg.id]);
               const isThink = msg.metadata?.turn_intent === "think";
+              const timeLabel = formatMsgTime(msg.created_at);
+
+              const actionControls = (
+                <div className="flex flex-wrap items-center gap-1">
+                  {!isUser && isAdmin && gmOpsCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGmOpsOpenIds((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                      }
+                      title="Admin-only submenu: rulebook entries read, campaign state updates & engine logs"
+                      className={`cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[10px] ${
+                        gmOpsOpen ? "is-active" : ""
+                      }`}
+                    >
+                      <Layers className="h-3 w-3 text-[var(--hud-accent)]" />
+                      <span>GM Ops ({gmOpsCount})</span>
+                      {gmOpsOpen ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  )}
+
+                  <BranchPager
+                    node={msg}
+                    disabled={busy}
+                    onSwitch={onSwitchBranch}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => void handleCopy(msg)}
+                    title="Copy message"
+                    aria-label="Copy message"
+                    className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
+                  >
+                    {copiedId === msg.id ? (
+                      <Check className="h-3.5 w-3.5 text-[var(--hud-ok)]" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+
+                  {isUser && !isEditing && (
+                    <button
+                      type="button"
+                      disabled={busy || lockedByPeer}
+                      onClick={() => openEdit(msg, "branch")}
+                      title="Edit & branch from this message"
+                      aria-label="Edit & branch"
+                      className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-accent)] disabled:opacity-40"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
+                  {!isEditing && (isAdmin || isUser) && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => openEdit(msg, "inplace")}
+                      title="Edit message text in-place"
+                      aria-label="Edit text in-place"
+                      className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-text)] disabled:opacity-40"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
+                  {!isUser && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy || lockedByPeer || !hasUserParent}
+                        onClick={() => void onRegenerate(msg)}
+                        title={
+                          hasUserParent
+                            ? "Regenerate / swipe alternative GM reply"
+                            : "Cannot regenerate: no preceding player message"
+                        }
+                        aria-label="Regenerate reply"
+                        className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-accent)] disabled:opacity-40"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          disabled={busy || lockedByPeer || !hasUserParent}
+                          onClick={() => openGuidance(msg.id)}
+                          title={
+                            hasUserParent
+                              ? "Regenerate with Director note"
+                              : "Cannot regenerate: no preceding player message"
+                          }
+                          aria-label="Guided regenerate"
+                          className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-warn)] disabled:opacity-40"
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {(isAdmin || isUser) && (
+                    <>
+                      {isConfirmingDelete ? (
+                        <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border border-[var(--hud-primary-bright)]/60 bg-[var(--hud-row)] px-1.5 py-0.5">
+                          {hasMessagesBelow ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void triggerDelete(msg, "single")}
+                                title="Delete only this message (keep messages below)"
+                                className="font-cyber-ui text-[10px] font-semibold text-[var(--hud-warn)] hover:text-white disabled:opacity-40"
+                              >
+                                This msg
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void triggerDelete(msg, "branch")}
+                                title="Delete this message and everything below it"
+                                className="font-cyber-ui text-[10px] font-semibold text-[var(--hud-primary-bright)] hover:text-white disabled:opacity-40"
+                              >
+                                + Below
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void triggerDelete(msg, "branch")}
+                              className="font-cyber-ui text-[10px] font-semibold text-[var(--hud-primary-bright)] hover:text-white disabled:opacity-40"
+                            >
+                              Delete
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setConfirmDeleteId(null)}
+                            aria-label="Cancel delete"
+                            className="text-[var(--hud-muted)] hover:text-[var(--hud-text)] disabled:opacity-40"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => openDeleteConfirm(msg.id)}
+                          title={isDeletingThis ? "Deleting..." : "Delete message"}
+                          aria-label="Delete message"
+                          className="p-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)] disabled:opacity-40"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+
+              if (isUser) {
+                return (
+                  <div key={msg.id} className="group flex flex-col items-end">
+                    <div
+                      className={`w-full sm:w-[88%] px-4 py-2.5 text-[var(--hud-text)] transition ${
+                        isThink
+                          ? "border border-violet-500/55 border-r-2 border-r-violet-400 bg-violet-950/25"
+                          : "border border-white/15 border-r-2 border-r-[var(--hud-accent)] bg-black/55"
+                      }`}
+                      style={!isThink && speakerTheme.isHex ? { borderRightColor: speakerTheme.hex } : undefined}
+                    >
+                      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {portraitUrl ? (
+                            <img
+                              src={portraitUrl}
+                              alt={speakerHandle}
+                              className={`h-5 w-5 object-cover ring-1 ${speakerTheme.avatarRingClass}`}
+                              style={speakerTheme.avatarRingStyle}
+                            />
+                          ) : (
+                            <span
+                              className="inline-flex h-4 w-4 items-center justify-center border border-white/20 bg-black/50 text-[var(--hud-accent)]"
+                              style={speakerTheme.isHex ? { color: speakerTheme.nameBadgeStyle?.color } : undefined}
+                            >
+                              <User className="h-2.5 w-2.5" />
+                            </span>
+                          )}
+                          <span
+                            className="font-cyber-ui font-semibold uppercase tracking-wider text-[var(--hud-accent)]"
+                            style={speakerTheme.isHex ? { color: speakerTheme.nameBadgeStyle?.color } : undefined}
+                          >
+                            {speakerHandle}
+                          </span>
+                          {primaryRole && (
+                            <RoleTag role={primaryRole} rank={primaryRank} />
+                          )}
+                          {realName && !realNameHidden && realName !== speakerHandle && (
+                            <span className="text-[10px] text-[var(--hud-muted)]">({realName})</span>
+                          )}
+                          {realName && realNameHidden && isAdmin && (
+                            <span
+                              title={`Real name '${realName}' is hidden from public/NPCs`}
+                              className="inline-flex items-center gap-0.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-1.5 font-cyber-data text-[9px] text-[var(--hud-muted)]"
+                            >
+                              <EyeOff className="h-2.5 w-2.5" /> Alias Only
+                            </span>
+                          )}
+                          {isThink && (
+                            <span className="inline-flex items-center gap-1 border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                              <Eye className="h-3 w-3" />
+                              THINK
+                            </span>
+                          )}
+                          {msg.metadata?.overclock && (
+                            <span className="inline-flex items-center gap-1 border border-[var(--hud-line)] px-1.5 font-cyber-data text-[9px] uppercase text-[var(--hud-primary-bright)]">
+                              <Zap className="h-2.5 w-2.5" /> OVERCLOCK +2
+                            </span>
+                          )}
+                          {(msg.metadata?.luck_spend ?? 0) > 0 && (
+                            <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/15 px-1.5 font-cyber-data text-[9px] text-[var(--hud-warn)]">
+                              LUCK +{msg.metadata?.luck_spend}
+                            </span>
+                          )}
+                          {msg.metadata?.edited && (
+                            <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">(edited)</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {timeLabel && (
+                            <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                              {timeLabel}
+                            </span>
+                          )}
+                          {actionControls}
+                        </div>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <textarea
+                            autoFocus
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                                e.preventDefault();
+                                void handleEditSubmit(msg);
+                              }
+                            }}
+                            rows={3}
+                            className="w-full border border-[var(--hud-accent-line)] bg-black/75 p-2 text-sm text-[var(--hud-text)] focus:outline-none"
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                              Ctrl+Enter to save · Esc to cancel
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <HudButton variant="ghost" size="xs" onClick={() => setEditingId(null)}>
+                                Cancel
+                              </HudButton>
+                              <HudButton variant="cta" size="xs" onClick={() => void handleEditSubmit(msg)}>
+                                {editMode === "inplace" ? "Save Text" : "Save & Branch"}
+                              </HudButton>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <FormattedUserText content={msg.content} italic={isThink} />
+                          {actionRolls.length > 0 && (
+                            <div className="space-y-1.5">
+                              {actionRolls.map((r, i) => (
+                                <RollCard key={i} roll={r} compact />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
 
               return (
-                <div
-                  key={msg.id}
-                  className={`group flex flex-col ${isUser ? "items-end" : "items-start"}`}
-                >
-                  <div
-                    className={`rounded-xl px-3 py-2.5 transition sm:px-4 sm:py-3 ${
-                      isUser
-                        ? isThink
-                          ? "max-w-[92%] sm:max-w-[90%] border border-violet-500/55 bg-violet-950/25 text-slate-100"
-                          : `max-w-[92%] sm:max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
-                        : isThink
-                          ? "w-full border border-violet-500/45 bg-violet-950/15 text-slate-100"
-                          : "w-full border border-slate-800/90 bg-[#0e1422] text-slate-100"
-                    }`}
-                    style={isUser && !isThink ? speakerTheme.cardBorderStyle : undefined}
-                  >
-                    {/* Message Header */}
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {isUser ? (
-                          <div className="inline-flex items-center gap-2">
-                            {portraitUrl ? (
-                              <img
-                                src={portraitUrl}
-                                alt={speakerHandle}
-                                className={`h-6 w-6 rounded-full object-cover ring-2 ${speakerTheme.avatarRingClass}`}
-                                style={speakerTheme.avatarRingStyle}
-                              />
-                            ) : (
-                              <span
-                                className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${speakerTheme.nameBadgeClass}`}
-                                style={speakerTheme.nameBadgeStyle}
-                              >
-                                <User className="h-3 w-3" />
-                              </span>
-                            )}
-                            <span
-                              className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-cyber-hud text-xs font-bold tracking-wider uppercase ${speakerTheme.nameBadgeClass}`}
-                              style={speakerTheme.nameBadgeStyle}
-                            >
-                              <span className={`h-1.5 w-1.5 rounded-full ${speakerTheme.dotClass}`} style={speakerTheme.dotStyle} />
-                              {speakerHandle}
-                            </span>
-                            {primaryRole && (
-                              <span className="rounded border border-slate-700 bg-slate-900/90 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
-                                {primaryRole}
-                              </span>
-                            )}
-                            {realName && !realNameHidden && realName !== speakerHandle && (
-                              <span className="text-[10px] text-slate-400">({realName})</span>
-                            )}
-                            {realName && realNameHidden && isAdmin && (
-                              <span
-                                title={`Real name '${realName}' is hidden from public/NPCs`}
-                                className="inline-flex items-center gap-0.5 rounded border border-slate-700/80 bg-slate-900/80 px-1.5 py-0.5 font-mono text-[9px] text-slate-400"
-                              >
-                                <EyeOff className="h-2.5 w-2.5" /> Alias Only
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 rounded border border-rose-500/45 bg-rose-500/15 px-2 py-0.5 font-cyber-display text-[10px] font-bold uppercase tracking-widest text-rose-200">
-                            <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                            GAME MASTER
-                          </span>
-                        )}
-
-                        {!isUser && isAdmin && msg.model && (
-                          <span className="rounded bg-slate-800/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                <div key={msg.id} className="group flex flex-col items-start">
+                  <CyberFrame className={`w-full ${isThink ? "border-violet-500/50" : ""}`}>
+                    {/* Slim GM Header Strip */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-4 py-1.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="h-2 w-0.5 bg-[var(--hud-primary-bright)]" />
+                        <span className="font-cyber-display text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--hud-label)]">
+                          GAME MASTER
+                        </span>
+                        {isAdmin && msg.model && (
+                          <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
                             {msg.model}
                           </span>
                         )}
-                        {!isUser && isAdmin && msg.metadata?.generation_stats && (
+                        {isAdmin && msg.metadata?.generation_stats && (
                           <span
                             title={`${msg.metadata.generation_stats.completion_tokens ?? "?"} tokens${msg.metadata.generation_stats.estimated ? " (estimated)" : ""} in ${msg.metadata.generation_stats.elapsed_seconds.toFixed(2)}s`}
-                            className="inline-flex items-center gap-1 rounded border border-cyan-500/25 bg-cyan-950/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300"
+                            className="inline-flex items-center gap-1 font-cyber-data text-[10px] text-[var(--hud-muted)]"
                           >
-                            <Clock className="h-2.5 w-2.5" />
+                            <Clock className="h-2.5 w-2.5 text-[var(--hud-accent)]" />
                             <span>
                               {msg.metadata.generation_stats.elapsed_seconds.toFixed(1)}s ·{" "}
                               {msg.metadata.generation_stats.tokens_per_second.toFixed(1)} tok/s
@@ -1000,376 +1255,218 @@ export function ChatPane({
                           </span>
                         )}
                         {isThink && (
-                          <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                          <span className="inline-flex items-center gap-1 border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-wider text-violet-200">
                             <Eye className="h-3 w-3" />
                             THINK
                           </span>
                         )}
                         {msg.metadata?.overclock && (
-                          <span className="inline-flex items-center gap-1 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] text-rose-300">
-                            <Zap className="h-3 w-3" /> OVERCLOCK
+                          <span className="inline-flex items-center gap-1 border border-[var(--hud-line)] px-1.5 font-cyber-data text-[9px] uppercase text-[var(--hud-primary-bright)]">
+                            <Zap className="h-2.5 w-2.5" /> OVERCLOCK +2
                           </span>
                         )}
                         {(msg.metadata?.luck_spend ?? 0) > 0 && (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                          <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/15 px-1.5 font-cyber-data text-[9px] text-[var(--hud-warn)]">
                             LUCK +{msg.metadata?.luck_spend}
                           </span>
                         )}
                         {msg.metadata?.edited && (
-                          <span className="font-mono text-[10px] text-slate-500">(edited)</span>
+                          <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">(edited)</span>
                         )}
                       </div>
 
-                      {/* QoL Action Controls + Admin-Only GM Ops Submenu Toggle */}
-                      <div className="flex flex-wrap items-center gap-1">
-                        {!isUser && isAdmin && gmOpsCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setGmOpsOpenIds((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
-                            }
-                            title="Admin-only submenu: rulebook entries read, campaign state updates & engine logs"
-                            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[10px] transition ${
-                              gmOpsOpen
-                                ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
-                                : "border-slate-700/80 bg-slate-900/90 text-slate-400 hover:border-slate-600 hover:text-slate-200"
-                            }`}
-                          >
-                            <Layers className="h-3 w-3 text-cyan-400" />
-                            <span>GM Ops ({gmOpsCount})</span>
-                            {gmOpsOpen ? (
-                              <ChevronUp className="h-3 w-3" />
-                            ) : (
-                              <ChevronDown className="h-3 w-3" />
-                            )}
-                          </button>
+                      <div className="flex items-center gap-2">
+                        {timeLabel && (
+                          <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                            {timeLabel}
+                          </span>
                         )}
-
-                        <BranchPager
-                          node={msg}
-                          disabled={busy}
-                          onSwitch={onSwitchBranch}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => void handleCopy(msg)}
-                          title="Copy message"
-                          aria-label="Copy message"
-                          className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                        >
-                          {copiedId === msg.id ? (
-                            <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-
-                        {isUser && !isEditing && (
-                          <button
-                            type="button"
-                            disabled={busy || lockedByPeer}
-                            onClick={() => openEdit(msg, "branch")}
-                            title="Edit & branch from this message"
-                            aria-label="Edit & branch"
-                            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-cyan-300 disabled:opacity-40"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-
-                        {!isEditing && (isAdmin || isUser) && (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => openEdit(msg, "inplace")}
-                            title="Edit message text in-place"
-                            aria-label="Edit text in-place"
-                            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-
-                        {!isUser && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={busy || lockedByPeer || !hasUserParent}
-                              onClick={() => void onRegenerate(msg)}
-                              title={
-                                hasUserParent
-                                  ? "Regenerate / swipe alternative GM reply"
-                                  : "Cannot regenerate: no preceding player message"
-                              }
-                              aria-label="Regenerate reply"
-                              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-cyan-300 disabled:opacity-40"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </button>
-                            {isAdmin && (
-                              <button
-                                type="button"
-                                disabled={busy || lockedByPeer || !hasUserParent}
-                                onClick={() => openGuidance(msg.id)}
-                                title={
-                                  hasUserParent
-                                    ? "Regenerate with Director note"
-                                    : "Cannot regenerate: no preceding player message"
-                                }
-                                aria-label="Guided regenerate"
-                                className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-amber-300 disabled:opacity-40"
-                              >
-                                <Wand2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </>
-                        )}
-
-                        {(isAdmin || isUser) && (
-                          <>
-                            {isConfirmingDelete ? (
-                              <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5">
-                                {hasMessagesBelow ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      disabled={busy}
-                                      onClick={() => void triggerDelete(msg, "single")}
-                                      title="Delete only this message (keep messages below)"
-                                      className="font-mono text-[10px] font-semibold text-amber-300 hover:text-amber-200 disabled:opacity-40"
-                                    >
-                                      This msg
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={busy}
-                                      onClick={() => void triggerDelete(msg, "branch")}
-                                      title="Delete this message and everything below it"
-                                      className="font-mono text-[10px] font-semibold text-rose-300 hover:text-rose-200 disabled:opacity-40"
-                                    >
-                                      + Below
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void triggerDelete(msg, "branch")}
-                                    className="font-mono text-[10px] font-semibold text-rose-300 hover:text-rose-200 disabled:opacity-40"
-                                  >
-                                    Delete
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  aria-label="Cancel delete"
-                                  className="text-slate-400 hover:text-slate-200 disabled:opacity-40"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => openDeleteConfirm(msg.id)}
-                                title={isDeletingThis ? "Deleting..." : "Delete message"}
-                                aria-label="Delete message"
-                                className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-rose-400 disabled:opacity-40"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </>
-                        )}
+                        {actionControls}
                       </div>
                     </div>
 
-                    {/* Body or Edit Box */}
-                    {isEditing ? (
-                      <div className="space-y-2">
-                        <textarea
-                          autoFocus
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                              e.preventDefault();
-                              void handleEditSubmit(msg);
-                            }
-                          }}
-                          rows={3}
-                          className="w-full rounded-md border border-cyan-500/60 bg-slate-950 p-2 text-sm text-slate-100 focus:outline-none"
-                        />
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-[10px] text-slate-500">
-                            Ctrl+Enter to save · Esc to cancel
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setEditingId(null)}
-                              className="rounded px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleEditSubmit(msg)}
-                              className="rounded bg-cyan-600 px-3 py-1 text-xs font-semibold text-white hover:bg-cyan-500"
-                            >
-                              {editMode === "inplace" ? "Save Text" : "Save & Branch"}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : isUser ? (
-                      <div className="space-y-2.5">
-                        <FormattedUserText content={msg.content} italic={isThink} />
-                        {/* Inline Dice Rolls right next to the player action that rolled them */}
-                        {actionRolls.length > 0 && (
-                          <div className="space-y-1.5 border-t border-slate-800/70 pt-2">
-                            {actionRolls.map((r, i) => (
-                              <RollCard key={i} roll={r} compact />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {/* Collapsible Admin-Only GM Ops Submenu (Citations, Campaign Patches, System Warnings) */}
-                        {isAdmin && gmOpsOpen && gmOpsCount > 0 && (
-                          <div className="space-y-2.5 rounded-lg border border-slate-700/80 bg-slate-950/90 p-3 text-xs">
-                            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 font-mono text-[10px] uppercase tracking-wider text-cyan-300">
-                              <span className="inline-flex items-center gap-1.5">
-                                <Shield className="h-3 w-3 text-rose-400" />
-                                Admin Engine Log (Hidden from Players)
-                              </span>
-                              <span>{gmOpsCount} item(s)</span>
+                    <div className="space-y-3 px-4 py-3 text-[14px] leading-relaxed text-[var(--hud-text)] sm:px-5 sm:py-3.5">
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <textarea
+                            autoFocus
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                                e.preventDefault();
+                                void handleEditSubmit(msg);
+                              }
+                            }}
+                            rows={3}
+                            className="w-full border border-[var(--hud-accent-line)] bg-black/75 p-2 text-sm text-[var(--hud-text)] focus:outline-none"
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                              Ctrl+Enter to save · Esc to cancel
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <HudButton variant="ghost" size="xs" onClick={() => setEditingId(null)}>
+                                Cancel
+                              </HudButton>
+                              <HudButton variant="cta" size="xs" onClick={() => void handleEditSubmit(msg)}>
+                                {editMode === "inplace" ? "Save Text" : "Save & Branch"}
+                              </HudButton>
                             </div>
-
-                            {citations.length > 0 && (
-                              <div className="space-y-1">
-                                <div className="font-mono text-[10px] text-slate-400">
-                                  Rulebook &amp; Library Entries Read:
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {citations.map((entry) => (
-                                    <button
-                                      key={entry.id}
-                                      type="button"
-                                      onClick={() => onInspectEntry(entry)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200 hover:bg-cyan-500/20"
-                                    >
-                                      <BookOpen className="h-3 w-3" />
-                                      <span>{entry.name}</span>
-                                      {entry.printed_page && (
-                                        <span className="font-mono opacity-75">p.{entry.printed_page}</span>
-                                      )}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {patches.length > 0 && (
-                              <div className="space-y-1">
-                                <div className="font-mono text-[10px] text-slate-400">
-                                  Campaign &amp; Sheet State Updates:
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {patches.map((p, i) => (
-                                    <PatchPill key={i} patch={p} />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {warnings.length > 0 && (
-                              <div className="space-y-1">
-                                {warnings.map((w, i) => (
-                                  <div
-                                    key={i}
-                                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
-                                  >
-                                    <span className="flex items-center gap-1.5">
-                                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                                      <span>{w}</span>
-                                    </span>
-                                    {onCompressMemory && w.toLowerCase().includes("compress") && (
-                                      <button
-                                        type="button"
-                                        disabled={Boolean(compressingMemory) || busy}
-                                        onClick={() => void onCompressMemory()}
-                                        className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
-                                      >
-                                        {compressingMemory ? "Compressing..." : "Compress to Library"}
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                           </div>
-                        )}
-
-                        {assistantRolls.length > 0 && (
-                          <div className="space-y-1.5">
-                            {assistantRolls.map((r, i) => (
-                              <RollCard key={i} roll={r} />
-                            ))}
-                          </div>
-                        )}
-
-                        <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${isThink ? "italic text-violet-100/95" : ""}`}>
-                          <Streamdown
-                            key={`${msg.id}:${msg.content}`}
-                            mode="static"
-                            components={STREAMDOWN_COMPONENTS}
-                          >
-                            {formatColorMarkdown(msg.content)}
-                          </Streamdown>
                         </div>
-                      </div>
-                    )}
+                      ) : (
+                        <>
+                          {/* Collapsible Admin-Only GM Ops Submenu (Citations, Campaign Patches, Warnings, Library Added) */}
+                          {isAdmin && gmOpsOpen && gmOpsCount > 0 && (
+                            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 text-xs">
+                              <div className="flex items-center justify-between border-b border-[var(--hud-line-soft)] pb-1.5 font-cyber-data text-[10px] uppercase tracking-wider text-[var(--hud-accent)]">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Shield className="h-3 w-3 text-[var(--hud-primary-bright)]" />
+                                  Admin Engine Log (Hidden from Players)
+                                </span>
+                                <span>{gmOpsCount} item(s)</span>
+                              </div>
 
-                    {/* Guided Regenerate Drawer */}
-                    {isGuiding && !isEditing && (
-                      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2.5">
-                        <input
-                          autoFocus
-                          type="text"
-                          value={guidanceText}
-                          onChange={(e) => setGuidanceText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void handleGuidedRetry(msg);
-                            }
-                          }}
-                          placeholder="Director note (e.g. 'make the fixer suspicious', 'roll Streetwise DV 15')..."
-                          className="flex-1 min-w-[200px] rounded border border-amber-500/50 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void handleGuidedRetry(msg)}
-                          className="rounded bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-500"
-                        >
-                          Retry
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setGuidanceMsgId(null)}
-                          className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                              {citations.length > 0 && (
+                                <div className="space-y-1">
+                                  <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
+                                    Rulebook &amp; Library Entries Read:
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {citations.map((entry) => (
+                                      <button
+                                        key={entry.id}
+                                        type="button"
+                                        onClick={() => onInspectEntry(entry)}
+                                        className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]"
+                                      >
+                                        <BookOpen className="h-3 w-3" />
+                                        <span>{entry.name}</span>
+                                        {entry.printed_page && (
+                                          <span className="font-cyber-data opacity-75">p.{entry.printed_page}</span>
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {patches.length > 0 && (
+                                <div className="space-y-1">
+                                  <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
+                                    Campaign &amp; Sheet State Updates:
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {patches.map((p, i) => (
+                                      <PatchPill key={i} patch={p} />
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {libraryAdded.length > 0 && (
+                                <div className="space-y-1">
+                                  <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
+                                    Library Entries Added:
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {libraryAdded.map((item, i) => (
+                                      <span
+                                        key={i}
+                                        className="inline-flex items-center gap-1 border border-[var(--hud-warn)]/45 bg-[var(--hud-panel)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]"
+                                      >
+                                        <Sparkles className="h-3 w-3" />
+                                        {item}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {warnings.length > 0 && (
+                                <div className="space-y-1">
+                                  {warnings.map((w, i) => (
+                                    <div
+                                      key={i}
+                                      className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-panel)] px-2.5 py-1 text-xs text-[var(--hud-warn)]"
+                                    >
+                                      <span className="flex items-center gap-1.5">
+                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                        <span>{w}</span>
+                                      </span>
+                                      {onCompressMemory && w.toLowerCase().includes("compress") && (
+                                        <button
+                                          type="button"
+                                          disabled={Boolean(compressingMemory) || busy}
+                                          onClick={() => void onCompressMemory()}
+                                          className="cyber-btn-tac cp-fx-hover border-[var(--hud-warn)]/60 px-2 py-0.5 font-cyber-ui text-[11px] font-semibold text-[var(--hud-warn)]"
+                                        >
+                                          {compressingMemory ? "Compressing..." : "Compress to Library"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {assistantRolls.length > 0 && (
+                            <div className="space-y-1.5">
+                              {assistantRolls.map((r, i) => (
+                                <RollCard key={i} roll={r} />
+                              ))}
+                            </div>
+                          )}
+
+                          <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${isThink ? "italic text-violet-100/95" : ""}`}>
+                            <Streamdown
+                              key={`${msg.id}:${msg.content}`}
+                              mode="static"
+                              components={STREAMDOWN_COMPONENTS}
+                            >
+                              {formatColorMarkdown(msg.content)}
+                            </Streamdown>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Guided Regenerate Drawer */}
+                      {isGuiding && !isEditing && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--hud-line-soft)] pt-2.5">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={guidanceText}
+                            onChange={(e) => setGuidanceText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void handleGuidedRetry(msg);
+                              }
+                            }}
+                            placeholder="Director note (e.g. 'make the fixer suspicious', 'roll Streetwise DV 15')..."
+                            className="min-w-[200px] flex-1 border border-[var(--hud-warn)]/55 bg-black/70 px-2.5 py-1 text-xs text-[var(--hud-text)] focus:border-[var(--hud-warn)] focus:outline-none"
+                          />
+                          <HudButton
+                            variant="cta"
+                            size="xs"
+                            onClick={() => void handleGuidedRetry(msg)}
+                          >
+                            Retry
+                          </HudButton>
+                          <HudButton
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setGuidanceMsgId(null)}
+                          >
+                            Cancel
+                          </HudButton>
+                        </div>
+                      )}
+                    </div>
+                  </CyberFrame>
                 </div>
               );
             })}
@@ -1378,110 +1475,105 @@ export function ChatPane({
               const streamTheme = resolveCharacterColor(streaming.speakerColor || activeSpeakerColor);
               const streamIsThink = streaming.turnIntent === "think";
               return (
-              <div className="space-y-3">
-                {streaming.userText && !isPeerStreaming && (
-                  <div className="flex justify-end">
-                    <div
-                      className={`max-w-[90%] rounded-xl border px-4 py-3 text-slate-100 ${
-                        streamIsThink
-                          ? "border-violet-500/55 bg-violet-950/25"
-                          : streamTheme.cardBorderClass
-                      }`}
-                      style={!streamIsThink ? streamTheme.cardBorderStyle : undefined}
-                    >
-                      <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-cyber-hud text-xs font-bold uppercase ${streamTheme.nameBadgeClass}`}
-                          style={streamTheme.nameBadgeStyle}
-                        >
-                          {streaming.speakerName || "You"}
+                <div className="space-y-3">
+                  {streaming.userText && !isPeerStreaming && (
+                    <div className="flex justify-end">
+                      <div
+                        className={`w-full sm:w-[88%] px-4 py-2.5 text-[var(--hud-text)] ${
+                          streamIsThink
+                            ? "border border-violet-500/55 border-r-2 border-r-violet-400 bg-violet-950/25"
+                            : "border border-white/15 border-r-2 border-r-[var(--hud-accent)] bg-black/55"
+                        }`}
+                        style={!streamIsThink && streamTheme.isHex ? { borderRightColor: streamTheme.hex } : undefined}
+                      >
+                        <div className="mb-1.5 flex items-center gap-2 text-[11px]">
+                          <span
+                            className="font-cyber-ui font-semibold uppercase tracking-wider text-[var(--hud-accent)]"
+                            style={streamTheme.isHex ? { color: streamTheme.nameBadgeStyle?.color } : undefined}
+                          >
+                            {streaming.speakerName || "You"}
+                          </span>
+                          {streamIsThink && (
+                            <span className="inline-flex items-center gap-1 border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                              <Eye className="h-3 w-3" />
+                              THINK
+                            </span>
+                          )}
+                          {streaming.overclock && (
+                            <span className="inline-flex items-center gap-1 border border-[var(--hud-line)] px-1.5 font-cyber-data text-[9px] uppercase text-[var(--hud-primary-bright)]">
+                              <Zap className="h-2.5 w-2.5" /> OVERCLOCK +2
+                            </span>
+                          )}
+                        </div>
+                        <p className={`whitespace-pre-wrap text-[13.5px] leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
+                          {streaming.userText}
+                        </p>
+                        {streaming.rolls.length > 0 && (
+                          <div className="mt-2 space-y-1.5">
+                            {streaming.rolls.map((r, i) => (
+                              <RollCard key={i} roll={r} compact />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <CyberFrame className={`w-full ${streamIsThink ? "border-violet-500/50" : ""}`}>
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-4 py-1.5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="h-2 w-0.5 bg-[var(--hud-primary-bright)]" />
+                        <span className="inline-flex items-end gap-0.5" aria-hidden="true">
+                          <span className="cyber-eq-bar" style={{ animationDelay: "0ms" }} />
+                          <span className="cyber-eq-bar" style={{ animationDelay: "180ms" }} />
+                          <span className="cyber-eq-bar" style={{ animationDelay: "360ms" }} />
+                        </span>
+                        <span className="font-cyber-display text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--hud-label)]">
+                          {streamIsThink ? "GM Thinking..." : "GM Streaming..."}
                         </span>
                         {streamIsThink && (
-                          <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                          <span className="inline-flex items-center gap-1 border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-wider text-violet-200">
                             <Eye className="h-3 w-3" />
                             THINK
                           </span>
                         )}
-                        {streaming.overclock && (
-                          <span className="inline-flex items-center gap-1 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] text-rose-300">
-                            <Zap className="h-3 w-3" /> OVERCLOCK
+                      </div>
+                      {isAdmin && streaming.startedAt && (
+                        <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                          {streamElapsedSec.toFixed(1)}s
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 px-4 py-3 text-[14px] leading-relaxed text-[var(--hud-text)] sm:px-5 sm:py-3.5">
+                      {!streaming.userText &&
+                        streaming.rolls.map((r, i) => <RollCard key={i} roll={r} />)}
+
+                      {isAdmin &&
+                        streaming.libraryAdded.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="inline-flex items-center gap-1.5 border border-[var(--hud-warn)]/45 bg-[var(--hud-row)] px-2.5 py-1 text-xs text-[var(--hud-warn)]"
+                          >
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Added Homebrew: {entry.name}
+                          </div>
+                        ))}
+
+                      <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
+                        {streaming.text ? (
+                          <Streamdown components={STREAMDOWN_COMPONENTS}>
+                            {formatColorMarkdown(streaming.text)}
+                          </Streamdown>
+                        ) : (
+                          <span className="text-xs italic text-[var(--hud-muted)]">
+                            Checking rules &amp; resolving actions...
                           </span>
                         )}
                       </div>
-                      <p className={`whitespace-pre-wrap text-sm leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
-                        {streaming.userText}
-                      </p>
-                      {streaming.rolls.length > 0 && (
-                        <div className="mt-2 space-y-1.5 border-t border-slate-800/70 pt-2">
-                          {streaming.rolls.map((r, i) => (
-                            <RollCard key={i} roll={r} compact />
-                          ))}
-                        </div>
-                      )}
                     </div>
-                  </div>
-                )}
-
-                <div
-                  className={`rounded-xl border px-4 py-3 text-slate-100 ${
-                    streamIsThink
-                      ? "border-violet-500/45 bg-violet-950/20 shadow-[0_0_24px_rgba(139,92,246,0.1)]"
-                      : "border-rose-500/35 bg-[#101624] shadow-[0_0_24px_rgba(244,63,94,0.08)]"
-                  }`}
-                >
-                  <div className={`mb-2 flex items-center justify-between gap-2 text-[11px] ${streamIsThink ? "text-violet-300" : "text-rose-300"}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-end gap-0.5" aria-hidden="true">
-                        <span className="cyber-eq-bar" style={{ animationDelay: "0ms" }} />
-                        <span className="cyber-eq-bar" style={{ animationDelay: "180ms" }} />
-                        <span className="cyber-eq-bar" style={{ animationDelay: "360ms" }} />
-                      </span>
-                      <span className="font-mono font-semibold uppercase tracking-wider">
-                        {streamIsThink ? "GM Thinking..." : "GM Streaming..."}
-                      </span>
-                      {streamIsThink && (
-                        <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
-                          <Eye className="h-3 w-3" />
-                          THINK
-                        </span>
-                      )}
-                    </div>
-                    {isAdmin && streaming.startedAt && (
-                      <span className="font-mono text-[10px] text-cyan-300">
-                        {streamElapsedSec.toFixed(1)}s
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-3">
-                    {!streaming.userText &&
-                      streaming.rolls.map((r, i) => <RollCard key={i} roll={r} />)}
-
-                    {isAdmin &&
-                      streaming.libraryAdded.map((entry) => (
-                        <div
-                          key={entry.id}
-                          className="inline-flex items-center gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200"
-                        >
-                          <Sparkles className="h-3.5 w-3.5" />
-                          Added Homebrew: {entry.name}
-                        </div>
-                      ))}
-
-                    <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
-                      {streaming.text ? (
-                        <Streamdown components={STREAMDOWN_COMPONENTS}>
-                          {formatColorMarkdown(streaming.text)}
-                        </Streamdown>
-                      ) : (
-                        <span className="text-xs italic text-slate-400">
-                          Checking rules &amp; resolving actions...
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  </CyberFrame>
                 </div>
-              </div>
               );
             })()}
 
@@ -1494,7 +1586,7 @@ export function ChatPane({
             <button
               type="button"
               onClick={() => scrollToBottom(true)}
-              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-cyan-500/50 bg-[#0d111a]/95 px-2.5 py-1 text-[11px] font-medium text-cyan-200 shadow-lg backdrop-blur hover:border-cyan-400 hover:bg-slate-900 sm:px-3 sm:py-1.5 sm:text-xs"
+              className="cyber-btn-tac cp-fx-hover pointer-events-auto border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-3 py-1.5 font-cyber-ui text-[11px] font-medium text-[var(--hud-accent)] shadow-lg sm:text-xs"
             >
               <ArrowDown className="h-3.5 w-3.5" />
               Jump to latest
@@ -1506,11 +1598,11 @@ export function ChatPane({
       {/* Composer Dock */}
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="shrink-0 border-t border-slate-800/90 bg-[#0b0f19]/95 px-2.5 py-2 backdrop-blur-md sm:px-4 sm:py-3"
+        className="shrink-0 border-t border-[var(--hud-line)] bg-[var(--hud-panel)] px-2.5 py-2 backdrop-blur-md sm:px-4 sm:py-3"
       >
         <div className="mx-auto max-w-3xl space-y-1.5 sm:space-y-2">
           {lockedByPeer && (
-            <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
+            <div className="cyber-hazard-thin flex items-center gap-2 border border-[var(--hud-warn)]/60 bg-[var(--hud-panel)] px-3 py-1.5 text-xs text-[var(--hud-warn)]">
               <Lock className="h-3.5 w-3.5 shrink-0" />
               <span>GM is resolving {activeTurn?.player_name}&apos;s turn...</span>
             </div>
@@ -1518,79 +1610,84 @@ export function ChatPane({
 
           {/* Party Floor Open / Deferred GM Resolution Bar */}
           {partyFloorOpen && lastMessage && !lockedByPeer && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/40 bg-cyan-950/25 px-3 py-1.5 text-xs text-cyan-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-3 py-1.5 text-xs text-[var(--hud-accent)]">
               <div className="flex items-center gap-2">
-                <Users className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <Users className="h-3.5 w-3.5 shrink-0 text-[var(--hud-accent)]" />
                 <span>
                   {lastMessage.metadata?.defer_reason ||
                     "Party floor open — teammates can reply or chain actions before the GM steps in."}
                 </span>
               </div>
-              <button
-                type="button"
+              <HudButton
+                variant="cta"
+                size="xs"
                 disabled={busy}
                 onClick={() => void onRegenerate(lastMessage)}
-                className="inline-flex items-center gap-1.5 rounded bg-rose-600 px-3 py-1 font-cyber-hud text-xs font-bold tracking-wider text-white uppercase shadow hover:bg-rose-500 disabled:opacity-45"
               >
                 <Play className="h-3 w-3 fill-current" />
                 <span>Resolve GM Turn</span>
-              </button>
+              </HudButton>
             </div>
           )}
 
           {/* Characterless Speaking Lock Banner */}
           {blockedByNoCharacter && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-500/45 bg-rose-950/25 px-2.5 py-1.5 text-[11px] text-rose-200 sm:px-3 sm:py-2 sm:text-xs">
+            <div className="cyber-hazard-thin flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-warn)]/60 bg-[var(--hud-panel)] px-2.5 py-1.5 text-[11px] text-[var(--hud-warn)] sm:px-3 sm:py-2 sm:text-xs">
               <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
-                <Lock className="h-3.5 w-3.5 shrink-0 text-rose-400" />
+                <Lock className="h-3.5 w-3.5 shrink-0 text-[var(--hud-warn)]" />
                 <span>
                   Admin requires an active Edgerunner sheet to speak in chat. Create or claim your character first.
                 </span>
               </div>
               {onOpenCreateCharacter && (
-                <button
-                  type="button"
+                <HudButton
+                  variant="cta"
+                  size="xs"
                   onClick={onOpenCreateCharacter}
-                  className="inline-flex shrink-0 items-center gap-1 rounded bg-cyan-600 px-2.5 py-1 font-semibold text-white hover:bg-cyan-500"
+                  className="shrink-0"
                 >
                   <UserPlus className="h-3.5 w-3.5" />
                   <span>Create Character</span>
-                </button>
+                </HudButton>
               )}
             </div>
           )}
 
           {diceOpen && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#101624] px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-[11px] text-slate-400">Quick Dice:</span>
+                <span className="font-cyber-ui text-[11px] uppercase tracking-wider text-[var(--hud-muted)]">
+                  Quick Dice:
+                </span>
                 {QUICK_DICE_PRESETS.map((p) => (
                   <button
                     key={p.label}
                     type="button"
                     onClick={() => void handleQuickDice(p.count, p.sides, `Quick ${p.label}`)}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-cyan-300 hover:border-cyan-400"
+                    className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-[11px] text-[var(--hud-accent)]"
                   >
                     {p.label}
                   </button>
                 ))}
               </div>
               {lastQuickRoll && (
-                <span className="font-mono text-[11px] text-emerald-300">{lastQuickRoll}</span>
+                <span className="font-cyber-data text-[11px] text-[var(--hud-ok)]">{lastQuickRoll}</span>
               )}
             </div>
           )}
 
           {colorBarOpen && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#101624] px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-[11px] text-slate-400">Text Highlight:</span>
+                <span className="font-cyber-ui text-[11px] uppercase tracking-wider text-[var(--hud-muted)]">
+                  Text Highlight:
+                </span>
                 {COLOR_SWATCHES.map((swatch) => (
                   <button
                     key={swatch.id}
                     type="button"
                     onClick={() => insertColorTag(swatch.id)}
-                    className="inline-flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-200 hover:border-cyan-400"
+                    className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px]"
                   >
                     <span className={`h-2 w-2 rounded-full ${swatch.dotClass}`} />
                     {swatch.label}
@@ -1598,8 +1695,10 @@ export function ChatPane({
                 ))}
               </div>
               {speakerChar && onUpdateCharacterColor && (
-                <div className="flex flex-wrap items-center gap-1.5 border-l border-slate-800 pl-2">
-                  <span className="font-mono text-[10px] text-slate-400">Name Tag Color:</span>
+                <div className="flex flex-wrap items-center gap-1.5 border-l border-[var(--hud-line-soft)] pl-2">
+                  <span className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
+                    Name Tag Color:
+                  </span>
                   {Object.entries(CHARACTER_COLOR_THEMES).map(([cid, theme]) => (
                     <button
                       key={cid}
@@ -1612,7 +1711,7 @@ export function ChatPane({
                     />
                   ))}
                   <label
-                    className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 hover:border-cyan-400"
+                    className="ml-1 inline-flex cursor-pointer items-center gap-1 border border-[var(--hud-line-soft)] bg-black/60 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-text)] hover:border-[var(--hud-accent-line)]"
                     title="Pick any custom Name Tag Color from the color wheel"
                   >
                     <input
@@ -1647,23 +1746,23 @@ export function ChatPane({
               {luckChar && (
                 <div
                   title={`Commit LUCK before the roll (only spent if a check runs this turn; ${maxLuck} available)`}
-                  className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[11px] ${
+                  className={`inline-flex items-center gap-0.5 border px-1.5 py-0.5 text-[11px] ${
                     effectiveLuck > 0
-                      ? "border-amber-500/70 bg-amber-500/15 text-amber-200"
-                      : "border-slate-700 bg-slate-900 text-slate-400"
+                      ? "border-[var(--hud-warn)]/70 bg-[var(--hud-row)] text-[var(--hud-warn)]"
+                      : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)]"
                   }`}
                 >
-                  <Sparkles className="h-3 w-3 text-amber-400" />
+                  <Sparkles className="h-3 w-3 text-[var(--hud-warn)]" />
                   <button
                     type="button"
                     aria-label="Decrease Luck spend"
                     disabled={effectiveLuck <= 0}
                     onClick={() => setLuckSpend((v) => Math.max(0, v - 1))}
-                    className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-35"
+                    className="p-0.5 hover:text-white disabled:opacity-35"
                   >
                     <Minus className="h-2.5 w-2.5" />
                   </button>
-                  <span className="min-w-[1.8rem] text-center font-mono text-[11px] font-semibold">
+                  <span className="min-w-[1.8rem] text-center font-cyber-data text-[11px] font-semibold">
                     +{effectiveLuck}/{maxLuck}
                   </span>
                   <button
@@ -1671,7 +1770,7 @@ export function ChatPane({
                     aria-label="Increase Luck spend"
                     disabled={effectiveLuck >= maxLuck}
                     onClick={() => setLuckSpend((v) => Math.min(maxLuck, v + 1))}
-                    className="rounded p-0.5 hover:bg-slate-800 disabled:opacity-35"
+                    className="p-0.5 hover:text-white disabled:opacity-35"
                   >
                     <Plus className="h-2.5 w-2.5" />
                   </button>
@@ -1681,10 +1780,8 @@ export function ChatPane({
               <button
                 type="button"
                 onClick={() => setDiceOpen((v) => !v)}
-                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
-                  diceOpen
-                    ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
-                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                  diceOpen ? "is-active" : ""
                 }`}
               >
                 <Dices className="h-3.5 w-3.5" />
@@ -1695,10 +1792,8 @@ export function ChatPane({
                 type="button"
                 onClick={() => setColorBarOpen((v) => !v)}
                 title="Highlight text or pick your character's Name Tag Color"
-                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
-                  colorBarOpen
-                    ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
-                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                  colorBarOpen ? "is-active" : ""
                 }`}
               >
                 <Palette className="h-3.5 w-3.5" />
@@ -1710,10 +1805,8 @@ export function ChatPane({
                 aria-pressed={thinkMode}
                 onClick={() => setThinkMode((v) => !v)}
                 title="Think / Observation mode (/think): ask what your character notices, recalls, or deduces with 0 world time elapsed and no NPC reactions"
-                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
-                  thinkMode
-                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
-                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                  thinkMode ? "is-active border-violet-400 text-violet-200" : ""
                 }`}
               >
                 <Eye className="h-3.5 w-3.5" />
@@ -1723,16 +1816,16 @@ export function ChatPane({
               {overclock && (
                 <span
                   title="Overclock armed in Character tab (-2 Humanity / +2 Check on next roll)"
-                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/60 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-rose-200"
+                  className="cyber-hazard-thin inline-flex items-center gap-1 border border-[var(--hud-warn)]/60 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-[var(--hud-warn)]"
                 >
-                  <Zap className="h-3 w-3 text-cyan-300" />
+                  <Zap className="h-3 w-3 text-[var(--hud-accent)]" />
                   OVERCLOCK
                 </span>
               )}
             </div>
 
-            <span className="hidden text-[11px] text-slate-500 sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:inline sm:justify-self-end">
-              Enter to send · Shift+Enter for new line · <code className="text-slate-400">/roll 3d6</code> · <code className="text-violet-300">/think</code>
+            <span className="hidden font-cyber-data text-[10px] text-[var(--hud-muted)] sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:inline sm:justify-self-end">
+              Enter to send · Shift+Enter · <code>/roll 3d6</code> · <code className="text-[var(--hud-accent)]">/think</code>
             </span>
 
             <textarea
@@ -1756,10 +1849,10 @@ export function ChatPane({
               }
               rows={2}
               disabled={busy || lockedByPeer || blockedByNoCharacter}
-              className={`col-start-1 row-start-2 min-h-[40px] w-full min-w-0 resize-none rounded-lg border bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none disabled:opacity-60 max-sm:h-10 sm:px-3 sm:py-2 ${
+              className={`col-start-1 row-start-2 min-h-[40px] w-full min-w-0 resize-none border bg-black/60 px-2.5 py-1.5 text-sm text-[var(--hud-text)] placeholder:text-[var(--hud-muted)] focus:outline-none disabled:opacity-60 max-sm:h-10 sm:px-3 sm:py-2 ${
                 thinkMode
                   ? "border-violet-500/70 focus:border-violet-400"
-                  : "border-slate-700 focus:border-cyan-400"
+                  : "border-white/15 focus:border-[var(--hud-accent-line)]"
               }`}
             />
 
@@ -1768,35 +1861,33 @@ export function ChatPane({
               onClick={cycleGmMode}
               aria-label={`GM turn mode: ${currentGmMode.label}`}
               title={currentGmMode.tip}
-              className={`col-start-2 row-start-1 inline-flex h-7 shrink-0 items-center justify-self-end rounded-md border px-2 text-[11px] font-semibold transition sm:col-start-2 sm:row-start-2 sm:h-10 sm:self-end sm:rounded-lg sm:px-2.5 ${currentGmMode.cls}`}
+              className={`cyber-btn-tac cp-fx-hover col-start-2 row-start-1 h-7 shrink-0 justify-center justify-self-end px-2 font-cyber-ui text-[11px] font-semibold sm:col-start-2 sm:row-start-2 sm:h-10 sm:self-end sm:px-3 ${currentGmMode.cls}`}
             >
               {currentGmMode.label}
             </button>
 
             {busy ? (
-              <button
-                type="button"
-                onClick={onStopStream}
-                className="col-start-2 row-start-2 inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-500 sm:col-start-3 sm:px-4"
-              >
-                <Square className="h-3.5 w-3.5 fill-current" />
-                Stop
-              </button>
+              <div className="cyber-cta-wrap col-start-2 row-start-2 self-end sm:col-start-3">
+                <button
+                  type="button"
+                  onClick={onStopStream}
+                  className="cyber-cta cp-fx-hover inline-flex h-10 shrink-0 items-center gap-1.5 px-3 font-cyber-ui text-xs font-semibold uppercase tracking-wider sm:px-4"
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                  Stop
+                </button>
+              </div>
             ) : (
-              <button
-                type="submit"
-                disabled={(!input.trim() && !thinkMode) || lockedByPeer || blockedByNoCharacter}
-                className={`col-start-2 row-start-2 inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded-lg px-3 text-xs font-semibold text-white disabled:opacity-40 sm:col-start-3 sm:px-4 ${
-                  thinkMode
-                    ? "bg-violet-600 hover:bg-violet-500"
-                    : gmMode === "hold_gm"
-                      ? "bg-amber-600 hover:bg-amber-500"
-                      : "bg-cyan-600 hover:bg-cyan-500"
-                }`}
-              >
-                <Send className="h-3.5 w-3.5" />
-                {!thinkMode && gmMode === "hold_gm" ? "Post" : "Send"}
-              </button>
+              <div className="cyber-cta-wrap col-start-2 row-start-2 self-end sm:col-start-3">
+                <button
+                  type="submit"
+                  disabled={(!input.trim() && !thinkMode) || lockedByPeer || blockedByNoCharacter}
+                  className="cyber-cta cp-fx-hover inline-flex h-10 shrink-0 items-center gap-1.5 px-3 font-cyber-ui text-xs font-semibold uppercase tracking-wider sm:px-4"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {!thinkMode && gmMode === "hold_gm" ? "Post" : "Send"}
+                </button>
+              </div>
             )}
           </div>
         </div>

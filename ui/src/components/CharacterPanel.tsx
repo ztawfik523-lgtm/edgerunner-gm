@@ -6,11 +6,8 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
-  Coins,
-  Cpu,
   Dices,
   EyeOff,
-  Heart,
   HelpCircle,
   History,
   Image as ImageIcon,
@@ -20,8 +17,6 @@ import {
   RotateCcw,
   Save,
   Search,
-  ShieldAlert,
-  Sparkles,
   Trash2,
   Upload,
   UserCheck,
@@ -49,6 +44,7 @@ import {
 } from "../utils/characterColors";
 import { getWeaponTierTheme, inferWeaponTierFromName } from "../utils/weaponQuality";
 import { CharacterCreatorModal } from "./CharacterCreatorModal";
+import { CyberFrame, HudButton, RoleTag, SegmentedBar } from "./cyber";
 
 interface CharacterPanelProps {
   campaignId: string;
@@ -735,40 +731,41 @@ export function CharacterPanel({
     return (
       <div className="space-y-4 p-4">
         {creatorModal}
-        <div className="cyber-hud-card overflow-hidden rounded-xl bg-[#101624]">
-          <div className="relative h-28 w-full overflow-hidden border-b border-rose-500/30">
+        <CyberFrame variant="hex" className="overflow-hidden">
+          <div className="relative h-28 w-full overflow-hidden border-b border-[var(--hud-line)]">
             <img
               src={edgerunnerChromeBanner}
               alt=""
               aria-hidden="true"
               className="h-full w-full object-cover opacity-75"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#101624] via-[#101624]/45 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[var(--hud-bg)] via-[var(--hud-bg)]/50 to-transparent" />
             <div className="absolute bottom-2.5 left-4 right-4 flex items-center justify-between">
-              <h3 className="font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100">
+              <h3 className="font-cyber-display text-sm font-bold uppercase tracking-wider text-[var(--hud-text)]">
                 Create Edgerunner Sheet
               </h3>
-              <UserPlus className="h-5 w-5 shrink-0 text-cyan-400" />
+              <UserPlus className="h-5 w-5 shrink-0 text-[var(--hud-accent)]" />
             </div>
           </div>
 
-          <div className="p-4 space-y-3">
-            <p className="text-xs leading-relaxed text-slate-300">
+          <div className="space-y-3 p-4">
+            <p className="text-xs leading-relaxed text-[var(--hud-muted)]">
               Build your own independent Cyberpunk RED character sheet with Corebook Roles, hover/click rulebook
               explanations, official STAT &amp; Skill templates or custom builds, Lifepath history,
               written backstory, custom portrait, and starting gear.
             </p>
 
-            <button
-              type="button"
+            <HudButton
+              variant="cta"
+              size="md"
               onClick={openCreator}
-              className="cyber-cut-sm inline-flex w-full items-center justify-center gap-2 bg-gradient-to-r from-rose-600 to-rose-500 px-4 py-2.5 font-cyber-hud text-xs font-bold tracking-wider text-white uppercase shadow-[0_0_16px_rgba(244,63,94,0.28)] transition hover:from-rose-500 hover:to-rose-400"
+              className="w-full py-2.5"
             >
               <UserPlus className="h-4 w-4" />
               Open Character Sheet Creator
-            </button>
+            </HudButton>
           </div>
-        </div>
+        </CyberFrame>
       </div>
     );
   }
@@ -787,14 +784,12 @@ export function CharacterPanel({
   const maxHumanity = Math.max(0, active.stats.EMP * 10 - cyberMaxHumPenalty);
 
   const threshold = Math.ceil(active.max_hp / 2);
-  const woundLabel =
+  const woundStatus =
     active.hp < 1
-      ? "Mortally Wounded (-4)"
+      ? "MORTALLY WOUNDED"
       : active.hp < threshold
-        ? "Seriously Wounded (-2)"
-        : "Operational";
-  const hpPct = Math.max(0, Math.min(100, Math.round((active.hp / Math.max(1, active.max_hp)) * 100)));
-  const humPct = Math.max(0, Math.min(100, Math.round((active.humanity / Math.max(1, maxHumanity)) * 100)));
+        ? "SERIOUSLY WOUNDED"
+        : "STABLE";
   const claimant = roster.find((p) => p.character_id === active.id);
   const ownerUsername = typeof detail.owner_username === "string" && detail.owner_username.trim() ? detail.owner_username.trim() : null;
   const ownedByOtherAccount = Boolean(
@@ -868,6 +863,17 @@ export function CharacterPanel({
     skillFilter.trim() ? name.toLowerCase().includes(skillFilter.trim().toLowerCase()) : true,
   );
   const invEntries = Object.entries(active.inventory);
+  const deathSave = Number(
+    (active.detail as { creation?: { effective_body?: number }; death_save?: number } | undefined)?.creation?.effective_body ??
+      (active.detail as { death_save?: number } | undefined)?.death_save ??
+      active.stats.BODY,
+  );
+  const headSp =
+    equippedHeadArmor?.sp ??
+    (equippedHeadArmor?.name ? parseArmorSp(equippedHeadArmor.name) : undefined);
+  const bodySp =
+    equippedArmor?.sp ??
+    (equippedArmor?.name ? parseArmorSp(equippedArmor.name) : undefined);
 
   return (
     <div className="space-y-3 p-3.5">
@@ -890,24 +896,22 @@ export function CharacterPanel({
                   setSelectedId(c.id);
                   onSelectSpeakerId?.(c.id);
                 }}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition ${
-                  selected
-                    ? "border-rose-500/70 bg-rose-500/15 text-slate-100 shadow-[0_0_10px_rgba(244,63,94,0.15)]"
-                    : "border-slate-800 bg-[#111726] text-slate-400 hover:text-slate-200"
+                className={`cyber-btn-tac cp-fx-hover px-2.5 py-1 font-cyber-ui text-xs ${
+                  selected ? "is-active" : ""
                 }`}
               >
                 {isSpeaking && (
                   <span
                     title="Active speaker in chat"
-                    className="h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee]"
+                    className="cp-pulse h-1.5 w-1.5 bg-[var(--hud-accent)]"
                   />
                 )}
-                <span className="font-medium">{cHandle}</span>
-                <span className="font-mono text-[10px] text-slate-400">
+                <span className="font-semibold">{cHandle}</span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
                   {c.hp}/{c.max_hp}
                 </span>
                 {(owner || cOwnerUser) && (
-                  <span className="rounded bg-cyan-500/15 px-1 text-[10px] text-cyan-300">
+                  <span className="border border-[var(--hud-accent-line)]/40 bg-[var(--hud-accent-navy)] px-1 font-cyber-ui text-[10px] text-[var(--hud-accent)]">
                     {owner?.player_name || cOwnerUser}
                   </span>
                 )}
@@ -919,10 +923,8 @@ export function CharacterPanel({
               type="button"
               onClick={() => onSelectSpeakerId("")}
               title="Speak in chat as Party / General instead of a specific character"
-              className={`rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                selectedSpeakerId === ""
-                  ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
-                  : "border-slate-800 bg-[#111726] text-slate-400 hover:text-slate-200"
+              className={`cyber-btn-tac cp-fx-hover px-2 py-1 font-cyber-ui text-[11px] font-medium ${
+                selectedSpeakerId === "" ? "is-active" : ""
               }`}
             >
               Party / General
@@ -932,7 +934,7 @@ export function CharacterPanel({
       )}
 
       {sheetLocked && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
+        <div className="cyber-hazard-thin flex items-center gap-2 border border-[var(--hud-warn)]/50 bg-[var(--hud-panel)] px-3 py-1.5 text-xs text-[var(--hud-warn)]">
           <Lock className="h-3.5 w-3.5 shrink-0" />
           <span>
             {ownedByOtherAccount
@@ -943,234 +945,237 @@ export function CharacterPanel({
       )}
 
       {!ownerUsername && currentUsername && !isAdmin && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/40 bg-cyan-950/25 px-3 py-1.5 text-xs text-cyan-200">
+        <div className="flex items-center justify-between gap-2 border border-[var(--hud-accent-line)]/60 bg-[var(--hud-accent-navy)] px-3 py-1.5 text-xs text-[var(--hud-text)]">
           <span>This character is currently unclaimed. Claim it as your independent Edgerunner?</span>
-          <button
-            type="button"
+          <HudButton
+            variant="cta"
+            size="xs"
             disabled={busy}
             onClick={() => void handleClaimCharacter()}
-            className="inline-flex items-center gap-1 rounded bg-cyan-600 px-2.5 py-1 font-semibold text-white hover:bg-cyan-500"
           >
             <UserCheck className="h-3.5 w-3.5" />
             <span>Claim Sheet</span>
-          </button>
+          </HudButton>
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-3">
-          {activePortraitUrl ? (
-            <img
-              src={activePortraitUrl}
-              alt={activeHandle}
-              className={`h-11 w-11 shrink-0 rounded-lg object-cover ring-2 ${activeColorTheme.avatarRingClass}`}
-              style={activeColorTheme.avatarRingStyle}
-            />
-          ) : (
-            <div
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border font-cyber-display text-sm font-bold uppercase ${activeColorTheme.nameBadgeClass}`}
-              style={activeColorTheme.nameBadgeStyle}
-            >
-              {activeHandle.slice(0, 2)}
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="truncate text-base font-bold tracking-tight text-slate-100">
-                {activeHandle}
-              </h3>
-              {rolesList.map((r, i) => (
-                <span
-                  key={i}
-                  className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300"
-                >
-                  {r.role ?? "Edgerunner"} {r.rank !== undefined ? `R${r.rank}` : ""}
+      {/* Combat Vitals Frame */}
+      <CyberFrame variant="hex" className="p-3.5 space-y-3">
+        <div className="relative z-10 flex flex-wrap items-start justify-between gap-2 border-b border-[var(--hud-line-soft)] pb-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {activePortraitUrl ? (
+              <img
+                src={activePortraitUrl}
+                alt={activeHandle}
+                className={`h-10 w-10 shrink-0 object-cover ring-2 ${activeColorTheme.avatarRingClass}`}
+                style={activeColorTheme.avatarRingStyle}
+              />
+            ) : (
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center border font-cyber-display text-xs font-bold uppercase ${activeColorTheme.nameBadgeClass}`}
+                style={activeColorTheme.nameBadgeStyle}
+              >
+                {activeHandle.slice(0, 2)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <h3 className="truncate font-cyber-display text-base font-semibold tracking-wide text-[var(--hud-text)]">
+                  {activeHandle}
+                </h3>
+                {rolesList.map((r, i) => (
+                  <RoleTag
+                    key={i}
+                    role={r.role ?? "Edgerunner"}
+                    rank={r.rank}
+                  />
+                ))}
+                <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                  rev {active.revision}
                 </span>
-              ))}
-              <span className="font-mono text-[11px] text-slate-500">rev {active.revision}</span>
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-              {activeRealName && canViewRealName && (
-                <span className="inline-flex items-center gap-1">
-                  <span>Real Name: <strong className="text-slate-300">{activeRealName}</strong></span>
-                  {activeRealNameHidden ? (
-                    <span
-                      title="NPCs and other players only know your Street Handle unless revealed in play"
-                      className="inline-flex items-center gap-0.5 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.2 font-mono text-[9px] text-amber-300"
-                    >
-                      <EyeOff className="h-2.5 w-2.5" /> Hidden
-                    </span>
-                  ) : (
-                    <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.2 font-mono text-[9px] text-slate-400">
-                      Known
+              </div>
+              {((activeRealName && canViewRealName) || ownerUsername) && (
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[var(--hud-muted)]">
+                  {activeRealName && canViewRealName && (
+                    <span className="inline-flex items-center gap-1">
+                      <span>
+                        Real Name: <strong className="text-[var(--hud-text)]">{activeRealName}</strong>
+                      </span>
+                      {activeRealNameHidden ? (
+                        <span
+                          title="NPCs and other players only know your Street Handle unless revealed in play"
+                          className="inline-flex items-center gap-0.5 border border-[var(--hud-warn)]/40 bg-[var(--hud-warn)]/10 px-1.5 font-cyber-data text-[9px] text-[var(--hud-warn)]"
+                        >
+                          <EyeOff className="h-2.5 w-2.5" /> Hidden
+                        </span>
+                      ) : (
+                        <span className="border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-1.5 font-cyber-data text-[9px] text-[var(--hud-muted)]">
+                          Known
+                        </span>
+                      )}
                     </span>
                   )}
-                </span>
+                  {ownerUsername && (
+                    <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]/85">
+                      Player: {ownerUsername}
+                    </span>
+                  )}
+                </div>
               )}
-              {ownerUsername && (
-                <span className="font-mono text-[10px] text-cyan-300/80">
-                  Player: {ownerUsername}
-                </span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <span className="flex items-center gap-1.5 font-cyber-data text-[10px] tracking-widest text-[var(--hud-accent)]">
+              <span className="cp-pulse h-1.5 w-1.5 bg-[var(--hud-accent)]" />
+              VITALS // ONLINE
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={busy || sheetLocked}
+                title="Undo latest character change"
+                className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px]"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={openCreator}
+                className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]"
+              >
+                <Plus className="h-3 w-3" />
+                New
+              </button>
+              {confirmDeleteChar ? (
+                <div className="inline-flex items-center gap-1 border border-[var(--hud-primary-bright)]/60 bg-[var(--hud-row)] px-2 py-0.5 text-[11px]">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void handleDeleteCharacter()}
+                    className="font-cyber-ui font-semibold text-[var(--hud-primary-bright)] hover:text-white disabled:opacity-40"
+                  >
+                    Confirm Delete
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmDeleteChar(false)}
+                    className="font-cyber-ui text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy || !canDelete}
+                  onClick={() => setConfirmDeleteChar(true)}
+                  title={
+                    canDelete
+                      ? `Delete ${activeHandle}`
+                      : !ownerUsername
+                        ? "Claim this character first to delete it"
+                        : `Owned by ${ownerUsername}. Only its owner or Admin can delete it.`
+                  }
+                  aria-label={`Delete ${activeHandle}`}
+                  className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px]"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
               )}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={handleUndo}
-            disabled={busy || sheetLocked}
-            title="Undo latest character change"
-            className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Undo
-          </button>
-          <button
-            type="button"
-            onClick={openCreator}
-            className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-cyan-300 hover:border-cyan-500/60"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New
-          </button>
-          {confirmDeleteChar ? (
-            <div className="inline-flex items-center gap-1 rounded border border-rose-500/50 bg-rose-950/40 px-2 py-1 text-xs">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleDeleteCharacter()}
-                className="font-semibold text-rose-300 hover:text-rose-200 disabled:opacity-40"
-              >
-                Confirm Delete
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmDeleteChar(false)}
-                className="text-slate-400 hover:text-slate-200"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              disabled={busy || !canDelete}
-              onClick={() => setConfirmDeleteChar(true)}
-              title={
-                canDelete
-                  ? `Delete ${activeHandle}`
-                  : !ownerUsername
-                    ? "Claim this character first to delete it"
-                    : `Owned by ${ownerUsername}. Only its owner or Admin can delete it.`
-              }
-              aria-label={`Delete ${activeHandle}`}
-              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-400 hover:border-rose-500/60 hover:text-rose-300 disabled:opacity-40"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Combat Vitals Hero Card */}
-      <div className="cyber-cut rounded-lg border border-slate-800/90 bg-[#101624] p-3 space-y-3">
-        <div>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="inline-flex items-center gap-1.5 font-semibold text-slate-100">
-              <Heart className="h-3.5 w-3.5 text-rose-400" />
+        {/* HP & Compact Inline Combat Vitals */}
+        <div className="relative z-10 space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 font-cyber-data text-xs">
+            <span className="font-semibold text-[var(--hud-accent)]">
               HP {active.hp} / {active.max_hp}
             </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-[10px] text-slate-400">
-                Seriously Wounded: <span className="text-slate-200">{threshold}</span>
+            <div className="flex flex-wrap items-center gap-3 text-[11px]">
+              <span className="text-slate-300">
+                SW <b className="text-[var(--hud-warn)]">&lt;{threshold}</b>
               </span>
-              <span className="font-mono text-[10px] text-slate-400">
-                Death Save:{" "}
-                <span className="text-slate-200">
-                  {Number(
-                    (active.detail as { creation?: { effective_body?: number }; death_save?: number } | undefined)?.creation?.effective_body ??
-                      (active.detail as { death_save?: number } | undefined)?.death_save ??
-                      active.stats.BODY,
-                  )}
-                </span>
+              <span className="text-slate-300">
+                DEATH SAVE <b className="text-white">{deathSave}</b>
               </span>
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold ${
+                className={`font-semibold ${
                   active.hp < 1
-                    ? "bg-rose-500/20 text-rose-300"
+                    ? "text-[var(--hud-primary-bright)]"
                     : active.hp < threshold
-                      ? "bg-amber-500/20 text-amber-300"
-                      : "bg-emerald-500/15 text-emerald-300"
+                      ? "text-[var(--hud-warn)]"
+                      : "text-[var(--hud-ok)]"
                 }`}
               >
-                {active.hp < threshold && <ShieldAlert className="h-3 w-3" />}
-                {woundLabel}
+                {woundStatus}
               </span>
             </div>
           </div>
 
-          <div className="relative mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-900">
-            <div
-              className={`h-full transition-all ${
-                active.hp < 1
-                  ? "bg-rose-600"
-                  : active.hp < threshold
-                    ? "bg-amber-500"
-                    : "bg-emerald-500"
-              }`}
-              style={{ width: `${hpPct}%` }}
-            />
-            <div
-              title={`Seriously Wounded threshold (${threshold} HP)`}
-              className="absolute inset-y-0 left-1/2 w-0.5 bg-slate-950/80"
-            />
-          </div>
+          <SegmentedBar
+            value={active.hp}
+            max={active.max_hp}
+            segments={20}
+            thresholdRatio={0.5}
+            tone={active.hp >= 1 && active.hp < threshold ? "warn" : "primary"}
+            aria-label={`HP ${active.hp} of ${active.max_hp}`}
+          />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="flex gap-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            <div className="flex gap-1 font-cyber-data text-[10px]">
               {[-5, -1, +1, +5].map((d) => (
                 <button
                   key={d}
                   type="button"
                   disabled={busy || sheetLocked}
                   onClick={() => handleHpDelta(d)}
-                  className="rounded border border-slate-700/90 bg-slate-950 px-2 py-0.5 font-mono text-[11px] text-slate-300 hover:border-cyan-500/60 disabled:opacity-40"
+                  className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-[10px]"
                 >
                   {d > 0 ? `+${d}` : d}
                 </button>
               ))}
             </div>
-            {injuriesList.length > 0 && (
-              <span className="font-mono text-[10px] text-rose-300">
-                {injuriesList.length} critical injur{injuriesList.length === 1 ? "y" : "ies"}
+            <div className="flex items-center gap-3 font-cyber-data text-[11px]">
+              {injuriesList.length > 0 && (
+                <span className="text-[var(--hud-primary-bright)]">
+                  {injuriesList.length} critical injur{injuriesList.length === 1 ? "y" : "ies"}
+                </span>
+              )}
+              <span className="text-slate-300">
+                ARMOR SP:{" "}
+                <b className="text-[var(--hud-accent)]">
+                  {headSp !== undefined || bodySp !== undefined
+                    ? `H${headSp ?? 0} / B${bodySp ?? 0}`
+                    : "H0 / B0"}
+                </b>
               </span>
-            )}
+            </div>
           </div>
         </div>
 
-        {/* Humanity, LUCK, Eurobucks */}
-        <div className="grid grid-cols-1 gap-2 border-t border-slate-800/80 pt-2.5 sm:grid-cols-3">
-          <div className="rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1 text-slate-400">
-                <Cpu className="h-3 w-3 text-cyan-400" />
-                Humanity
-              </span>
-              <span className="font-mono font-bold text-cyan-300">
+        {/* Humanity, Luck & Eddies Row */}
+        <div className="relative z-10 grid grid-cols-1 gap-3 border-t border-[var(--hud-line-soft)] pt-2.5 sm:grid-cols-3">
+          <div>
+            <div className="flex justify-between font-cyber-data text-[10px]">
+              <span className="text-[var(--hud-muted)]">HUMANITY</span>
+              <span className={active.humanity <= 20 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-accent)]"}>
                 {active.humanity}/{maxHumanity}
               </span>
             </div>
-            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-              <div
-                className={`h-full transition-all ${
-                  active.humanity <= 20 ? "bg-rose-500" : "bg-cyan-400"
-                }`}
-                style={{ width: `${humPct}%` }}
-              />
-            </div>
+            <SegmentedBar
+              value={active.humanity}
+              max={maxHumanity}
+              segments={10}
+              tone={active.humanity <= 20 ? "primary" : "accent"}
+              heightClass="h-1"
+              className="mt-1"
+              aria-label={`Humanity ${active.humanity} of ${maxHumanity}`}
+            />
             {active.humanity < maxHumanity && (
               <div className="mt-1.5 flex gap-1">
                 <button
@@ -1178,7 +1183,7 @@ export function CharacterPanel({
                   disabled={busy || sheetLocked || active.money < 500}
                   onClick={() => void handleTherapy("standard")}
                   title="Standard Therapy: 500 eb, +2d6 Humanity (p. 230)"
-                  className="flex-1 rounded border border-slate-800 bg-slate-900 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
+                  className="cyber-btn-tac cp-fx-hover flex-1 justify-center py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]"
                 >
                   Therapy 500eb
                 </button>
@@ -1187,7 +1192,7 @@ export function CharacterPanel({
                   disabled={busy || sheetLocked || active.money < 1000}
                   onClick={() => void handleTherapy("extreme")}
                   title="Extreme Therapy: 1,000 eb, +4d6 Humanity (p. 230)"
-                  className="flex-1 rounded border border-slate-800 bg-slate-900 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
+                  className="cyber-btn-tac cp-fx-hover flex-1 justify-center py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]"
                 >
                   +4d6 1k eb
                 </button>
@@ -1195,44 +1200,40 @@ export function CharacterPanel({
             )}
           </div>
 
-          <div className="rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1 text-slate-400">
-                <Sparkles className="h-3 w-3 text-amber-400" />
-                LUCK
-              </span>
-              <span className="font-mono font-bold text-amber-300">
+          <div>
+            <div className="flex justify-between font-cyber-data text-[10px]">
+              <span className="text-[var(--hud-muted)]">LUCK</span>
+              <span className="text-[var(--hud-warn)]">
                 {active.luck_remaining}/{active.stats.LUCK}
               </span>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1" aria-hidden="true">
+            <div className="mt-1.5 flex flex-wrap gap-1" aria-hidden="true">
               {Array.from({ length: Math.min(10, active.stats.LUCK) }).map((_, i) => (
                 <span
                   key={i}
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    i < active.luck_remaining ? "bg-amber-400" : "bg-slate-800"
+                  className={`h-1.5 w-2 ${
+                    i < active.luck_remaining ? "bg-[var(--hud-warn)]" : "bg-white/10"
                   }`}
                 />
               ))}
             </div>
           </div>
 
-          <div className="rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1 text-slate-400">
-                <Coins className="h-3 w-3 text-emerald-400" />
-                Eddies
+          <div>
+            <div className="flex justify-between font-cyber-data text-[10px]">
+              <span className="text-[var(--hud-muted)]">EDDIES</span>
+              <span className="text-[var(--hud-text)]">
+                {active.money.toLocaleString()} eb
               </span>
-              <span className="font-mono font-bold text-emerald-300">{active.money} eb</span>
             </div>
-            <div className="mt-1.5 flex gap-1">
+            <div className="mt-1 flex gap-1 font-cyber-data text-[9px]">
               {[-100, -20, +50, +100].map((d) => (
                 <button
                   key={d}
                   type="button"
                   disabled={busy || sheetLocked}
                   onClick={() => handleMoneyDelta(d)}
-                  className="flex-1 rounded border border-slate-800 bg-slate-900 py-0.5 font-mono text-[10px] text-slate-300 hover:border-emerald-500/60 disabled:opacity-40"
+                  className="cyber-btn-tac cp-fx-hover flex-1 justify-center py-0.5 font-cyber-data text-[10px]"
                 >
                   {d > 0 ? `+${d}` : d}
                 </button>
@@ -1241,30 +1242,44 @@ export function CharacterPanel({
           </div>
         </div>
 
+        {/* OVERCLOCK Trigger */}
         {onToggleOverclock && (
           <button
             type="button"
             onClick={onToggleOverclock}
             aria-pressed={overclock}
             title="Spend 2 Humanity to gain +2 on your primary check next turn"
-            className={`cyber-overclock-btn flex w-full items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-xs font-semibold ${
+            className={`relative z-10 cyber-hazard-thin cp-fx-hover flex w-full items-center justify-between gap-2 border px-3 py-1.5 text-xs transition ${
               overclock
-                ? "cyber-overclock-active border-rose-500 bg-rose-600/25 text-rose-100"
-                : "border-slate-800 bg-slate-950/80 text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
+                ? "cyber-overclock-active border-[var(--hud-warn)] text-[var(--hud-text)]"
+                : "border-[var(--hud-line)] text-[var(--hud-text)] hover:border-[var(--hud-warn)]"
             }`}
           >
-            <span className="inline-flex items-center gap-1.5 font-cyber-display text-[11px] tracking-wider uppercase">
-              <Zap className={`h-3.5 w-3.5 ${overclock ? "text-cyan-300" : "text-rose-400"}`} />
-              Overclock
+            <span className="inline-flex items-center gap-1.5">
+              <Zap
+                className={`h-3.5 w-3.5 ${
+                  overclock ? "text-[var(--hud-accent)]" : "text-[var(--hud-primary-bright)]"
+                }`}
+              />
+              <span
+                data-text="OVERCLOCK"
+                className="cp-glitch font-cyber-display text-[11px] font-semibold uppercase tracking-wider text-[var(--hud-text)]"
+              >
+                OVERCLOCK
+              </span>
             </span>
-            <span className="font-mono text-[10px]">
-              {overclock ? "ARMED // -2 HUM +2 CHK" : "-2 Humanity / +2 Check"}
+            <span
+              className={`font-cyber-data text-[10px] ${
+                overclock ? "text-[var(--hud-warn)]" : "text-[var(--hud-muted)]"
+              }`}
+            >
+              {overclock ? "ARMED // -2 HUM +2 CHK" : "STANDBY // -2 HUM +2 CHK"}
             </span>
           </button>
         )}
-      </div>
+      </CyberFrame>
 
-      {/* 5x2 Clickable Attributes Strip */}
+      {/* 5x2 Clickable Attributes Grid */}
       <div className="space-y-1.5">
         <div
           className="grid grid-cols-5 gap-1.5"
@@ -1283,14 +1298,26 @@ export function CharacterPanel({
                   setCheckStat(stat);
                   setSheetTab("skills");
                 }}
-                className={`rounded border px-2 py-1.5 text-center transition ${
+                className={`cursor-pointer border py-2 text-center transition ${
                   selectedStat
-                    ? "border-cyan-500/70 bg-cyan-950/35"
-                    : "border-slate-800 bg-[#101624] hover:border-slate-700"
+                    ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                    : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                 }`}
               >
-                <div className="font-mono text-[10px] text-slate-400">{stat}</div>
-                <div className="font-mono text-sm font-bold text-slate-100">{active.stats[stat]}</div>
+                <span
+                  className={`block font-cyber-data text-[10px] ${
+                    selectedStat ? "text-[var(--hud-accent)]" : "text-[var(--hud-muted)]"
+                  }`}
+                >
+                  {stat}
+                </span>
+                <span
+                  className={`font-cyber-data text-sm font-semibold ${
+                    selectedStat ? "text-[var(--hud-accent)]" : "text-[var(--hud-text)]"
+                  }`}
+                >
+                  {active.stats[stat]}
+                </span>
               </button>
             );
           })}
@@ -1298,10 +1325,10 @@ export function CharacterPanel({
         {(() => {
           const displayedStat = inspectedStat ?? checkStat;
           return (
-            <div className="flex min-h-[52px] items-start gap-2 rounded border border-cyan-500/30 bg-cyan-950/25 px-2.5 py-1.5 text-[11px] leading-snug text-slate-200">
-              <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-400" />
+            <div className="flex min-h-[52px] items-start gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-2.5 py-1.5 text-[11px] leading-snug text-[var(--hud-text)]">
+              <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--hud-accent)]" />
               <div>
-                <span className="font-semibold text-cyan-300">
+                <span className="font-semibold text-[var(--hud-accent)]">
                   {STAT_QUICK_GUIDE[displayedStat].full} ({displayedStat}{" "}
                   {active.stats[displayedStat]})
                 </span>{" "}
@@ -1313,14 +1340,14 @@ export function CharacterPanel({
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex rounded-lg border border-slate-800 bg-[#0c111c] p-1 text-xs">
+      <div className="grid grid-cols-4 border-b border-[var(--hud-line)] bg-[var(--hud-panel)] text-xs">
         <button
           type="button"
           onClick={() => setSheetTab("skills")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition ${
+          className={`flex items-center justify-center gap-1.5 border-b-2 py-2 font-cyber-ui text-[11px] uppercase tracking-wider transition ${
             sheetTab === "skills"
-              ? "bg-slate-800 text-cyan-300 shadow-sm"
-              : "text-slate-400 hover:text-slate-200"
+              ? "border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+              : "border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <Activity className="h-3.5 w-3.5" />
@@ -1329,10 +1356,10 @@ export function CharacterPanel({
         <button
           type="button"
           onClick={() => setSheetTab("gear")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition ${
+          className={`flex items-center justify-center gap-1.5 border-b-2 py-2 font-cyber-ui text-[11px] uppercase tracking-wider transition ${
             sheetTab === "gear"
-              ? "bg-slate-800 text-cyan-300 shadow-sm"
-              : "text-slate-400 hover:text-slate-200"
+              ? "border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+              : "border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <Backpack className="h-3.5 w-3.5" />
@@ -1341,10 +1368,10 @@ export function CharacterPanel({
         <button
           type="button"
           onClick={() => setSheetTab("bio")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition ${
+          className={`flex items-center justify-center gap-1.5 border-b-2 py-2 font-cyber-ui text-[11px] uppercase tracking-wider transition ${
             sheetTab === "bio"
-              ? "bg-slate-800 text-cyan-300 shadow-sm"
-              : "text-slate-400 hover:text-slate-200"
+              ? "border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+              : "border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <BookOpen className="h-3.5 w-3.5" />
@@ -1353,10 +1380,10 @@ export function CharacterPanel({
         <button
           type="button"
           onClick={() => setSheetTab("log")}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition ${
+          className={`flex items-center justify-center gap-1.5 border-b-2 py-2 font-cyber-ui text-[11px] uppercase tracking-wider transition ${
             sheetTab === "log"
-              ? "bg-slate-800 text-cyan-300 shadow-sm"
-              : "text-slate-400 hover:text-slate-200"
+              ? "border-[var(--hud-accent)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+              : "border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
           }`}
         >
           <History className="h-3.5 w-3.5" />
@@ -1369,23 +1396,23 @@ export function CharacterPanel({
         <div className="space-y-3">
           <form
             onSubmit={handleRollCheck}
-            className="space-y-2 rounded-lg border border-slate-800 bg-[#101624] p-3"
+            className="space-y-2 border border-[var(--hud-line)] bg-[var(--hud-panel)] p-3"
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                  <Dices className="h-3.5 w-3.5 text-cyan-400" />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                  <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
                   Manual Skill Roll
                 </span>
-                <span className="font-mono text-[10px] text-slate-500">
+                <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                   (Authoritative Skill Check · Posts to Chat)
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 {lastRoll && (
                   <span
-                    className={`font-mono text-xs font-bold ${
-                      lastRoll.success ? "text-emerald-400" : "text-rose-400"
+                    className={`font-cyber-data text-xs font-bold ${
+                      lastRoll.success ? "text-[var(--hud-ok)]" : "text-[var(--hud-primary-bright)]"
                     }`}
                   >
                     Total {lastRoll.total} ({lastRoll.success ? "PASS" : "FAIL"})
@@ -1394,7 +1421,7 @@ export function CharacterPanel({
                 <button
                   type="button"
                   onClick={() => setShowRollExtras((v) => !v)}
-                  className="inline-flex items-center gap-0.5 text-[11px] text-slate-400 hover:text-slate-200"
+                  className="inline-flex items-center gap-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                 >
                   {showRollExtras ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   Options
@@ -1406,10 +1433,10 @@ export function CharacterPanel({
               <select
                 value={checkStat}
                 onChange={(e) => setCheckStat(e.target.value as StatName)}
-                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
               >
                 {STAT_NAMES.map((s) => (
-                  <option key={s} value={s}>
+                  <option key={s} value={s} className="bg-[#090c14]">
                     {s} ({active.stats[s]})
                   </option>
                 ))}
@@ -1419,35 +1446,37 @@ export function CharacterPanel({
                 value={checkSkill}
                 onChange={(e) => setCheckSkill(e.target.value)}
                 placeholder="Skill (or blank)"
-                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)] focus:border-[var(--hud-accent-line)] focus:outline-none"
               />
-              <label className="flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">
-                <span className="text-slate-400">DV</span>
+              <label className="flex items-center gap-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs">
+                <span className="font-cyber-ui text-[var(--hud-muted)]">DV</span>
                 <input
                   type="number"
                   value={checkDv}
                   onChange={(e) => setCheckDv(parseInt(e.target.value, 10) || 13)}
-                  className="w-full bg-transparent font-mono text-slate-100 focus:outline-none"
+                  className="w-full bg-transparent font-cyber-data text-[var(--hud-text)] focus:outline-none"
                 />
               </label>
-              <label className="flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">
-                <span className="text-slate-400">LUCK</span>
+              <label className="flex items-center gap-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs">
+                <span className="font-cyber-ui text-[var(--hud-muted)]">LUCK</span>
                 <input
                   type="number"
                   min={0}
                   max={active.luck_remaining}
                   value={checkLuck}
                   onChange={(e) => setCheckLuck(parseInt(e.target.value, 10) || 0)}
-                  className="w-full bg-transparent font-mono text-slate-100 focus:outline-none"
+                  className="w-full bg-transparent font-cyber-data text-[var(--hud-text)] focus:outline-none"
                 />
               </label>
-              <button
+              <HudButton
                 type="submit"
+                variant="cta"
+                size="sm"
                 disabled={busy || sheetLocked}
-                className="rounded bg-cyan-600 px-3 py-1 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                className="w-full"
               >
                 Roll
-              </button>
+              </HudButton>
             </div>
 
             {showRollExtras && (
@@ -1457,43 +1486,43 @@ export function CharacterPanel({
                   value={checkReason}
                   onChange={(e) => setCheckReason(e.target.value)}
                   placeholder="Reason..."
-                  className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
+                  className="flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                 />
-                <label className="flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">
-                  <span className="text-slate-400">Mod</span>
+                <label className="flex items-center gap-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs">
+                  <span className="font-cyber-ui text-[var(--hud-muted)]">Mod</span>
                   <input
                     type="number"
                     value={checkMod}
                     onChange={(e) => setCheckMod(parseInt(e.target.value, 10) || 0)}
-                    className="w-12 bg-transparent font-mono text-slate-100 focus:outline-none"
+                    className="w-12 bg-transparent font-cyber-data text-[var(--hud-text)] focus:outline-none"
                   />
                 </label>
               </div>
             )}
           </form>
 
-          <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2">
+          <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                   Skills ({Object.keys(active.skills).length})
                 </span>
                 <span
                   title="Improvement Points earned from gigs & missions (Corebook pp. 408-411)"
-                  className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-300"
+                  className="border border-[var(--hud-warn)]/40 bg-[var(--hud-row)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]"
                 >
                   {currentIp} IP
                 </span>
               </div>
               {Object.keys(active.skills).length > 5 && (
                 <div className="relative w-40">
-                  <Search className="pointer-events-none absolute left-2 top-1.5 h-3 w-3 text-slate-500" />
+                  <Search className="pointer-events-none absolute left-2 top-1.5 h-3 w-3 text-[var(--hud-muted)]" />
                   <input
                     type="text"
                     value={skillFilter}
                     onChange={(e) => setSkillFilter(e.target.value)}
                     placeholder="Filter skills..."
-                    className="w-full rounded border border-slate-700 bg-slate-950 py-0.5 pl-6 pr-2 text-[11px] text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 py-0.5 pl-6 pr-2 text-[11px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                   />
                 </div>
               )}
@@ -1507,7 +1536,7 @@ export function CharacterPanel({
                     : null;
               if (!displayedSkill) {
                 return (
-                  <div className="flex min-h-[42px] items-center rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-500">
+                  <div className="flex min-h-[42px] items-center border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-1.5 text-[11px] text-[var(--hud-muted)]">
                     Hover or select a trained skill to inspect roll math and IP upgrade cost.
                   </div>
                 );
@@ -1519,14 +1548,14 @@ export function CharacterPanel({
               const nextRank = lvl + 1;
               const ipCost = nextRank <= 10 ? (isDifficultSkill(displayedSkill) ? nextRank * 40 : nextRank * 20) : null;
               return (
-                <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-300">
+                <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-1.5 text-[11px] text-[var(--hud-text)]">
                   <div>
-                    <span className="font-semibold text-cyan-300">{displayedSkill}</span>
+                    <span className="font-semibold text-[var(--hud-accent)]">{displayedSkill}</span>
                     {mStat && sVal !== null ? (
                       <span>
                         {" "}
-                        — Roll <span className="font-mono">d10 + {mStat} ({sVal}) + Rank ({lvl})</span>{" "}
-                        = <span className="font-mono text-emerald-300">d10 + {sVal + lvl}</span>
+                        — Roll <span className="font-cyber-data">d10 + {mStat} ({sVal}) + Rank ({lvl})</span>{" "}
+                        = <span className="font-cyber-data text-[var(--hud-ok)]">d10 + {sVal + lvl}</span>
                         {meta?.cost === 2 ? " · Difficult (x2 cost)" : ""}
                       </span>
                     ) : (
@@ -1538,7 +1567,7 @@ export function CharacterPanel({
                       type="button"
                       disabled={busy || sheetLocked || currentIp < ipCost}
                       onClick={() => void handleSpendIpSkill(displayedSkill, lvl)}
-                      className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                      className="cyber-btn-tac cp-fx-hover border-[var(--hud-warn)]/50 px-2 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-warn)]"
                     >
                       Upgrade +1 ({ipCost} IP)
                     </button>
@@ -1551,7 +1580,7 @@ export function CharacterPanel({
               onMouseLeave={() => setInspectedSkill(null)}
             >
               {skillEntries.length === 0 && (
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-[var(--hud-muted)]">
                   {Object.keys(active.skills).length === 0 ? "No trained skills recorded." : "No matching skills."}
                 </span>
               )}
@@ -1579,16 +1608,16 @@ export function CharacterPanel({
                         setCheckStat(mappedStat);
                       }
                     }}
-                    className={`rounded border px-2 py-1 text-xs transition ${
+                    className={`border px-2 py-1 font-cyber-ui text-xs transition ${
                       isSelected
-                        ? "border-cyan-500 bg-cyan-500/15 text-cyan-100"
-                        : "border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-500/60"
+                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                        : "border-[var(--hud-line-soft)] bg-[var(--hud-row)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                     }`}
                   >
                     <span>{name}</span>{" "}
-                    <span className="font-mono text-cyan-300">+{lvl}</span>
+                    <span className="font-cyber-data text-[var(--hud-accent)]">+{lvl}</span>
                     {statVal !== null && (
-                      <span className="ml-1 font-mono text-[10px] text-slate-400">
+                      <span className="ml-1 font-cyber-data text-[10px] text-[var(--hud-muted)]">
                         ({statVal + lvl})
                       </span>
                     )}
@@ -1604,8 +1633,8 @@ export function CharacterPanel({
       {sheetTab === "gear" && (
         <div className="space-y-3">
           {(equippedWeapon || equippedArmor?.name || equippedHeadArmor?.name || cyberwareList.length > 0) && (
-            <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2 text-xs">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3 text-xs">
+              <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                 Loadout &amp; Cyberware
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1614,8 +1643,8 @@ export function CharacterPanel({
                   const wTheme = wTier ? getWeaponTierTheme(wTier) : null;
                   return (
                     <span
-                      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] ${
-                        wTheme ? wTheme.badgeClass : "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      className={`inline-flex items-center gap-1 border px-2 py-0.5 font-cyber-data text-[11px] ${
+                        wTheme ? wTheme.badgeClass : "border-[var(--hud-line)] bg-[var(--hud-row)] text-[var(--hud-text)]"
                       }`}
                     >
                       <span>Weapon: {equippedWeapon}</span>
@@ -1635,7 +1664,7 @@ export function CharacterPanel({
                   );
                 })()}
                 {equippedArmor?.name && (
-                  <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
+                  <span className="inline-flex items-center gap-1 border border-[var(--hud-accent-line)]/60 bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[11px] text-[var(--hud-accent)]">
                     <span>
                       Body Armor: {equippedArmor.name} {equippedArmor.sp !== undefined ? `(SP ${equippedArmor.sp})` : ""}
                     </span>
@@ -1654,7 +1683,7 @@ export function CharacterPanel({
                   </span>
                 )}
                 {equippedHeadArmor?.name && (
-                  <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 font-mono text-[11px] text-cyan-200">
+                  <span className="inline-flex items-center gap-1 border border-[var(--hud-accent-line)]/60 bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[11px] text-[var(--hud-accent)]">
                     <span>
                       Head Armor: {equippedHeadArmor.name} {equippedHeadArmor.sp !== undefined ? `(SP ${equippedHeadArmor.sp})` : ""}
                     </span>
@@ -1675,7 +1704,7 @@ export function CharacterPanel({
                 {cyberwareList.map((cw, idx) => (
                   <span
                     key={idx}
-                    className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 font-mono text-[11px] text-violet-200"
+                    className="border border-violet-500/45 bg-violet-500/10 px-2 py-0.5 font-cyber-data text-[11px] text-violet-200"
                   >
                     {typeof cw === "string" ? cw : String((cw as { name?: string }).name ?? "Cyberware")}
                   </span>
@@ -1683,15 +1712,15 @@ export function CharacterPanel({
                 {fashionList.map((f, idx) => (
                   <span
                     key={`f-${idx}`}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-slate-300"
+                    className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2 py-0.5 font-cyber-data text-[11px] text-[var(--hud-text)]"
                   >
                     Fashion: {typeof f === "string" ? f : f.name || f.style || "Outfit"}
                   </span>
                 ))}
               </div>
               {rolesList[0]?.choices && Object.keys(rolesList[0].choices).length > 0 && (
-                <div className="border-t border-slate-800/80 pt-2 text-[11px] text-slate-300 space-y-1">
-                  <div className="font-semibold uppercase tracking-wider text-slate-400 text-[10px]">
+                <div className="space-y-1 border-t border-[var(--hud-line-soft)] pt-2 text-[11px] text-[var(--hud-text)]">
+                  <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                     Role Benefits &amp; Equipment ({rolesList[0].role ?? "Role"})
                   </div>
                   {Array.isArray(rolesList[0].choices.moto) && (
@@ -1716,15 +1745,15 @@ export function CharacterPanel({
                   )}
                 </div>
               )}
-              <div className="text-[11px] text-slate-400">
+              <div className="text-[11px] text-[var(--hud-muted)]">
                 Housing: {typeof detail.housing === "string" ? detail.housing : "Cargo Container (Month 1 Paid)"} ·{" "}
                 Lifestyle: {typeof detail.lifestyle === "string" ? detail.lifestyle : "Kibble"}
               </div>
             </div>
           )}
 
-          <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+            <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
               Inventory Bag
             </div>
             <form onSubmit={handleAddInventory} className="flex gap-2">
@@ -1733,26 +1762,27 @@ export function CharacterPanel({
                 value={itemName}
                 onChange={(e) => setItemName(e.target.value)}
                 placeholder="Add item or weapon..."
-                className="flex-1 rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                className="flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1 text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)] focus:border-[var(--hud-accent-line)] focus:outline-none"
               />
               <input
                 type="number"
                 min={1}
                 value={itemCount}
                 onChange={(e) => setItemCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-center font-mono text-xs text-slate-100"
+                className="w-14 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-center font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
               />
-              <button
+              <HudButton
                 type="submit"
+                variant="tactical"
+                size="sm"
                 disabled={busy || sheetLocked || !itemName.trim()}
-                className="rounded bg-slate-800 px-3 py-1 text-xs font-medium text-cyan-300 hover:bg-slate-700 disabled:opacity-40"
               >
                 Add
-              </button>
+              </HudButton>
             </form>
             <div className="space-y-1">
               {invEntries.length === 0 && (
-                <p className="text-xs text-slate-500">Empty gear bag.</p>
+                <p className="text-xs text-[var(--hud-muted)]">Empty gear bag.</p>
               )}
               {invEntries.map(([name, qty]) => {
                 const confirming = confirmRemoveItem === name;
@@ -1767,26 +1797,26 @@ export function CharacterPanel({
                 return (
                   <div
                     key={name}
-                    className={`flex flex-wrap items-center justify-between gap-2 rounded border px-2.5 py-1.5 text-xs ${
-                      wTheme ? wTheme.cardClass : "border-slate-800/80 bg-slate-950/60"
+                    className={`flex flex-wrap items-center justify-between gap-2 border px-2.5 py-1.5 text-xs ${
+                      wTheme ? wTheme.cardClass : "border-[var(--hud-line-soft)] bg-[var(--hud-row)]"
                     }`}
                   >
-                    <span className="flex flex-wrap items-center gap-1.5 text-slate-200">
+                    <span className="flex flex-wrap items-center gap-1.5 text-[var(--hud-text)]">
                       <span>{name}</span>
                       {wTheme && wTier && (
-                        <span className={`rounded px-1 py-0.5 font-mono text-[9px] font-bold ${wTheme.badgeClass}`}>
+                        <span className={`px-1 py-0.5 font-cyber-data text-[9px] font-bold ${wTheme.badgeClass}`}>
                           {wTheme.label}
                         </span>
                       )}
                       {isEquipped && (
-                        <span className="rounded border border-emerald-500/40 bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                        <span className="border border-[var(--hud-ok)]/50 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[9px] font-semibold text-[var(--hud-ok)]">
                           {isEquippedWeapon ? "Equipped Weapon" : isEquippedHead ? "Worn Head" : "Worn Body"}
                         </span>
                       )}
-                      <span className="font-mono text-slate-400">×{qty}</span>
+                      <span className="font-cyber-data text-[var(--hud-muted)]">×{qty}</span>
                     </span>
                     {confirming ? (
-                      <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                      <div className="flex items-center gap-1.5 font-cyber-ui text-[10px]">
                         <button
                           type="button"
                           disabled={busy || sheetLocked}
@@ -1794,14 +1824,14 @@ export function CharacterPanel({
                             setConfirmRemoveItem(null);
                             void handleRemoveItem(name);
                           }}
-                          className="text-rose-400 hover:text-rose-300 disabled:opacity-40"
+                          className="font-semibold text-[var(--hud-primary-bright)] hover:text-white disabled:opacity-40"
                         >
                           Remove
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmRemoveItem(null)}
-                          className="text-slate-400 hover:text-slate-200"
+                          className="text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                         >
                           Cancel
                         </button>
@@ -1819,7 +1849,7 @@ export function CharacterPanel({
                                   null,
                                 )
                               }
-                              className="rounded border border-emerald-500/40 bg-emerald-950/30 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300 hover:border-amber-500/50 hover:text-amber-200 disabled:opacity-40"
+                              className="cyber-btn-tac cp-fx-hover border-[var(--hud-ok)]/50 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-ok)]"
                             >
                               Unequip
                             </button>
@@ -1828,17 +1858,17 @@ export function CharacterPanel({
                               type="button"
                               disabled={busy}
                               onClick={() => void handleEquipItem(inferredSlot, name)}
-                              className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]"
                             >
                               Equip
                             </button>
                           ) : menuOpen ? (
-                            <div className="inline-flex items-center gap-1 font-mono text-[10px]">
+                            <div className="inline-flex items-center gap-1 font-cyber-ui text-[10px]">
                               <button
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void handleEquipItem("weapon", name)}
-                                className="rounded border border-rose-500/40 bg-rose-950/30 px-1.5 py-0.5 text-rose-200 hover:border-rose-400"
+                                className="cyber-btn-tac px-1.5 py-0.5 text-[var(--hud-primary-bright)]"
                               >
                                 Weapon
                               </button>
@@ -1846,7 +1876,7 @@ export function CharacterPanel({
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void handleEquipItem("armor", name)}
-                                className="rounded border border-cyan-500/40 bg-cyan-950/30 px-1.5 py-0.5 text-cyan-200 hover:border-cyan-400"
+                                className="cyber-btn-tac px-1.5 py-0.5 text-[var(--hud-accent)]"
                               >
                                 Body
                               </button>
@@ -1854,14 +1884,14 @@ export function CharacterPanel({
                                 type="button"
                                 disabled={busy}
                                 onClick={() => void handleEquipItem("head_armor", name)}
-                                className="rounded border border-cyan-500/40 bg-cyan-950/30 px-1.5 py-0.5 text-cyan-200 hover:border-cyan-400"
+                                className="cyber-btn-tac px-1.5 py-0.5 text-[var(--hud-accent)]"
                               >
                                 Head
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setEquipMenuForItem(null)}
-                                className="text-slate-400 hover:text-slate-200"
+                                className="text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               >
                                 ×
                               </button>
@@ -1871,7 +1901,7 @@ export function CharacterPanel({
                               type="button"
                               disabled={busy}
                               onClick={() => setEquipMenuForItem(name)}
-                              className="rounded border border-slate-800 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400 hover:border-cyan-500/50 hover:text-cyan-300 disabled:opacity-40"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-muted)]"
                             >
                               Equip...
                             </button>
@@ -1882,7 +1912,7 @@ export function CharacterPanel({
                           disabled={busy || sheetLocked}
                           onClick={() => setConfirmRemoveItem(name)}
                           aria-label={`Remove ${name}`}
-                          className="text-slate-500 hover:text-rose-400 disabled:opacity-40"
+                          className="text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)] disabled:opacity-40"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1899,9 +1929,9 @@ export function CharacterPanel({
       {/* Tab 3: Backstory, Lifepath & Established History */}
       {sheetTab === "bio" && (
         <div className="space-y-3 text-xs">
-          <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2.5">
+          <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                 Identity, Portrait &amp; Backstory
               </div>
               {!editingBio && (
@@ -1949,7 +1979,7 @@ export function CharacterPanel({
                     );
                     setEditingBio(true);
                   }}
-                  className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-cyan-300 hover:border-cyan-500/60 disabled:opacity-40"
+                  className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]"
                 >
                   <Pencil className="h-3 w-3" />
                   Edit Bio &amp; Portrait
@@ -1961,7 +1991,7 @@ export function CharacterPanel({
               <form onSubmit={handleSaveBio} className="space-y-2.5">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="mb-0.5 block text-[11px] text-slate-400">
+                    <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                       Street Handle / Alias (Primary)
                     </label>
                     <input
@@ -1969,20 +1999,20 @@ export function CharacterPanel({
                       value={bioHandle}
                       onChange={(e) => setBioHandle(e.target.value)}
                       placeholder="e.g. V, Kiwi, Blackhand..."
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <div className="mb-0.5 flex items-center justify-between gap-1">
-                      <label className="text-[11px] text-slate-400">
+                      <label className="text-[11px] text-[var(--hud-muted)]">
                         Real / Legal Name (Optional)
                       </label>
-                      <label className="inline-flex cursor-pointer items-center gap-1 text-[10px] text-amber-300">
+                      <label className="inline-flex cursor-pointer items-center gap-1 text-[10px] text-[var(--hud-warn)]">
                         <input
                           type="checkbox"
                           checked={bioRealNameHidden}
                           onChange={(e) => setBioRealNameHidden(e.target.checked)}
-                          className="rounded border-slate-700 bg-slate-950 accent-amber-500"
+                          className="border-[var(--hud-line)] bg-black accent-[var(--hud-warn)]"
                         />
                         <span>Hidden (Known by Handle only)</span>
                       </label>
@@ -1992,11 +2022,11 @@ export function CharacterPanel({
                       value={bioRealName}
                       onChange={(e) => setBioRealName(e.target.value)}
                       placeholder="Leave blank if known strictly by Handle..."
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="mb-0.5 block text-[11px] text-slate-400">Gender</label>
+                    <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">Gender</label>
                     <input
                       type="text"
                       aria-label="Edit character gender"
@@ -2004,7 +2034,7 @@ export function CharacterPanel({
                       value={bioGender === "__custom__" ? "" : bioGender}
                       onChange={(e) => setBioGender(e.target.value)}
                       placeholder="Woman, Man, Non-Binary..."
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                     <datalist id="cpr-panel-gender-list">
                       <option value="Woman" />
@@ -2015,24 +2045,24 @@ export function CharacterPanel({
                     </datalist>
                   </div>
                   <div>
-                    <label className="mb-0.5 block text-[11px] text-slate-400">Pronouns</label>
+                    <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">Pronouns</label>
                     <input
                       type="text"
                       value={bioPronouns}
                       onChange={(e) => setBioPronouns(e.target.value)}
                       placeholder="she/her, he/him, they/them..."
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1.5 rounded border border-slate-800 bg-slate-950/60 p-2.5">
+                <div className="space-y-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                      <ImageIcon className="h-3.5 w-3.5 text-cyan-400" />
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--hud-text)]">
+                      <ImageIcon className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
                       Character Portrait (URL or Upload)
                     </label>
-                    <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20">
+                    <label className="cyber-btn-tac cp-fx-hover cursor-pointer px-2 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]">
                       <Upload className="h-3 w-3" />
                       <span>Upload Image</span>
                       <input
@@ -2048,7 +2078,7 @@ export function CharacterPanel({
                       <img
                         src={bioPortraitUrl}
                         alt="Preview"
-                        className="h-9 w-9 shrink-0 rounded object-cover ring-1 ring-cyan-500/50"
+                        className="h-9 w-9 shrink-0 object-cover ring-1 ring-[var(--hud-accent-line)]"
                       />
                     )}
                     <input
@@ -2056,13 +2086,13 @@ export function CharacterPanel({
                       value={bioPortraitUrl}
                       onChange={(e) => setBioPortraitUrl(e.target.value)}
                       placeholder="Paste image URL (https://...) or upload a portrait file..."
-                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                     {bioPortraitUrl && (
                       <button
                         type="button"
                         onClick={() => setBioPortraitUrl("")}
-                        className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400 hover:text-rose-300"
+                        className="cyber-btn-tac px-2 py-1 font-cyber-ui text-[10px]"
                       >
                         Clear
                       </button>
@@ -2070,18 +2100,18 @@ export function CharacterPanel({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-2.5">
-                  <span className="text-[11px] text-slate-300">Chat Name Tag Color:</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2.5">
+                  <span className="text-[11px] text-[var(--hud-text)]">Chat Name Tag Color:</span>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {Object.entries(CHARACTER_COLOR_THEMES).map(([cid, theme]) => (
                       <button
                         key={cid}
                         type="button"
                         onClick={() => setBioColor(cid)}
-                        className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] transition ${
+                        className={`inline-flex items-center gap-1 border px-2 py-0.5 font-cyber-ui text-[10px] transition ${
                           bioColor === cid
                             ? `${theme.nameBadgeClass} font-bold`
-                            : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                            : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                         }`}
                       >
                         <span className={`h-2 w-2 rounded-full ${theme.dotClass}`} />
@@ -2089,7 +2119,7 @@ export function CharacterPanel({
                       </button>
                     ))}
                     <label
-                      className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 font-mono text-[10px] text-slate-200 hover:border-cyan-400"
+                      className="inline-flex cursor-pointer items-center gap-1 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-text)] hover:border-[var(--hud-accent-line)]"
                       style={isHexColor(bioColor) ? resolveCharacterColor(bioColor).nameBadgeStyle : undefined}
                     >
                       <input
@@ -2106,7 +2136,7 @@ export function CharacterPanel({
 
                 {isAdmin && (
                   <div>
-                    <label className="mb-0.5 block text-[11px] text-slate-400">
+                    <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                       Assigned Player Account (Admin Only — leave blank for shared/unclaimed)
                     </label>
                     <input
@@ -2114,12 +2144,12 @@ export function CharacterPanel({
                       value={bioOwner}
                       onChange={(e) => setBioOwner(e.target.value)}
                       placeholder="Account username..."
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                     />
                   </div>
                 )}
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">
+                  <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                     Concept / Reputation
                   </label>
                   <input
@@ -2127,11 +2157,11 @@ export function CharacterPanel({
                     value={bioConcept}
                     onChange={(e) => setBioConcept(e.target.value)}
                     placeholder="e.g. Ex-Trauma Team medic running Watson alley clinics"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">
+                  <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                     Appearance &amp; Vibe
                   </label>
                   <input
@@ -2139,11 +2169,11 @@ export function CharacterPanel({
                     value={bioAppearance}
                     onChange={(e) => setBioAppearance(e.target.value)}
                     placeholder="Signature coat, chrome optics, scars, mannerisms..."
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">
+                  <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                     Personal Backstory
                   </label>
                   <textarea
@@ -2151,11 +2181,11 @@ export function CharacterPanel({
                     value={bioSummary}
                     onChange={(e) => setBioSummary(e.target.value)}
                     placeholder="Where you came from, why you took to the Edge..."
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">
+                  <label className="mb-0.5 block text-[11px] text-[var(--hud-muted)]">
                     Established Night City History &amp; Ties
                   </label>
                   <textarea
@@ -2163,46 +2193,47 @@ export function CharacterPanel({
                     value={bioHistory}
                     onChange={(e) => setBioHistory(e.target.value)}
                     placeholder="Prior gigs, owed favors, turf, rivals, safehouses..."
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent-line)] focus:outline-none"
                   />
                 </div>
                 <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
+                  <HudButton
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setEditingBio(false)}
-                    className="rounded border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-slate-800"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </HudButton>
+                  <HudButton
                     type="submit"
+                    variant="cta"
+                    size="sm"
                     disabled={busy}
-                    className="inline-flex items-center gap-1 rounded bg-cyan-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-cyan-500 disabled:opacity-40"
                   >
                     <Save className="h-3 w-3" />
                     Save Bio
-                  </button>
+                  </HudButton>
                 </div>
               </form>
             ) : (
-              <div className="space-y-2 text-slate-300">
+              <div className="space-y-2 text-[var(--hud-text)]">
                 {typeof creationObj.method === "string" && (
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-[var(--hud-muted)]">
                     Creation Method:{" "}
-                    <span className="font-mono text-cyan-300">{creationObj.method}</span>
+                    <span className="font-cyber-data text-[var(--hud-accent)]">{creationObj.method}</span>
                   </div>
                 )}
                 {Boolean(detail.gender || backstoryObj.gender || detail.pronouns || backstoryObj.pronouns) && (
-                  <div className="flex flex-wrap gap-3 text-[11px] text-slate-300">
+                  <div className="flex flex-wrap gap-3 text-[11px] text-[var(--hud-text)]">
                     {Boolean(detail.gender || backstoryObj.gender) && (
                       <span>
-                        <span className="text-slate-500">Gender:</span>{" "}
+                        <span className="text-[var(--hud-muted)]">Gender:</span>{" "}
                         {String(detail.gender || backstoryObj.gender)}
                       </span>
                     )}
                     {Boolean(detail.pronouns || backstoryObj.pronouns) && (
                       <span>
-                        <span className="text-slate-500">Pronouns:</span>{" "}
+                        <span className="text-[var(--hud-muted)]">Pronouns:</span>{" "}
                         {String(detail.pronouns || backstoryObj.pronouns)}
                       </span>
                     )}
@@ -2210,27 +2241,27 @@ export function CharacterPanel({
                 )}
                 {typeof backstoryObj.concept === "string" && backstoryObj.concept && (
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">Concept</div>
-                    <p className="text-slate-100">{backstoryObj.concept}</p>
+                    <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-label)]">Concept</div>
+                    <p className="text-[var(--hud-text)]">{backstoryObj.concept}</p>
                   </div>
                 )}
                 {(typeof backstoryObj.appearance === "string" && backstoryObj.appearance) ||
                 (typeof detail.appearance === "string" && detail.appearance) ? (
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                    <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-label)]">
                       Appearance
                     </div>
-                    <p className="text-slate-200">
+                    <p className="text-[var(--hud-text)]">
                       {String(backstoryObj.appearance || detail.appearance || "")}
                     </p>
                   </div>
                 ) : null}
                 {typeof backstoryObj.summary === "string" && backstoryObj.summary && (
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                    <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-label)]">
                       Backstory
                     </div>
-                    <p className="whitespace-pre-line leading-relaxed text-slate-200">
+                    <p className="whitespace-pre-line leading-relaxed text-[var(--hud-text)]">
                       {backstoryObj.summary}
                     </p>
                   </div>
@@ -2238,10 +2269,10 @@ export function CharacterPanel({
                 {typeof backstoryObj.established_history === "string" &&
                   backstoryObj.established_history && (
                     <div>
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                      <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-label)]">
                         Established History &amp; Ties
                       </div>
-                      <p className="whitespace-pre-line leading-relaxed text-slate-200">
+                      <p className="whitespace-pre-line leading-relaxed text-[var(--hud-text)]">
                         {backstoryObj.established_history}
                       </p>
                     </div>
@@ -2251,7 +2282,7 @@ export function CharacterPanel({
                   !backstoryObj.established_history &&
                   !backstoryObj.appearance &&
                   !detail.appearance && (
-                    <p className="text-slate-500">
+                    <p className="text-[var(--hud-muted)]">
                       No written backstory or established Night City ties recorded yet. Click Edit
                       Bio to give the AI GM hooks to weave into the story.
                     </p>
@@ -2260,12 +2291,12 @@ export function CharacterPanel({
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+            <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
               Lifepath &amp; Connections
             </div>
             {Object.keys(lifepathObj).length === 0 ? (
-              <p className="text-slate-500">No Lifepath traits recorded for this character.</p>
+              <p className="text-[var(--hud-muted)]">No Lifepath traits recorded for this character.</p>
             ) : (
               <div className="space-y-2">
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -2291,12 +2322,12 @@ export function CharacterPanel({
                     .map(([label, val]) => (
                       <div
                         key={label}
-                        className="rounded border border-slate-800/80 bg-slate-950/60 px-2.5 py-1.5"
+                        className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-1.5"
                       >
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                        <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
                           {label}
                         </div>
-                        <div className="text-slate-200">{String(val)}</div>
+                        <div className="text-[var(--hud-text)]">{String(val)}</div>
                       </div>
                     ))}
                 </div>
@@ -2305,7 +2336,7 @@ export function CharacterPanel({
                   typeof lifepathObj.role_lifepath === "object" &&
                   Object.keys(lifepathObj.role_lifepath as Record<string, unknown>).length > 0 && (
                     <div className="space-y-1">
-                      <div className="text-[10px] uppercase tracking-wider text-cyan-400">
+                      <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-accent)]">
                         Role Lifepath
                       </div>
                       <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -2314,12 +2345,12 @@ export function CharacterPanel({
                           .map(([k, v]) => (
                             <div
                               key={k}
-                              className="rounded border border-cyan-500/20 bg-cyan-950/15 px-2.5 py-1.5"
+                              className="border border-[var(--hud-accent-line)]/40 bg-[var(--hud-accent-navy)] px-2.5 py-1.5"
                             >
-                              <div className="text-[10px] uppercase tracking-wider text-cyan-400/80">
+                              <div className="font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-accent)]/85">
                                 {k}
                               </div>
-                              <div className="text-slate-200">{String(v)}</div>
+                              <div className="text-[var(--hud-text)]">{String(v)}</div>
                             </div>
                           ))}
                       </div>
@@ -2328,7 +2359,7 @@ export function CharacterPanel({
 
                 {Array.isArray(lifepathObj.friends) && lifepathObj.friends.length > 0 && (
                   <div>
-                    <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-400">
+                    <div className="mb-1 font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-ok)]">
                       Friends ({lifepathObj.friends.length})
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -2341,7 +2372,7 @@ export function CharacterPanel({
                       ).map((f, i) => (
                         <span
                           key={i}
-                          className="rounded border border-emerald-500/30 bg-emerald-950/20 px-2 py-0.5 text-[11px] text-emerald-200"
+                          className="border border-[var(--hud-ok)]/40 bg-[var(--hud-accent-navy)] px-2 py-0.5 text-[11px] text-[var(--hud-text)]"
                         >
                           {f.name || "Friend"}
                           {f.relationship ? ` — ${f.relationship}` : ""}
@@ -2354,7 +2385,7 @@ export function CharacterPanel({
 
                 {Array.isArray(lifepathObj.enemies) && lifepathObj.enemies.length > 0 && (
                   <div>
-                    <div className="mb-1 text-[10px] uppercase tracking-wider text-rose-400">
+                    <div className="mb-1 font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-primary-bright)]">
                       Enemies ({lifepathObj.enemies.length})
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -2369,7 +2400,7 @@ export function CharacterPanel({
                       ).map((en, i) => (
                         <span
                           key={i}
-                          className="rounded border border-rose-500/30 bg-rose-950/20 px-2 py-0.5 text-[11px] text-rose-200"
+                          className="border border-[var(--hud-line)] bg-[var(--hud-row)] px-2 py-0.5 text-[11px] text-[var(--hud-text)]"
                         >
                           {en.name ? `${en.name} (${en.who || "Enemy"})` : en.who || "Enemy"}
                           {en.cause ? `: ${en.cause}` : ""}
@@ -2383,7 +2414,7 @@ export function CharacterPanel({
                 {Array.isArray(lifepathObj.tragic_love_affairs) &&
                   lifepathObj.tragic_love_affairs.length > 0 && (
                     <div>
-                      <div className="mb-1 text-[10px] uppercase tracking-wider text-amber-400">
+                      <div className="mb-1 font-cyber-ui text-[10px] uppercase tracking-wider text-[var(--hud-warn)]">
                         Tragic Love Affairs ({lifepathObj.tragic_love_affairs.length})
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -2397,7 +2428,7 @@ export function CharacterPanel({
                         ).map((la, i) => (
                           <span
                             key={i}
-                            className="rounded border border-amber-500/30 bg-amber-950/20 px-2 py-0.5 text-[11px] text-amber-200"
+                            className="border border-[var(--hud-warn)]/40 bg-[var(--hud-row)] px-2 py-0.5 text-[11px] text-[var(--hud-text)]"
                           >
                             {la.name || la.who || "Past flame"}
                             {la.outcome || la.what_happened
@@ -2416,17 +2447,17 @@ export function CharacterPanel({
 
       {/* Tab 4: Audit History */}
       {sheetTab === "log" && (
-        <div className="rounded-lg border border-slate-800 bg-[#101624] p-3 space-y-1.5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <div className="space-y-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+          <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
             Recent Audit History
           </div>
           {historyRows.length === 0 && (
-            <p className="text-xs text-slate-500">No recorded events yet.</p>
+            <p className="text-xs text-[var(--hud-muted)]">No recorded events yet.</p>
           )}
           {historyRows.map((h) => (
-            <div key={h.sequence} className="flex items-center justify-between gap-2 text-xs text-slate-300">
+            <div key={h.sequence} className="flex items-center justify-between gap-2 border-b border-[var(--hud-line-soft)]/50 py-1 text-xs text-[var(--hud-text)] last:border-b-0">
               <span className="truncate">{h.reason}</span>
-              <span className="shrink-0 font-mono text-[11px] text-slate-500">rev {h.revision}</span>
+              <span className="shrink-0 font-cyber-data text-[11px] text-[var(--hud-muted)]">rev {h.revision}</span>
             </div>
           ))}
         </div>

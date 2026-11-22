@@ -27,7 +27,7 @@ export function FieldAiActions({
         onClick={onImprove}
         title={`Improve ${label}`}
         aria-label={`Improve ${label}`}
-        className={`inline-flex items-center justify-center rounded border border-amber-500/40 bg-amber-500/10 ${padClass} text-amber-200 transition hover:border-amber-400/70 hover:bg-amber-500/20 disabled:opacity-45`}
+        className={`inline-flex items-center justify-center border border-[var(--hud-warn)]/45 bg-[var(--hud-warn)]/10 ${padClass} text-[var(--hud-warn)] transition hover:border-[var(--hud-warn)] hover:bg-[var(--hud-warn)]/20 disabled:opacity-45`}
       >
         <Wand2 className={`${iconClass} ${busyAction === "improve" ? "animate-pulse" : ""}`} />
       </button>
@@ -37,7 +37,7 @@ export function FieldAiActions({
         onClick={onRegen}
         title={`Regenerate ${label}`}
         aria-label={`Regenerate ${label}`}
-        className={`inline-flex items-center justify-center rounded border border-cyan-500/40 bg-cyan-500/10 ${padClass} text-cyan-200 transition hover:border-cyan-400/70 hover:bg-cyan-500/20 disabled:opacity-45`}
+        className={`inline-flex items-center justify-center border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] ${padClass} text-[var(--hud-accent)] transition hover:border-[var(--hud-accent-line)] disabled:opacity-45`}
       >
         <RefreshCw className={`${iconClass} ${busyAction === "regen" ? "animate-spin" : ""}`} />
       </button>

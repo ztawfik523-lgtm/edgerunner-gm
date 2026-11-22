@@ -61,6 +61,7 @@ import {
   type CreationSkillInfo,
   type StatName,
 } from "../types";
+import { CyberFrame, HazardBadge, HudButton, RoleTag, SegmentedBar } from "./cyber";
 import { FieldAiActions } from "./FieldAiActions";
 
 interface CharacterCreatorModalProps {
@@ -493,6 +494,7 @@ export function CharacterCreatorModal({
 
   const draftKey = `character:${campaignId}`;
   const hydratedRef = useRef(false);
+  const hadSavedDraftRef = useRef(false);
   const prevRoleRef = useRef<string | null>(null);
   const skipNextRoleResetRef = useRef(false);
 
@@ -598,9 +600,16 @@ export function CharacterCreatorModal({
   useEffect(() => {
     if (!open) {
       hydratedRef.current = false;
+      hadSavedDraftRef.current = false;
+      setShowRepHooks(true);
+      setLoadoutOpen(true);
+      setInspectedItemId(null);
+      setAiError("");
+      setInspector(DEFAULT_INSPECTOR);
       return;
     }
     const saved = loadDraft<Record<string, unknown>>(draftKey);
+    hadSavedDraftRef.current = Boolean(saved);
     if (saved) {
       skipNextRoleResetRef.current = true;
       if (typeof saved.step === "string") setStep(saved.step as CreatorStep);
@@ -2160,75 +2169,85 @@ export function CharacterCreatorModal({
 
   const modalNode = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2 sm:p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-sm"
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
       }}
     >
-      <div
+      <CyberFrame
+        variant="modal"
         role="dialog"
         aria-modal="true"
         aria-label="Edgerunner Character Sheet Creator"
-        className="cyber-hud-card flex h-[92vh] max-h-[95vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl bg-[#0b101b] text-slate-100 shadow-2xl"
+        className="flex h-[92dvh] max-h-[95dvh] w-full max-w-7xl flex-col overflow-hidden text-[var(--hud-text)]"
       >
-        {/* Top Modal Header with Cyber Chrome Banner */}
-        <div className="relative flex flex-wrap items-center justify-between gap-2 overflow-hidden border-b border-rose-500/30 bg-[#0f1625] px-4 py-3">
+        {/* Slim Crimson Header Band with Cyber Chrome Banner */}
+        <div className="relative flex flex-wrap items-center justify-between gap-2 overflow-hidden border-b border-[var(--hud-line)] bg-[#5a0b1c]/55 px-4 py-3 sm:px-5">
           <img
             src={edgerunnerChromeBanner}
             alt=""
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
           />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0b101b]/95 via-[#0f1625]/85 to-[#0b101b]/92" />
-          <div className="relative z-10 flex items-center gap-3 min-w-0">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/15 text-rose-300">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#3a0712]/80 via-[#5a0b1c]/55 to-[#12070c]/85" />
+          <div className="relative z-10 flex min-w-0 items-center gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-[var(--hud-line)] bg-[var(--hud-row)] text-[var(--hud-accent)]">
               <UserPlus className="h-4 w-4" />
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="truncate font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100">
+                <h2
+                  data-text="Edgerunner Character Sheet Creator"
+                  className="cp-glitch truncate font-cyber-display text-sm font-semibold uppercase tracking-wider text-[var(--hud-text)]"
+                >
                   Edgerunner Character Sheet Creator
                 </h2>
                 {draftRestored && (
-                  <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                  <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                     Draft Restored
                   </span>
                 )}
               </div>
-              <p className="truncate font-cyber-hud text-[11px] text-slate-400">
+              <p className="truncate font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                 {name.trim() || "Unnamed Punk"} · {selectedRole} (R4) · {methodsList.find((m) => m.id === method)?.name ?? method}
               </p>
             </div>
           </div>
 
           <div className="relative z-10 flex items-center gap-2">
-            {loadingRef && <span className="text-[11px] text-cyan-400">Loading Corebook data…</span>}
-            <button
-              type="button"
+            {loadingRef && (
+              <span className="font-cyber-ui text-[11px] text-[var(--hud-accent)]">
+                Loading Corebook data…
+              </span>
+            )}
+            <HudButton
+              variant="tactical"
+              size="xs"
               onClick={() => {
                 clearDraft(draftKey);
                 resetCharacterDefaults();
                 onNotify("Character draft cleared.");
               }}
               title="Clear unsaved draft and reset form"
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/90 px-2 py-1 text-[11px] text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
+              className="text-[11px]"
             >
               <RotateCcw className="h-3 w-3" />
               <span className="hidden sm:inline">Reset</span>
-            </button>
-            <button
-              type="button"
+            </HudButton>
+            <HudButton
+              variant="tactical"
+              size="xs"
               onClick={onClose}
               aria-label="Close character creator"
-              className="rounded-lg border border-slate-700 bg-slate-900 p-1.5 text-slate-400 hover:border-slate-500 hover:text-slate-100"
+              className="px-2 py-1"
             >
               <X className="h-4 w-4" />
-            </button>
+            </HudButton>
           </div>
         </div>
 
         {/* Step Navigation Pills */}
-        <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-[#0d1320] px-4 py-2">
+        <div className="flex flex-wrap items-center gap-1 border-b border-[var(--hud-line)] bg-black/50 px-4 py-2">
           {STEPS.map((s) => {
             const activeStep = step === s.id;
             return (
@@ -2236,10 +2255,10 @@ export function CharacterCreatorModal({
                 key={s.id}
                 type="button"
                 onClick={() => setStep(s.id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                className={`px-2.5 py-1 font-cyber-ui text-xs font-semibold transition ${
                   activeStep
-                    ? "border border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
-                    : "border border-transparent text-slate-400 hover:bg-slate-800/70 hover:text-slate-200"
+                    ? "border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                    : "border border-transparent text-[var(--hud-muted)] hover:border-[var(--hud-line-soft)] hover:text-[var(--hud-text)]"
                 }`}
               >
                 <span className="hidden sm:inline">{s.label}</span>
@@ -2252,18 +2271,18 @@ export function CharacterCreatorModal({
         {/* Body: 2-Column Interactive Sheet + Live Preview/Inspector */}
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-12">
           {/* Left 8 cols: Interactive Editor */}
-          <div className="min-h-0 overflow-y-auto p-4 sm:p-5 space-y-5 lg:col-span-8">
+          <div className="min-h-0 space-y-5 overflow-y-auto p-4 font-cyber-ui sm:p-5 lg:col-span-8">
             {/* STEP 1: IDENTITY & ROLE */}
             {step === "identity" && (
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                   <div className="sm:col-span-4">
-                    <label className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-300">
+                    <label className="mb-1 flex items-center justify-between font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
                       <span>Street Handle / Name *</span>
                       <button
                         type="button"
                         onClick={() => setName(pickRandom(HANDLE_SUGGESTIONS))}
-                        className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                        className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]"
                       >
                         <Dices className="h-3 w-3" /> Roll Handle
                       </button>
@@ -2273,18 +2292,18 @@ export function CharacterCreatorModal({
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Vee Mercer"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div className="sm:col-span-3">
-                    <div className="mb-1 flex items-center justify-between gap-1 text-xs font-semibold text-slate-300">
+                    <div className="mb-1 flex items-center justify-between gap-1 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
                       <span className="truncate">Real / Legal Name</span>
-                      <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[10px] font-normal text-amber-300" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
+                      <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 font-cyber-ui text-[10px] font-normal text-[var(--hud-warn)]" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
                         <input
                           type="checkbox"
                           checked={realNameHidden}
                           onChange={(e) => setRealNameHidden(e.target.checked)}
-                          className="accent-amber-400"
+                          className="accent-[var(--hud-warn)]"
                         />
                         {realNameHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                         <span>{realNameHidden ? "Hidden" : "Public"}</span>
@@ -2295,11 +2314,11 @@ export function CharacterCreatorModal({
                       value={realName}
                       onChange={(e) => setRealName(e.target.value)}
                       placeholder="Optional legal name"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs font-semibold text-slate-300">Gender</label>
+                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Gender</label>
                     <input
                       type="text"
                       aria-label="Gender"
@@ -2307,7 +2326,7 @@ export function CharacterCreatorModal({
                       value={gender === "__custom__" ? "" : gender}
                       onChange={(e) => setGender(e.target.value)}
                       placeholder="Woman, Man, Non-Binary…"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                     <datalist id="cpr-gender-list">
                       <option value="Woman" />
@@ -2318,14 +2337,14 @@ export function CharacterCreatorModal({
                     </datalist>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-xs font-semibold text-slate-300">Pronouns</label>
+                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Pronouns</label>
                     <input
                       type="text"
                       list="cpr-pronouns-list"
                       value={pronouns}
                       onChange={(e) => setPronouns(e.target.value)}
                       placeholder="they/them…"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                     <datalist id="cpr-pronouns-list">
                       <option value="she/her" />
@@ -2337,36 +2356,38 @@ export function CharacterCreatorModal({
                     </datalist>
                   </div>
                   <div className="sm:col-span-1">
-                    <label className="mb-1 block text-xs font-semibold text-slate-300">Age</label>
+                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Age</label>
                     <input
                       type="text"
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
                       placeholder="24"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-data text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                 </div>
 
                 {/* Portrait & Chat Color Tag Row */}
-                <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3 sm:grid-cols-12">
+                <div className="grid grid-cols-1 gap-3 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 sm:grid-cols-12">
                   <div className="flex items-center gap-3 sm:col-span-7">
                     {portraitUrl.trim() ? (
                       <img
                         src={portraitUrl}
                         alt={name || "Portrait"}
-                        className="h-12 w-12 shrink-0 rounded-lg border border-cyan-500/50 object-cover"
+                        className="h-12 w-12 shrink-0 border border-[var(--hud-accent-line)] object-cover"
                       />
                     ) : (
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-400">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center border border-[var(--hud-line-soft)] bg-black/60 text-[var(--hud-muted)]">
                         <ImagePlus className="h-5 w-5" />
                       </div>
                     )}
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex flex-wrap items-center justify-between gap-1.5">
-                        <span className="text-xs font-semibold text-slate-200">Character Portrait (optional)</span>
+                        <span className="font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                          Character Portrait (optional)
+                        </span>
                         <div className="flex items-center gap-1.5">
-                          <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/20">
+                          <label className="cyber-btn-tac cp-fx-hover cursor-pointer px-2 py-0.5 font-cyber-ui text-[11px] font-medium text-[var(--hud-accent)]">
                             <ImagePlus className="h-3 w-3" /> Upload Image
                             <input
                               type="file"
@@ -2379,7 +2400,7 @@ export function CharacterCreatorModal({
                             <button
                               type="button"
                               onClick={() => setPortraitUrl("")}
-                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-rose-300"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-muted)] hover:border-[var(--hud-primary-bright)] hover:text-[var(--hud-primary-bright)]"
                             >
                               Clear
                             </button>
@@ -2391,14 +2412,14 @@ export function CharacterCreatorModal({
                         value={portraitUrl.startsWith("data:") ? "" : portraitUrl}
                         onChange={(e) => setPortraitUrl(e.target.value)}
                         placeholder={portraitUrl.startsWith("data:") ? "Custom image uploaded from device" : "Or paste an image URL (https://…)"}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
                   </div>
 
                   <div className="flex flex-col justify-center sm:col-span-5">
-                    <span className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-200">
-                      <Palette className="h-3.5 w-3.5 text-cyan-400" /> Chat Name Tag Color
+                    <span className="mb-1.5 flex items-center gap-1 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                      <Palette className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Chat Name Tag Color
                     </span>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {Object.entries(CHARACTER_COLOR_THEMES).map(([cid, theme]) => {
@@ -2408,10 +2429,10 @@ export function CharacterCreatorModal({
                             key={cid}
                             type="button"
                             onClick={() => setCharacterColor(cid)}
-                            className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-medium transition ${
+                            className={`inline-flex items-center gap-1.5 border px-2 py-1 font-cyber-ui text-[11px] font-medium transition ${
                               active
                                 ? `${theme.nameBadgeClass} ring-1 ring-white/40`
-                                : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                                : "border-[var(--hud-line-soft)] bg-black/60 text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
                             }`}
                           >
                             <span className={`h-2.5 w-2.5 rounded-full ${theme.dotClass}`} />
@@ -2420,7 +2441,7 @@ export function CharacterCreatorModal({
                         );
                       })}
                       <label
-                        className="relative inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400"
+                        className="relative inline-flex cursor-pointer items-center gap-1.5 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] font-medium text-[var(--hud-text)] transition hover:border-[var(--hud-accent)]"
                         style={isHexColor(characterColor) ? resolveCharacterColor(characterColor).nameBadgeStyle : undefined}
                       >
                         <span
@@ -2434,7 +2455,9 @@ export function CharacterCreatorModal({
                           onChange={(e) => setCharacterColor(e.target.value)}
                           className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                         />
-                        <span className="font-mono">{isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}</span>
+                        <span className={isHexColor(characterColor) ? "font-cyber-data" : "font-cyber-ui"}>
+                          {isHexColor(characterColor) ? characterColor.toUpperCase() : "Color Wheel"}
+                        </span>
                       </label>
                     </div>
                   </div>
@@ -2442,7 +2465,7 @@ export function CharacterCreatorModal({
 
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="block text-xs font-semibold text-slate-300">
+                    <label className="block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
                       One-Line Concept (optional)
                     </label>
                     <FieldAiActions
@@ -2458,17 +2481,26 @@ export function CharacterCreatorModal({
                     value={conceptTagline}
                     onChange={(e) => setConceptTagline(e.target.value)}
                     placeholder="e.g. Ex-Trauma Team medic running black-market clinic jobs in Watson"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                   />
                 </div>
 
                 {/* Creation Method Picker */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       Build Method
                     </span>
-                    <span className="text-[11px] text-slate-400">Hover any card for rules breakdown</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {refData !== null && !refData.rules_indexed && (
+                        <HazardBadge tone="warn">
+                          BYOC Corebook Required for Template &amp; Point-Buy Builds
+                        </HazardBadge>
+                      )}
+                      <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                        Hover any card for rules breakdown
+                      </span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {methodsList.map((m) => {
@@ -2502,19 +2534,21 @@ export function CharacterCreatorModal({
                               setCustomSkills(defaultCompleteSkills(roleInfo));
                             }
                           }}
-                          className={`rounded-lg border p-3 text-left transition ${
+                          className={`border p-3 text-left transition ${
                             active
-                              ? "border-cyan-400 bg-cyan-500/10"
-                              : "border-slate-800 bg-slate-900/60 hover:border-slate-600"
+                              ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                              : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                           } disabled:opacity-40`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-slate-100">{m.name}</span>
-                            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                            <span className="font-cyber-ui text-xs font-bold">{m.name}</span>
+                            <span className="border border-[var(--hud-line-soft)] bg-black/50 px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                               {m.badge}
                             </span>
                           </div>
-                          <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{m.summary}</p>
+                          <p className="mt-1 font-cyber-ui text-[11px] leading-relaxed text-[var(--hud-muted)]">
+                            {m.summary}
+                          </p>
                         </button>
                       );
                     })}
@@ -2524,20 +2558,23 @@ export function CharacterCreatorModal({
                 {/* All 10 Roles Grid */}
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       Choose Your Role (Starts at Rank 4)
                     </span>
                     <div className="flex items-center gap-2">
                       {["Tech", "Medtech", "Fixer", "Nomad", "Exec"].includes(selectedRole) && (
-                        <button
-                          type="button"
+                        <HudButton
+                          variant="tactical"
+                          size="xs"
                           onClick={() => roleExtrasRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
-                          className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+                          className="border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
                         >
                           Configure {selectedRole} Options ↓
-                        </button>
+                        </HudButton>
                       )}
-                      <span className="text-[11px] text-slate-400">Hover or select for Role Ability info</span>
+                      <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                        Hover or select for Role Ability info
+                      </span>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -2572,26 +2609,24 @@ export function CharacterCreatorModal({
                               }, 40);
                             }
                           }}
-                          className={`rounded-lg border p-2 text-left transition ${
+                          className={`border p-2.5 text-left transition ${
                             active
-                              ? "border-rose-500/80 bg-rose-500/10"
-                              : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
+                              ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                              : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-slate-100">{role.name}</span>
-                            <div className="flex items-center gap-1">
+                            <span className="font-cyber-ui text-xs font-bold">{role.name}</span>
+                            <div className="flex items-center gap-1.5">
                               {hasRoleExtras && (
-                                <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 font-mono text-[9px] text-amber-200">
+                                <span className="border border-[var(--hud-warn)]/45 bg-[var(--hud-warn)]/10 px-1 py-0.5 font-cyber-ui text-[9px] font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
                                   Role Options
                                 </span>
                               )}
-                              <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                                {role.ability}
-                              </span>
+                              <RoleTag role={role.ability} />
                             </div>
                           </div>
-                          <p className="mt-0.5 text-[11px] text-slate-400">{role.tagline}</p>
+                          <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{role.tagline}</p>
                         </button>
                       );
                     })}
@@ -2601,28 +2636,30 @@ export function CharacterCreatorModal({
                 {/* Role-Specific Ability Choices */}
                 <div ref={roleExtrasRef} className="space-y-2">
                 {selectedRole === "Tech" && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                  <div className="space-y-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-row)] p-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-amber-200">Tech Maker Specialties (8 pts total, max 4 each)</span>
-                      <span className="font-mono text-xs text-cyan-300">
+                      <span className="font-cyber-ui text-xs font-bold text-[var(--hud-warn)]">
+                        Tech Maker Specialties (8 pts total, max 4 each)
+                      </span>
+                      <span className="font-cyber-data text-xs text-[var(--hud-accent)]">
                         {Object.values(techMakerRanks).reduce((a, b) => a + b, 0)} / 8
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {MAKER_SPECIALTIES.map((spec) => (
-                        <div key={spec} className="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs">
-                          <span className="text-slate-200">{spec}</span>
-                          <div className="flex items-center gap-1.5 font-mono">
+                        <div key={spec} className="flex items-center justify-between border border-[var(--hud-line-soft)] bg-black/55 px-2.5 py-1.5 text-xs">
+                          <span className="font-cyber-ui text-[var(--hud-text)]">{spec}</span>
+                          <div className="flex items-center gap-1.5 font-cyber-data">
                             <button
                               type="button"
                               onClick={() => setTechMakerRanks((p) => ({ ...p, [spec]: Math.max(0, (p[spec] ?? 0) - 1) }))}
-                              className="rounded border border-slate-700 px-1.5 hover:border-cyan-400"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-data text-xs"
                             >-</button>
                             <span>{techMakerRanks[spec] ?? 0}</span>
                             <button
                               type="button"
                               onClick={() => setTechMakerRanks((p) => ({ ...p, [spec]: Math.min(4, (p[spec] ?? 0) + 1) }))}
-                              className="rounded border border-slate-700 px-1.5 hover:border-cyan-400"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-data text-xs"
                             >+</button>
                           </div>
                         </div>
@@ -2632,28 +2669,30 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Medtech" && (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2">
+                  <div className="space-y-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-row)] p-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-200">Medtech Medicine Allocations (4 pts total)</span>
-                      <span className="font-mono text-xs text-cyan-300">
+                      <span className="font-cyber-ui text-xs font-bold text-[var(--hud-accent)]">
+                        Medtech Medicine Allocations (4 pts total)
+                      </span>
+                      <span className="font-cyber-data text-xs text-[var(--hud-accent)]">
                         {Object.values(medtechAlloc).reduce((a, b) => a + b, 0)} / 4
                       </span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       {(["Surgery", "Pharmaceuticals", "Cryosystem Operation"] as const).map((field) => (
-                        <div key={field} className="flex items-center justify-between rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs">
-                          <span className="truncate text-slate-200">{field}</span>
-                          <div className="flex items-center gap-1.5 font-mono">
+                        <div key={field} className="flex items-center justify-between border border-[var(--hud-line-soft)] bg-black/55 px-2.5 py-1.5 text-xs">
+                          <span className="truncate font-cyber-ui text-[var(--hud-text)]">{field}</span>
+                          <div className="flex items-center gap-1.5 font-cyber-data">
                             <button
                               type="button"
                               onClick={() => setMedtechAlloc((p) => ({ ...p, [field]: Math.max(0, (p[field] ?? 0) - 1) }))}
-                              className="rounded border border-slate-700 px-1.5"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-data text-xs"
                             >-</button>
                             <span>{medtechAlloc[field] ?? 0}</span>
                             <button
                               type="button"
                               onClick={() => setMedtechAlloc((p) => ({ ...p, [field]: Math.min(4, (p[field] ?? 0) + 1) }))}
-                              className="rounded border border-slate-700 px-1.5"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-data text-xs"
                             >+</button>
                           </div>
                         </div>
@@ -2661,7 +2700,9 @@ export function CharacterCreatorModal({
                     </div>
                     {(medtechAlloc.Pharmaceuticals ?? 0) > 0 && (
                       <div className="space-y-1 pt-1">
-                        <span className="text-[11px] text-slate-300">Starting Pharmaceutical Recipes ({medtechAlloc.Pharmaceuticals}):</span>
+                        <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                          Starting Pharmaceutical Recipes ({medtechAlloc.Pharmaceuticals}):
+                        </span>
                         <div className="flex flex-wrap gap-1.5">
                           {Array.from({ length: medtechAlloc.Pharmaceuticals }).map((_, idx) => (
                             <select
@@ -2672,7 +2713,7 @@ export function CharacterCreatorModal({
                                 next[idx] = e.target.value;
                                 setMedtechRecipes(next);
                               }}
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             >
                               {PHARMA_RECIPES.map((r) => (
                                 <option key={r} value={r}>{r}</option>
@@ -2686,31 +2727,37 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Fixer" && (
-                  <div className="grid grid-cols-1 gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-row)] p-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-cyan-200">Fixer Street Culture</label>
+                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                        Fixer Street Culture
+                      </label>
                       <input
                         type="text"
                         value={fixerCulture}
                         onChange={(e) => setFixerCulture(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-cyan-200">Operator Reach Language</label>
+                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                        Operator Reach Language
+                      </label>
                       <input
                         type="text"
                         value={fixerLanguage}
                         onChange={(e) => setFixerLanguage(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
                   </div>
                 )}
 
                 {selectedRole === "Nomad" && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
-                    <span className="text-xs font-bold text-amber-200">Nomad Moto Picks (4 Starting Vehicles / Upgrades)</span>
+                  <div className="space-y-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-row)] p-3">
+                    <span className="font-cyber-ui text-xs font-bold text-[var(--hud-warn)]">
+                      Nomad Moto Picks (4 Starting Vehicles / Upgrades)
+                    </span>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {Array.from({ length: 4 }).map((_, idx) => (
                         <select
@@ -2721,7 +2768,7 @@ export function CharacterCreatorModal({
                             next[idx] = e.target.value;
                             setNomadVehicles(next);
                           }}
-                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                          className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         >
                           <optgroup label="Base Vehicles">
                             {NOMAD_BASE_VEHICLES.map((v) => (
@@ -2740,32 +2787,38 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Exec" && (
-                  <div className="space-y-2 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
+                  <div className="space-y-2 border border-[var(--hud-line)] bg-[var(--hud-row)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-violet-200">Exec Team Member &amp; Corporate Perks (p. 153)</span>
-                      <span className="rounded border border-violet-400/40 bg-violet-500/15 px-2 py-0.5 font-mono text-[10px] text-violet-200">
+                      <span className="font-cyber-ui text-xs font-bold text-[var(--hud-text)]">
+                        Exec Team Member &amp; Corporate Perks (p. 153)
+                      </span>
+                      <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-accent)]">
                         Includes Corporate Conapt + Trauma Team Silver
                       </span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Exec Team Member Name</label>
+                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                          Exec Team Member Name
+                        </label>
                         <input
                           type="text"
                           value={execTeamName}
                           onChange={(e) => setExecTeamName(e.target.value)}
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Team Member Specialty</label>
+                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                          Team Member Specialty
+                        </label>
                         <select
                           aria-label="Exec Team Member Specialty Preset"
                           value={(EXEC_TEAM_ROLES as readonly string[]).includes(execTeamRole) ? execTeamRole : "__custom__"}
                           onChange={(e) => {
                             if (e.target.value !== "__custom__") setExecTeamRole(e.target.value);
                           }}
-                          className="mb-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="mb-1 w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         >
                           {EXEC_TEAM_ROLES.map((r) => (
                             <option key={r} value={r}>{r}</option>
@@ -2779,18 +2832,20 @@ export function CharacterCreatorModal({
                           value={execTeamRole}
                           onChange={(e) => setExecTeamRole(e.target.value)}
                           placeholder="Custom specialty…"
-                          className="w-full rounded border border-slate-800 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-violet-200">Starting Loyalty (1–10)</label>
+                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                          Starting Loyalty (1–10)
+                        </label>
                         <input
                           type="number"
                           min={1}
                           max={10}
                           value={execTeamLoyalty}
                           onChange={(e) => setExecTeamLoyalty(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 4)))}
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -2803,45 +2858,52 @@ export function CharacterCreatorModal({
             {/* STEP 2: STATS & VITALS */}
             {step === "stats" && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
                   <div>
-                    <div className="text-xs font-bold text-slate-100">
-                      {method === "streetrat" && `${selectedRole} Template Row #${streetratRoll}`}
-                      {method === "edgerunner" && `${selectedRole} Per-STAT Template Rolls`}
-                      {method === "complete_package" && `Complete Package Point-Buy: ${statSum} / 62 pts`}
-                      {method === "freeform" && `Freeform STATs (Total: ${statSum})`}
+                    <div className="flex flex-wrap items-center gap-2 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                      <span>
+                        {method === "streetrat" && `${selectedRole} Template Row #${streetratRoll}`}
+                        {method === "edgerunner" && `${selectedRole} Per-STAT Template Rolls`}
+                        {method === "complete_package" && "Complete Package Point-Buy"}
+                        {method === "freeform" && "Freeform STATs"}
+                      </span>
+                      {(method === "complete_package" || method === "freeform") && (
+                        <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                          {method === "complete_package" ? `${statSum} / 62 STAT PTS` : `${statSum} STAT PTS`}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-slate-400">
+                    <div className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Hover or click any STAT below for Corebook rules, formulas, and beginner advice.
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {method === "streetrat" && (
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="sm"
                         onClick={() => setStreetratRoll(d(10))}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500"
                       >
-                        <Dices className="h-3.5 w-3.5" /> Roll 1d10 Template
-                      </button>
+                        <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Roll 1d10 Template
+                      </HudButton>
                     )}
                     {method === "edgerunner" && (
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="sm"
                         onClick={() => setEdgerunnerRolls(Array.from({ length: 10 }, () => d(10)))}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500"
                       >
-                        <Dices className="h-3.5 w-3.5" /> Roll 1d10 × 10 STATs
-                      </button>
+                        <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Roll 1d10 × 10 STATs
+                      </HudButton>
                     )}
                     {(method === "complete_package" || method === "freeform") && roleInfo && (
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="sm"
                         onClick={() => setCustomStats(buildSmart62Stats(roleInfo.key_stats))}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20"
                       >
-                        <Wand2 className="h-3.5 w-3.5" /> Role Smart Fill (62 pts)
-                      </button>
+                        <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Role Smart Fill (62 pts)
+                      </HudButton>
                     )}
                   </div>
                 </div>
@@ -2864,30 +2926,34 @@ export function CharacterCreatorModal({
                         key={stat}
                         onMouseEnter={() => setInspector(hoverPayload)}
                         onClick={() => setInspector(hoverPayload)}
-                        className={`rounded-lg border p-2.5 transition ${
-                          isKey ? "border-cyan-500/50 bg-cyan-950/20" : "border-slate-800 bg-slate-900/70"
+                        className={`border p-2.5 transition ${
+                          isKey
+                            ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                            : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)]"
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-xs font-bold text-slate-200">{stat}</span>
+                          <span className="font-cyber-display text-xs font-bold uppercase tracking-wider">
+                            {stat}
+                          </span>
                           <button
                             type="button"
                             aria-label={`${stat} info`}
                             onFocus={() => setInspector(hoverPayload)}
-                            className="text-slate-500 hover:text-cyan-300"
+                            className="text-[var(--hud-muted)] hover:text-[var(--hud-accent)]"
                           >
                             <HelpCircle className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                        <div className="mt-1 truncate text-[10px] text-slate-400">
+                        <div className="mt-1 truncate font-cyber-ui text-[10px] text-[var(--hud-muted)]">
                           {info?.name ?? stat}
                         </div>
 
                         {method === "streetrat" ? (
-                          <div className="mt-2 text-center font-mono text-xl font-bold text-cyan-300">{val}</div>
+                          <div className="mt-2 text-center font-cyber-data text-xl font-bold text-[var(--hud-accent)]">{val}</div>
                         ) : method === "edgerunner" ? (
                           <div className="mt-2 flex items-center justify-between gap-1">
-                            <span className="font-mono text-lg font-bold text-cyan-300">{val}</span>
+                            <span className="font-cyber-data text-lg font-bold text-[var(--hud-accent)]">{val}</span>
                             <button
                               type="button"
                               title={`Reroll ${stat} column`}
@@ -2898,7 +2964,7 @@ export function CharacterCreatorModal({
                                   return next;
                                 })
                               }
-                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-300 hover:border-cyan-400"
+                              className="cyber-btn-tac cp-fx-hover px-1.5 py-0.5 font-cyber-data text-[10px]"
                             >
                               r{edgerunnerRolls[idx]} ↻
                             </button>
@@ -2913,9 +2979,9 @@ export function CharacterCreatorModal({
                                   [stat]: Math.max(method === "complete_package" ? 2 : 1, prev[stat] - 1),
                                 }))
                               }
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-0.5 font-mono text-xs hover:border-cyan-400"
+                              className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-xs"
                             >-</button>
-                            <span className="font-mono text-base font-bold text-slate-100">{val}</span>
+                            <span className="font-cyber-data text-base font-bold text-[var(--hud-text)]">{val}</span>
                             <button
                               type="button"
                               onClick={() =>
@@ -2924,7 +2990,7 @@ export function CharacterCreatorModal({
                                   [stat]: Math.min(method === "complete_package" ? 8 : 10, prev[stat] + 1),
                                 }))
                               }
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-0.5 font-mono text-xs hover:border-cyan-400"
+                              className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-xs"
                             >+</button>
                           </div>
                         )}
@@ -2935,14 +3001,14 @@ export function CharacterCreatorModal({
 
                 {/* Streetrat Clickable 10-Row Corebook Template Table */}
                 {method === "streetrat" && roleInfo && roleInfo.templates.length === 10 && (
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                    <div className="text-xs font-semibold text-slate-300">
+                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                    <div className="font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
                       Corebook {selectedRole} Templates (Click any row 1–10 or Roll 1d10)
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-center font-mono text-[11px]">
+                      <table className="w-full text-center font-cyber-data text-[11px]">
                         <thead>
-                          <tr className="border-b border-slate-800 text-slate-400">
+                          <tr className="border-b border-[var(--hud-line-soft)] font-cyber-ui text-[var(--hud-muted)]">
                             <th className="py-1 pr-2 text-left">Roll</th>
                             {STAT_NAMES.map((s) => (
                               <th key={s} className="px-1 py-1">{s}</th>
@@ -2957,8 +3023,10 @@ export function CharacterCreatorModal({
                               <tr
                                 key={rollNum}
                                 onClick={() => setStreetratRoll(rollNum)}
-                                className={`cursor-pointer border-b border-slate-800/50 transition ${
-                                  chosen ? "bg-cyan-500/20 text-cyan-200 font-bold" : "text-slate-300 hover:bg-slate-800/60"
+                                className={`cursor-pointer border-b border-[var(--hud-line-soft)]/50 transition ${
+                                  chosen
+                                    ? "bg-[var(--hud-accent-navy)] font-bold text-[var(--hud-accent)]"
+                                    : "text-[var(--hud-text)] hover:bg-[var(--hud-row)]"
                                 }`}
                               >
                                 <td className="py-1 pr-2 text-left">#{rollNum}</td>
@@ -2979,51 +3047,63 @@ export function CharacterCreatorModal({
             {/* STEP 3: SKILLS */}
             {step === "skills" && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
                   <div>
-                    <div className="text-xs font-bold text-slate-100">
-                      {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
-                      {method === "edgerunner" && `Role Skill Allocation: ${skillPointsSpent} / 86 pts`}
-                      {method === "complete_package" && `Full Skill Allocation: ${skillPointsSpent} / 86 pts (x2 costs double)`}
-                      {method === "freeform" && `Freeform Skills (${Object.keys(effectiveSkills).length} trained)`}
+                    <div className="flex flex-wrap items-center gap-2 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                      <span>
+                        {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
+                        {method === "edgerunner" && "Role Skill Allocation"}
+                        {method === "complete_package" && "Full Skill Allocation (x2 costs double)"}
+                        {method === "freeform" && "Freeform Skills"}
+                      </span>
+                      {(method === "edgerunner" || method === "complete_package") && (
+                        <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                          {skillPointsSpent} / 86 PTS
+                        </span>
+                      )}
+                      {method === "freeform" && (
+                        <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                          {Object.keys(effectiveSkills).length} trained
+                        </span>
+                      )}
                     </div>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Skill Check = STAT + Skill Rank + 1d10. Hover any skill to see what it does &amp; what DVs you beat.
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2">
                     {method === "complete_package" && roleInfo && (
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         onClick={() => setCustomSkills(defaultCompleteSkills(roleInfo))}
-                        className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20"
                       >
-                        <Wand2 className="h-3 w-3" /> Role Starter Build (86 pts)
-                      </button>
+                        <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Role Starter Build (86 pts)
+                      </HudButton>
                     )}
                     {method === "edgerunner" && roleInfo && (
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         onClick={() => setEdgerunnerSkills({ ...roleInfo.skills })}
-                        className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-300 hover:border-cyan-400"
                       >
                         Reset to Template
-                      </button>
+                      </HudButton>
                     )}
                   </div>
                 </div>
 
                 {/* Native Cultural Language (+4 FREE!) & Choice Specializations */}
-                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-500/30 bg-cyan-950/15 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-3 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/35 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="text-[11px] font-semibold text-cyan-200 whitespace-nowrap">
+                    <label className="whitespace-nowrap font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
                       Free +4 Cultural Native Language
                     </label>
                     <select
                       value={culturalLanguage}
                       onChange={(e) => setCulturalLanguage(e.target.value)}
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                      className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     >
                       {Array.from(
                         new Set(
@@ -3034,7 +3114,7 @@ export function CharacterCreatorModal({
                       ))}
                     </select>
                     {culturalLanguageOverlap && (
-                      <span className="text-[10px] text-amber-300">
+                      <span className="font-cyber-ui text-[10px] text-[var(--hud-warn)]">
                         Overlaps a paid skill above—pick another tongue (e.g. Spanish/Japanese) to avoid a stacking ruling.
                       </span>
                     )}
@@ -3052,13 +3132,13 @@ export function CharacterCreatorModal({
                     );
                     return bases.map((specBase) => (
                       <div key={specBase} className="flex items-center gap-2">
-                        <label className="text-[11px] font-semibold text-slate-300 whitespace-nowrap">
+                        <label className="whitespace-nowrap font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                           {specBase} Specialization
                         </label>
                         <select
                           value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
                           onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         >
                           {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
                             <option key={opt} value={opt}>{opt}</option>
@@ -3071,14 +3151,14 @@ export function CharacterCreatorModal({
 
                 {/* Search & Group Filter */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative flex-1 min-w-[180px]">
-                    <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-500" />
+                  <div className="relative min-w-[180px] flex-1">
+                    <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--hud-muted)]" />
                     <input
                       type="text"
                       value={skillFilter}
                       onChange={(e) => setSkillFilter(e.target.value)}
                       placeholder="Filter skills (e.g. Handgun, Stealth, REF)…"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 py-1.5 pl-8 pr-3 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 py-1.5 pl-8 pr-3 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -3087,10 +3167,10 @@ export function CharacterCreatorModal({
                         key={grp}
                         type="button"
                         onClick={() => setSkillGroupFilter(grp)}
-                        className={`rounded px-2 py-1 text-[11px] ${
+                        className={`border px-2 py-1 font-cyber-ui text-[11px] font-semibold transition ${
                           skillGroupFilter === grp
-                            ? "bg-cyan-500/20 text-cyan-200 border border-cyan-500/50"
-                            : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200"
+                            ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                            : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
                         }`}
                       >
                         {grp}
@@ -3101,8 +3181,8 @@ export function CharacterCreatorModal({
 
                 {/* Specialization & Custom Skill Builder (Complete Package & Freeform) */}
                 {(method === "complete_package" || method === "freeform") && (
-                  <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2.5">
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2.5">
+                    <div className="font-cyber-display text-[11px] font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       Add Skill Specialization (Language, Local Expert, Science, Instrument, Martial Arts)
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -3110,7 +3190,7 @@ export function CharacterCreatorModal({
                         aria-label="Specialization Category"
                         value={specBasePick}
                         onChange={(e) => setSpecBasePick(e.target.value as typeof specBasePick)}
-                        className="rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                        className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         {(["Language", "Local Expert", "Science", "Play Instrument", "Martial Arts"] as const).map((b) => (
                           <option key={b} value={b}>{b}</option>
@@ -3129,10 +3209,11 @@ export function CharacterCreatorModal({
                                 ? "e.g. Watson, Heywood, Badlands…"
                                 : "Specialization focus…"
                         }
-                        className="flex-1 min-w-[160px] rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="min-w-[160px] flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="sm"
                         onClick={() => {
                           const focus = specFocusInput.trim();
                           if (!focus) return;
@@ -3140,10 +3221,9 @@ export function CharacterCreatorModal({
                           setCustomSkills((p) => ({ ...p, [fullName]: p[fullName] ?? 2 }));
                           setSpecFocusInput("");
                         }}
-                        className="rounded border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-500/25"
                       >
                         + Add Specialization
-                      </button>
+                      </HudButton>
                     </div>
                     {method === "freeform" && (
                       <div className="flex gap-2">
@@ -3152,20 +3232,20 @@ export function CharacterCreatorModal({
                           value={customNewSkill}
                           onChange={(e) => setCustomNewSkill(e.target.value)}
                           placeholder="Or add any custom skill name…"
-                          className="flex-1 rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                          className="flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
-                        <button
-                          type="button"
+                        <HudButton
+                          variant="tactical"
+                          size="sm"
                           onClick={() => {
                             const s = customNewSkill.trim();
                             if (!s) return;
                             setCustomSkills((p) => ({ ...p, [s]: p[s] ?? 4 }));
                             setCustomNewSkill("");
                           }}
-                          className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-slate-700"
                         >
                           + Add Skill
-                        </button>
+                        </HudButton>
                       </div>
                     )}
                   </div>
@@ -3223,36 +3303,36 @@ export function CharacterCreatorModal({
                         key={sk.name}
                         onMouseEnter={() => setInspector(hoverPayload)}
                         onClick={() => setInspector(hoverPayload)}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800/90 bg-slate-900/50 px-3 py-2 text-xs hover:border-slate-700"
+                        className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-3 py-2 text-xs hover:border-[var(--hud-line)]"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="font-semibold text-slate-100">{storageKey}</span>
-                            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                            <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{storageKey}</span>
+                            <span className="border border-[var(--hud-line-soft)] bg-black/50 px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-muted)]">
                               {sk.stat}
                             </span>
                             {sk.basic && (
-                              <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                              <span className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-accent)]">
                                 BASIC
                               </span>
                             )}
                             {sk.cost === 2 && (
-                              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                              <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/10 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]">
                                 x2 pts
                               </span>
                             )}
                           </div>
-                          <p className="mt-0.5 truncate text-[11px] text-slate-400">{sk.summary}</p>
+                          <p className="mt-0.5 truncate font-cyber-ui text-[11px] text-[var(--hud-muted)]">{sk.summary}</p>
                         </div>
 
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="font-mono text-[11px] text-slate-400">
-                            Base <strong className="text-cyan-300">{baseTotal}</strong>
+                        <div className="flex shrink-0 items-center gap-3">
+                          <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                            Base <strong className="font-cyber-data text-[var(--hud-accent)]">{baseTotal}</strong>
                           </span>
                           {method === "streetrat" ? (
-                            <span className="w-8 text-center font-mono text-sm font-bold text-slate-100">+{rank}</span>
+                            <span className="w-8 text-center font-cyber-data text-sm font-bold text-[var(--hud-text)]">+{rank}</span>
                           ) : (
-                            <div className="flex items-center gap-1 font-mono">
+                            <div className="flex items-center gap-1 font-cyber-data">
                               <button
                                 type="button"
                                 disabled={lockedMedtechSkill || rank <= minRank}
@@ -3260,9 +3340,9 @@ export function CharacterCreatorModal({
                                   e.stopPropagation();
                                   updateRank(rank - 1);
                                 }}
-                                className="rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-200 hover:border-cyan-400 disabled:opacity-30"
+                                className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data disabled:opacity-30"
                               >-</button>
-                              <span className="w-6 text-center font-bold text-slate-100">{rank}</span>
+                              <span className="w-6 text-center font-bold text-[var(--hud-text)]">{rank}</span>
                               <button
                                 type="button"
                                 disabled={lockedMedtechSkill || rank >= maxRank}
@@ -3270,7 +3350,7 @@ export function CharacterCreatorModal({
                                   e.stopPropagation();
                                   updateRank(rank + 1);
                                 }}
-                                className="rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-200 hover:border-cyan-400 disabled:opacity-30"
+                                className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data disabled:opacity-30"
                               >+</button>
                             </div>
                           )}
@@ -3285,54 +3365,56 @@ export function CharacterCreatorModal({
             {/* STEP 4: BACKSTORY, LIFEPATH & ESTABLISHED HISTORY */}
             {step === "lifepath" && (
               <div className="space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line)] bg-[#5a0b1c]/35 p-3">
                   <div>
-                    <div className="text-xs font-bold text-rose-100">Lifepath, Backstory &amp; Established History</div>
-                    <p className="text-[11px] text-rose-200/80">
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                      Lifepath, Backstory &amp; Established History
+                    </div>
+                    <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Roll origin tables or customize freely—the AI GM reads every ally, grudge, and backstory line from Turn 1.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
+                    <HudButton
+                      variant="tactical"
+                      size="sm"
                       onClick={rollFullLifepath}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
                     >
-                      <Dices className="h-3.5 w-3.5" /> Roll Full Lifepath
-                    </button>
-                    <button
-                      type="button"
+                      <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Roll Full Lifepath
+                    </HudButton>
+                    <HudButton
+                      variant="tactical"
+                      size="sm"
                       onClick={() => weaveStarterBackstory()}
-                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25"
                     >
-                      <Wand2 className="h-3.5 w-3.5" /> Weave Starter Bio
-                    </button>
+                      <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Weave Starter Bio
+                    </HudButton>
                   </div>
                 </div>
 
                 {/* A. Written Backstory & Established History */}
-                <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
+                <div className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                       Written Backstory &amp; Already-Established History
                     </div>
-                    <button
-                      type="button"
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
                       disabled={aiBusy}
                       onClick={() => void handleAiAssist("bio", "scratch")}
-                      className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
                     >
-                      <Sparkles className="h-3 w-3" />
+                      <Sparkles className="h-3 w-3 text-[var(--hud-accent)]" />
                       {aiBusyKey === "bio:scratch:all" ? "Generating…" : "Generate from Scratch"}
-                    </button>
+                    </HudButton>
                   </div>
                   {aiError && (
-                    <div className="rounded border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-200">
+                    <div className="border border-[var(--hud-primary-bright)]/60 bg-[var(--hud-row)] px-2.5 py-1.5 font-cyber-ui text-[11px] text-rose-200">
                       {aiError}
                     </div>
                   )}
                   <div>
-                    <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                    <label className="mb-1 block font-cyber-ui text-[11px] font-medium text-[var(--hud-muted)]">
                       Optional Prompt / Direction (stays faithful to your Role, STATs, Skills, Gear &amp; Corebook)
                     </label>
                     <input
@@ -3340,12 +3422,12 @@ export function CharacterCreatorModal({
                       value={aiBioGuidance}
                       onChange={(e) => setAiBioGuidance(e.target.value)}
                       placeholder="e.g. Smuggler running spare parts out of Rancho Coronado, owes a local ripperdoc…"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="block text-xs font-medium text-slate-300">
+                      <label className="block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
                         One-Line Concept
                       </label>
                       <FieldAiActions
@@ -3361,12 +3443,12 @@ export function CharacterCreatorModal({
                       value={conceptTagline}
                       onChange={(e) => setConceptTagline(e.target.value)}
                       placeholder="Short one-line character hook or street reputation"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="block text-xs font-medium text-slate-300">
+                      <label className="block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
                         Character Backstory (Where do you come from? What shaped you?)
                       </label>
                       <FieldAiActions
@@ -3382,12 +3464,12 @@ export function CharacterCreatorModal({
                       value={backstorySummary}
                       onChange={(e) => setBackstorySummary(e.target.value)}
                       placeholder="Write a few sentences about your life before Session 1, or click 'Roll Full Lifepath' / 'Weave Starter Bio'…"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="block text-xs font-medium text-slate-300">
+                      <label className="block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
                         Already-Established Night City History (Past gigs, crew ties, favors owed, local turf)
                       </label>
                       <FieldAiActions
@@ -3403,12 +3485,12 @@ export function CharacterCreatorModal({
                       value={establishedHistory}
                       onChange={(e) => setEstablishedHistory(e.target.value)}
                       placeholder="e.g. Owes 200 eb to Mama Welles, regular at the Afterlife, survived a Militech convoy ambush last winter…"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="block text-xs font-medium text-slate-300">
+                      <label className="block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
                         Signature Look &amp; Mannerisms
                       </label>
                       <FieldAiActions
@@ -3424,19 +3506,19 @@ export function CharacterCreatorModal({
                       value={appearanceNotes}
                       onChange={(e) => setAppearanceNotes(e.target.value)}
                       placeholder="e.g. Scuffed red leather jacket, silver nose ring, faint burn scar across left cheek"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                 </div>
 
                 {/* B. General Lifepath Tables */}
-                <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                <div className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3.5">
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                     Street Origins &amp; Background
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 flex items-center justify-between text-[11px] text-slate-300">
+                      <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
                         <span>Cultural Region</span>
                         <button
                           type="button"
@@ -3447,7 +3529,7 @@ export function CharacterCreatorModal({
                               setCulturalLanguage(pickRandom(reg.languages));
                             }
                           }}
-                          className="text-cyan-400 hover:text-cyan-300"
+                          className="font-cyber-data text-[var(--hud-accent)] hover:text-white"
                         >d10 ↻</button>
                       </label>
                       <select
@@ -3457,7 +3539,7 @@ export function CharacterCreatorModal({
                           const match = refData?.cultural_regions.find((r) => r.region === e.target.value);
                           if (match?.languages.length) setCulturalLanguage(match.languages[0]);
                         }}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         {(refData?.cultural_regions ?? []).map((r) => (
                           <option key={r.region} value={r.region}>{r.region}</option>
@@ -3466,7 +3548,7 @@ export function CharacterCreatorModal({
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-[11px] text-slate-300">
+                      <label className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-text)]">
                         Native Language (+4 Free Skill!)
                       </label>
                       <input
@@ -3474,7 +3556,7 @@ export function CharacterCreatorModal({
                         value={culturalLanguage}
                         onChange={(e) => setCulturalLanguage(e.target.value)}
                         list="cultural-lang-options"
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                       <datalist id="cultural-lang-options">
                         {(refData?.cultural_regions.find((r) => r.region === culturalRegion)?.languages ?? []).map((l) => (
@@ -3482,7 +3564,7 @@ export function CharacterCreatorModal({
                         ))}
                       </datalist>
                       {culturalLanguageOverlap && (
-                        <p className="mt-1 text-[10px] text-amber-300">
+                        <p className="mt-1 font-cyber-ui text-[10px] text-[var(--hud-warn)]">
                           Overlaps paid Language ({culturalLanguage}) in Step 3 — pick another native language for +4 free cleanly.
                         </p>
                       )}
@@ -3505,13 +3587,13 @@ export function CharacterCreatorModal({
                       const opts = refData?.lifepath_tables[field.key] ?? [];
                       return (
                         <div key={field.key}>
-                          <label className="mb-1 flex items-center justify-between text-[11px] text-slate-300">
+                          <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
                             <span>{field.label}</span>
                             {opts.length > 0 && (
                               <button
                                 type="button"
                                 onClick={() => field.set(pickRandom(opts))}
-                                className="text-cyan-400 hover:text-cyan-300"
+                                className="font-cyber-data text-[var(--hud-accent)] hover:text-white"
                               >
                                 d{opts.length} ↻
                               </button>
@@ -3522,7 +3604,7 @@ export function CharacterCreatorModal({
                             onChange={(e) => {
                               if (e.target.value !== "__custom__") field.set(e.target.value);
                             }}
-                            className="mb-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            className="mb-1 w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                           >
                             {opts.map((o) => (
                               <option key={o} value={o}>{o}</option>
@@ -3533,7 +3615,7 @@ export function CharacterCreatorModal({
                             type="text"
                             value={field.val}
                             onChange={(e) => field.set(e.target.value)}
-                            className="w-full rounded border border-slate-800 bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300 focus:border-cyan-400 focus:outline-none"
+                            className="w-full border border-[var(--hud-line-soft)] bg-black/45 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-muted)] focus:border-[var(--hud-accent)] focus:text-[var(--hud-text)] focus:outline-none"
                           />
                         </div>
                       );
@@ -3543,19 +3625,19 @@ export function CharacterCreatorModal({
 
                 {/* C. Role-Specific Lifepath */}
                 {roleInfo && roleInfo.role_lifepath.length > 0 && (
-                  <div className="space-y-2.5 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
-                    <div className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                  <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3.5">
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
                       {selectedRole} Role Lifepath
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {roleInfo.role_lifepath.map((f) => (
                         <div key={f.key}>
-                          <label className="mb-1 flex items-center justify-between text-[11px] text-slate-300">
+                          <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
                             <span>{f.label}</span>
                             <button
                               type="button"
                               onClick={() => setRoleLifepath((p) => ({ ...p, [f.key]: pickRandom(f.options) }))}
-                              className="text-cyan-400 hover:text-cyan-300"
+                              className="font-cyber-ui text-[var(--hud-accent)] hover:text-white"
                             >Roll ↻</button>
                           </label>
                           <select
@@ -3565,7 +3647,7 @@ export function CharacterCreatorModal({
                                 setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }));
                               }
                             }}
-                            className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                            className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                           >
                             {f.options.map((o) => (
                               <option key={o} value={o}>{o}</option>
@@ -3579,7 +3661,7 @@ export function CharacterCreatorModal({
                             value={roleLifepath[f.key] ?? ""}
                             onChange={(e) => setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }))}
                             placeholder={`Custom ${f.label.toLowerCase()}…`}
-                            className="mt-1 w-full rounded border border-slate-800 bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300 focus:border-cyan-400 focus:outline-none"
+                            className="mt-1 w-full border border-[var(--hud-line-soft)] bg-black/45 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-muted)] focus:border-[var(--hud-accent)] focus:text-[var(--hud-text)] focus:outline-none"
                           />
                         </div>
                       ))}
@@ -3588,24 +3670,25 @@ export function CharacterCreatorModal({
                 )}
 
                 {/* D. Established Contacts: Friends, Enemies, Tragic Loves */}
-                <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-3.5">
+                <div className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-200">
-                      <Users className="h-3.5 w-3.5 text-cyan-400" />
+                    <span className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                      <Users className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
                       Friends, Enemies &amp; Past Romances
                     </span>
                     <div className="flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         disabled={aiBusy}
                         onClick={() => void handleAiAssist("contacts", "scratch")}
-                        className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
                       >
-                        <Sparkles className="h-3 w-3" />
+                        <Sparkles className="h-3 w-3 text-[var(--hud-accent)]" />
                         {aiBusyKey === "contacts:scratch:all" ? "Writing…" : "Generate Contacts"}
-                      </button>
-                      <button
-                        type="button"
+                      </HudButton>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         onClick={() =>
                           setFriends((p) => [
                             ...p,
@@ -3616,12 +3699,12 @@ export function CharacterCreatorModal({
                             },
                           ])
                         }
-                        className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
                       >
-                        <Plus className="h-3 w-3" /> Friend
-                      </button>
-                      <button
-                        type="button"
+                        <Plus className="h-3 w-3 text-[var(--hud-ok)]" /> Friend
+                      </HudButton>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         onClick={() =>
                           setEnemies((p) => [
                             ...p,
@@ -3635,12 +3718,12 @@ export function CharacterCreatorModal({
                             },
                           ])
                         }
-                        className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200 hover:bg-rose-500/20"
                       >
-                        <Plus className="h-3 w-3" /> Enemy
-                      </button>
-                      <button
-                        type="button"
+                        <Plus className="h-3 w-3 text-[var(--hud-primary-bright)]" /> Enemy
+                      </HudButton>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
                         onClick={() =>
                           setLoveAffairs((p) => [
                             ...p,
@@ -3650,10 +3733,9 @@ export function CharacterCreatorModal({
                             },
                           ])
                         }
-                        className="inline-flex items-center gap-1 rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-200 hover:bg-violet-500/20"
                       >
-                        <Plus className="h-3 w-3" /> Tragic Love
-                      </button>
+                        <Plus className="h-3 w-3 text-[var(--hud-warn)]" /> Tragic Love
+                      </HudButton>
                     </div>
                   </div>
                   <input
@@ -3661,11 +3743,11 @@ export function CharacterCreatorModal({
                     value={aiContactsGuidance}
                     onChange={(e) => setAiContactsGuidance(e.target.value)}
                     placeholder="Optional AI direction for Friends, Enemies & Romances (e.g. a Chromatic Rock fixer friend, Maelstrom rival)…"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                   />
 
                   {friends.length === 0 && enemies.length === 0 && loveAffairs.length === 0 && (
-                    <p className="text-xs text-slate-500">
+                    <p className="font-cyber-ui text-xs text-[var(--hud-muted)]">
                       No friends, enemies, or tragic romances added yet. Add your own NPCs or click Roll Full Lifepath!
                     </p>
                   )}
@@ -3673,17 +3755,19 @@ export function CharacterCreatorModal({
                   {friends.length > 0 && (
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-emerald-300">Friends ({friends.length})</span>
+                        <span className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-ok)]">
+                          Friends ({friends.length})
+                        </span>
                       </div>
                       {friends.map((fr, idx) => (
-                        <div key={idx} className="grid grid-cols-1 gap-2 rounded border border-emerald-500/30 bg-emerald-950/15 p-2.5 sm:grid-cols-12">
+                        <div key={idx} className="grid grid-cols-1 gap-2 border border-[var(--hud-ok)]/40 bg-[var(--hud-row)] p-2.5 sm:grid-cols-12">
                           <div className="flex items-center gap-1 sm:col-span-3">
                             <input
                               type="text"
                               value={fr.name}
                               onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
                               placeholder="Friend name"
-                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
                               compact
@@ -3700,7 +3784,7 @@ export function CharacterCreatorModal({
                               value={fr.relationship}
                               onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, relationship: e.target.value } : x)))}
                               placeholder="Relationship"
-                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
                               compact
@@ -3717,7 +3801,7 @@ export function CharacterCreatorModal({
                               value={fr.note}
                               onChange={(e) => setFriends((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))}
                               placeholder="Shared history / favor"
-                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
                               compact
@@ -3731,7 +3815,7 @@ export function CharacterCreatorModal({
                           <button
                             type="button"
                             onClick={() => setFriends((p) => p.filter((_, i) => i !== idx))}
-                            className="justify-self-end text-slate-400 hover:text-rose-400 sm:col-span-1"
+                            className="justify-self-end text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)] sm:col-span-1"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -3743,10 +3827,12 @@ export function CharacterCreatorModal({
                   {enemies.length > 0 && (
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-rose-300">Enemies ({enemies.length})</span>
+                        <span className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-primary-bright)]">
+                          Enemies ({enemies.length})
+                        </span>
                       </div>
                       {enemies.map((en, idx) => (
-                        <div key={idx} className="space-y-1.5 rounded border border-rose-500/30 bg-rose-950/15 p-2.5 text-xs">
+                        <div key={idx} className="space-y-1.5 border border-[var(--hud-line)] bg-[var(--hud-row)] p-2.5 text-xs">
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="flex items-center gap-1">
                               <input
@@ -3754,7 +3840,7 @@ export function CharacterCreatorModal({
                                 value={en.name}
                                 onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
                                 placeholder="Enemy name"
-                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                                className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                               <FieldAiActions
                                 compact
@@ -3771,7 +3857,7 @@ export function CharacterCreatorModal({
                                 value={en.who}
                                 onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, who: e.target.value } : x)))}
                                 placeholder="Who they are"
-                                className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                                className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                               <FieldAiActions
                                 compact
@@ -3789,7 +3875,7 @@ export function CharacterCreatorModal({
                                   p.map((x, i) => (i === idx ? { ...x, wronged: e.target.value as EnemyEntry["wronged"] } : x)),
                                 )
                               }
-                              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             >
                               <option value="They wronged me">They wronged me</option>
                               <option value="I wronged them">I wronged them</option>
@@ -3797,7 +3883,7 @@ export function CharacterCreatorModal({
                             <button
                               type="button"
                               onClick={() => setEnemies((p) => p.filter((_, i) => i !== idx))}
-                              className="ml-auto text-slate-400 hover:text-rose-400"
+                              className="ml-auto text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -3809,7 +3895,7 @@ export function CharacterCreatorModal({
                                 value={en.cause}
                                 onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, cause: e.target.value } : x)))}
                                 placeholder="What caused it"
-                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                                className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                               <FieldAiActions
                                 compact
@@ -3826,7 +3912,7 @@ export function CharacterCreatorModal({
                                 value={en.backup}
                                 onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, backup: e.target.value } : x)))}
                                 placeholder="What they can throw at you"
-                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                                className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                               <FieldAiActions
                                 compact
@@ -3843,7 +3929,7 @@ export function CharacterCreatorModal({
                                 value={en.revenge}
                                 onChange={(e) => setEnemies((p) => p.map((x, i) => (i === idx ? { ...x, revenge: e.target.value } : x)))}
                                 placeholder="Sweet revenge"
-                                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
+                                className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                               <FieldAiActions
                                 compact
@@ -3863,17 +3949,19 @@ export function CharacterCreatorModal({
                   {loveAffairs.length > 0 && (
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-violet-300">Past Romances ({loveAffairs.length})</span>
+                        <span className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-warn)]">
+                          Past Romances ({loveAffairs.length})
+                        </span>
                       </div>
                       {loveAffairs.map((lv, idx) => (
-                        <div key={idx} className="flex flex-wrap items-center gap-2 rounded border border-violet-500/30 bg-violet-950/15 p-2.5 text-xs">
+                        <div key={idx} className="flex flex-wrap items-center gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2.5 text-xs">
                           <div className="flex items-center gap-1">
                             <input
                               type="text"
                               value={lv.name}
                               onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
                               placeholder="Lover's name"
-                              className="w-40 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="w-40 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
                               compact
@@ -3890,7 +3978,7 @@ export function CharacterCreatorModal({
                               value={lv.outcome}
                               onChange={(e) => setLoveAffairs((p) => p.map((x, i) => (i === idx ? { ...x, outcome: e.target.value } : x)))}
                               placeholder="What happened?"
-                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
                               compact
@@ -3904,7 +3992,7 @@ export function CharacterCreatorModal({
                           <button
                             type="button"
                             onClick={() => setLoveAffairs((p) => p.filter((_, i) => i !== idx))}
-                            className="text-slate-400 hover:text-rose-400"
+                            className="text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -3915,19 +4003,19 @@ export function CharacterCreatorModal({
                 </div>
 
                 {/* E. Street Reputation & Starting Trauma / Debt Hooks */}
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3.5 space-y-2.5">
+                <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3.5">
                   <button
                     type="button"
                     onClick={() => setShowRepHooks((v) => !v)}
-                    className="flex w-full items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-200 hover:text-cyan-200"
+                    className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
                   >
                     <span>Street Reputation &amp; Starting Hooks</span>
-                    <span className="font-mono text-[10px] text-cyan-400">{showRepHooks ? "▲ Hide" : "▼ Expand"}</span>
+                    <span className="font-cyber-ui text-[10px] text-[var(--hud-accent)]">{showRepHooks ? "▲ Hide" : "▼ Expand"}</span>
                   </button>
                   {showRepHooks && (
-                    <div className="grid grid-cols-1 gap-2.5 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2.5 border-t border-[var(--hud-line-soft)] pt-2.5 sm:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                           Starting Reputation (0–10, default 0)
                         </label>
                         <input
@@ -3937,12 +4025,12 @@ export function CharacterCreatorModal({
                           aria-label="Starting Reputation"
                           value={reputation}
                           onChange={(e) => setReputation(Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0)))}
-                          className="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
+                          className="w-24 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div>
                         <div className="mb-1 flex items-center justify-between gap-2">
-                          <label className="block text-[11px] font-semibold text-slate-300">
+                          <label className="block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                             Reputation Reason / Word on the Street
                           </label>
                           <FieldAiActions
@@ -3959,12 +4047,12 @@ export function CharacterCreatorModal({
                           value={reputationNote}
                           onChange={(e) => setReputationNote(e.target.value)}
                           placeholder="e.g. Survived the Watson tunnel collapse"
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div>
                         <div className="mb-1 flex items-center justify-between gap-2">
-                          <label className="block text-[11px] font-semibold text-slate-300">
+                          <label className="block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                             Trauma / Cyberpsychosis Scar
                           </label>
                           <FieldAiActions
@@ -3981,12 +4069,12 @@ export function CharacterCreatorModal({
                           value={traumaHook}
                           onChange={(e) => setTraumaHook(e.target.value)}
                           placeholder="e.g. Haunted by 4th Corporate War clinic fire"
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div>
                         <div className="mb-1 flex items-center justify-between gap-2">
-                          <label className="block text-[11px] font-semibold text-slate-300">
+                          <label className="block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                             Addiction / Vice
                           </label>
                           <FieldAiActions
@@ -4003,12 +4091,12 @@ export function CharacterCreatorModal({
                           value={addictionHook}
                           onChange={(e) => setAddictionHook(e.target.value)}
                           placeholder="e.g. Synthcoke or Smash habit"
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                       <div className="sm:col-span-2">
                         <div className="mb-1 flex items-center justify-between gap-2">
-                          <label className="block text-[11px] font-semibold text-slate-300">
+                          <label className="block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
                             Starting Debt / Obligation
                           </label>
                           <FieldAiActions
@@ -4025,7 +4113,7 @@ export function CharacterCreatorModal({
                           value={debtHook}
                           onChange={(e) => setDebtHook(e.target.value)}
                           placeholder="e.g. Owes 500 eb to a Kabuki ripperdoc"
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                       </div>
                     </div>
@@ -4038,23 +4126,23 @@ export function CharacterCreatorModal({
             {step === "gear" && (
               <div className="space-y-4">
                 {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
+                <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
+                    <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                       Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
                     </span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Month 1 baseline rent paid; monthly upkeep applies from Month 2.
                     </span>
                   </div>
                   <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                     <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Housing</label>
+                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">Housing</label>
                       <select
                         aria-label="Character Housing"
                         value={housing}
                         onChange={(e) => setHousing(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         {(
                           refData?.housing_tiers ?? [
@@ -4078,12 +4166,12 @@ export function CharacterCreatorModal({
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Lifestyle</label>
+                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">Lifestyle</label>
                       <select
                         aria-label="Character Lifestyle"
                         value={lifestyle}
                         onChange={(e) => setLifestyle(e.target.value)}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         {(
                           refData?.lifestyles ?? [
@@ -4100,12 +4188,12 @@ export function CharacterCreatorModal({
                       </select>
                     </div>
                     <div>
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-300">Trauma Team Plan</label>
+                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">Trauma Team Plan</label>
                       <select
                         aria-label="Trauma Team Plan"
                         value={traumaTeam}
                         onChange={(e) => setTraumaTeam(e.target.value as "None" | "Silver" | "Executive")}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         <option value="None">None (0 eb/mo)</option>
                         <option value="Silver">
@@ -4119,40 +4207,40 @@ export function CharacterCreatorModal({
 
                 {(method === "streetrat" || method === "edgerunner") && roleInfo ? (
                   <div className="space-y-4">
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
                       <div>
-                        <div className="text-xs font-bold text-slate-100">
+                        <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                           {selectedRole} Starter Package (+500 eb pocket money)
                         </div>
-                        <p className="text-[11px] text-slate-400">
+                        <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                           Corebook gives you preset weapons, SP 11 Light Armorjack, Outfit, and Cyberware—just pick between any A/B options below.
                         </p>
                       </div>
-                      <span className="font-mono text-xs text-amber-300">
+                      <HazardBadge tone="warn">
                         Cyberware HL: -{gearSummary.totalHl} Humanity
-                      </span>
+                      </HazardBadge>
                     </div>
 
                     {/* Weapons & Choices */}
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                      <div className="text-xs font-bold uppercase tracking-wider text-rose-300">
+                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                         Weapons &amp; Armor
                       </div>
                       <div className="space-y-2">
                         {roleInfo.starting_weapons.map((w, idx) =>
                           w.type === "choice" && w.options ? (
-                            <div key={idx} className="flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/30 bg-cyan-950/15 p-2 text-xs">
-                              <span className="font-medium text-cyan-200">{w.label ?? "Weapon Option"}:</span>
+                            <div key={idx} className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/35 p-2 text-xs">
+                              <span className="font-cyber-ui font-medium text-[var(--hud-accent)]">{w.label ?? "Weapon Option"}:</span>
                               <div className="flex flex-wrap gap-1.5">
                                 {w.options.map((opt) => (
                                   <button
                                     key={opt}
                                     type="button"
                                     onClick={() => setWeaponChoices((p) => ({ ...p, [w.label || `choice-${idx}`]: opt }))}
-                                    className={`rounded border px-2.5 py-1 text-xs ${
+                                    className={`border px-2.5 py-1 font-cyber-ui text-xs transition ${
                                       weaponChoices[w.label || `choice-${idx}`] === opt
-                                        ? "border-cyan-400 bg-cyan-500/20 text-cyan-100 font-semibold"
-                                        : "border-slate-700 bg-slate-950 text-slate-300"
+                                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                        : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                                     }`}
                                   >
                                     {opt}
@@ -4161,20 +4249,20 @@ export function CharacterCreatorModal({
                               </div>
                             </div>
                           ) : (
-                            <div key={idx} className="text-xs text-slate-300">
+                            <div key={idx} className="font-cyber-ui text-xs text-[var(--hud-text)]">
                               • {w.item} {w.qty ? `×${w.qty}` : ""}
                             </div>
                           ),
                         )}
                         {roleInfo.starting_armor.map((a) => (
-                          <div key={a} className="text-xs text-cyan-200">• {a}</div>
+                          <div key={a} className="font-cyber-ui text-xs text-[var(--hud-accent)]">• {a}</div>
                         ))}
                       </div>
                     </div>
 
                     {/* Cyberware & Choices */}
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                      <div className="text-xs font-bold uppercase tracking-wider text-violet-300">
+                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                         Installed Cyberware (Total Humanity Loss: {gearSummary.totalHl})
                       </div>
                       {roleInfo.starting_cyberware.map((cw) => (
@@ -4187,10 +4275,10 @@ export function CharacterCreatorModal({
                               body: cw.notes,
                             })
                           }
-                          className="flex items-center justify-between rounded border border-slate-800 bg-slate-950/60 px-2.5 py-1.5 text-xs"
+                          className="flex items-center justify-between border border-[var(--hud-line-soft)] bg-black/55 px-2.5 py-1.5 text-xs"
                         >
-                          <span className="font-medium text-slate-200">{cw.name}</span>
-                          <span className="font-mono text-[11px] text-amber-300">
+                          <span className="font-cyber-ui font-medium text-[var(--hud-text)]">{cw.name}</span>
+                          <span className="font-cyber-data text-[11px] text-[var(--hud-warn)]">
                             {cw.install} · HL {cw.hl}
                           </span>
                         </div>
@@ -4198,8 +4286,10 @@ export function CharacterCreatorModal({
 
                       {[roleInfo.cyberware_choice, roleInfo.cyberware_choice_2].map((choice, cIdx) =>
                         choice ? (
-                          <div key={cIdx} className="rounded border border-violet-500/30 bg-violet-950/15 p-2 space-y-1.5">
-                            <div className="text-[11px] font-semibold text-violet-200">{choice.label} (Pick 1):</div>
+                          <div key={cIdx} className="space-y-1.5 border border-[var(--hud-line)] bg-[var(--hud-row)] p-2">
+                            <div className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                              {choice.label} (Pick 1):
+                            </div>
                             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                               {choice.options.map((opt) => {
                                 const cur = cIdx === 0 ? cyberwareChoice : cyberwareChoice2;
@@ -4216,14 +4306,14 @@ export function CharacterCreatorModal({
                                       })
                                     }
                                     onClick={() => (cIdx === 0 ? setCyberwareChoice(opt.name) : setCyberwareChoice2(opt.name))}
-                                    className={`rounded border p-2 text-left text-xs ${
+                                    className={`border p-2 text-left text-xs transition ${
                                       active
-                                        ? "border-violet-400 bg-violet-500/20 text-violet-100"
-                                        : "border-slate-700 bg-slate-950 text-slate-300"
+                                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                        : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                                     }`}
                                   >
-                                    <div className="font-semibold">{opt.name}</div>
-                                    <div className="text-[10px] text-slate-400">{opt.notes}</div>
+                                    <div className="font-cyber-ui font-semibold">{opt.name}</div>
+                                    <div className="font-cyber-ui text-[10px] text-[var(--hud-muted)]">{opt.notes}</div>
                                   </button>
                                 );
                               })}
@@ -4234,20 +4324,22 @@ export function CharacterCreatorModal({
                     </div>
 
                     {/* Outfit */}
-                    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                      <div className="text-xs font-bold uppercase tracking-wider text-slate-300">Starting Outfit</div>
+                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                        Starting Outfit
+                      </div>
                       {roleInfo.outfit_choice && (
                         <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="text-cyan-200">{roleInfo.outfit_choice.label}:</span>
+                          <span className="font-cyber-ui text-[var(--hud-accent)]">{roleInfo.outfit_choice.label}:</span>
                           {roleInfo.outfit_choice.options.map((opt) => (
                             <button
                               key={opt}
                               type="button"
                               onClick={() => setOutfitChoice(opt)}
-                              className={`rounded border px-2 py-0.5 ${
+                              className={`border px-2 py-0.5 font-cyber-ui transition ${
                                 outfitChoice === opt
-                                  ? "border-cyan-400 bg-cyan-500/20 text-cyan-100"
-                                  : "border-slate-700 bg-slate-950 text-slate-300"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                               }`}
                             >
                               {opt}
@@ -4257,7 +4349,7 @@ export function CharacterCreatorModal({
                       )}
                       <div className="flex flex-wrap gap-1.5">
                         {roleInfo.starting_outfit.map((o) => (
-                          <span key={o} className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-300">
+                          <span key={o} className="border border-[var(--hud-line-soft)] bg-black/55 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)]">
                             {o}
                           </span>
                         ))}
@@ -4268,19 +4360,19 @@ export function CharacterCreatorModal({
                   /* Complete Package & Freeform Night Market Outfitter */
                   <div className="space-y-3">
                     {/* Sticky Outfitter Toolbar (keeps budget, search, sort & filters pinned without jumping) */}
-                    <div className="sticky -top-4 sm:-top-5 z-10 -mx-4 sm:-mx-5 border-b border-slate-800 bg-[#0b101b]/95 px-4 sm:px-5 pt-3 pb-2.5 backdrop-blur space-y-2.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
-                        <div className="text-xs">
+                    <div className="sticky -top-4 sm:-top-5 z-10 -mx-4 sm:-mx-5 space-y-2.5 border-b border-[var(--hud-line)] bg-[var(--hud-bg)]/95 px-4 pt-3 pb-2.5 backdrop-blur sm:px-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-3 py-2">
+                        <div className="font-cyber-ui text-xs">
                           {method === "complete_package" ? (
                             <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                               <span>
-                                Gear: <strong className={`font-mono ${remainingGearEb < 0 ? "text-rose-400" : "text-emerald-300"}`}>{remainingGearEb} / 2,550 eb</strong>
+                                Gear: <strong className={`font-cyber-data ${remainingGearEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-ok)]"}`}>{remainingGearEb} / 2,550 eb</strong>
                               </span>
                               <span>
-                                Fashion: <strong className={`font-mono ${remainingFashionEb < 0 ? "text-rose-400" : "text-cyan-300"}`}>{remainingFashionEb} / 800 eb</strong>
+                                Fashion: <strong className={`font-cyber-data ${remainingFashionEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-accent)]"}`}>{remainingFashionEb} / 800 eb</strong>
                               </span>
                               <span>
-                                HL: <strong className="font-mono text-amber-300">-{gearSummary.totalHl}</strong>
+                                HL: <strong className="font-cyber-data text-[var(--hud-warn)]">-{gearSummary.totalHl}</strong>
                               </span>
                             </span>
                           ) : (
@@ -4291,27 +4383,30 @@ export function CharacterCreatorModal({
                                 min={0}
                                 value={freeformMoney}
                                 onChange={(e) => setFreeformMoney(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                className="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-emerald-300"
+                                className="w-24 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-ok)] focus:border-[var(--hud-accent)] focus:outline-none"
                               />
                             </label>
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
+                          <HudButton
+                            variant="tactical"
+                            size="xs"
+                            active={loadoutOpen}
                             onClick={() => setLoadoutOpen((v) => !v)}
-                            className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-medium ${
+                            className={
                               cyberwarePrereqWarnings.length > 0 || cyberwareSlotWarnings.length > 0
-                                ? "border-amber-500/60 bg-amber-500/15 text-amber-200"
-                                : "border-slate-700 bg-slate-950 text-slate-200 hover:border-cyan-400"
-                            }`}
+                                ? "border-[var(--hud-warn)]/70 text-[var(--hud-warn)]"
+                                : ""
+                            }
                           >
-                            <Backpack className="h-3 w-3 text-cyan-400" />
+                            <Backpack className="h-3 w-3 text-[var(--hud-accent)]" />
                             Bag ({cartItems.reduce((a, b) => a + b.qty, 0) + selectedFashion.length})
                             {loadoutOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                          </button>
-                          <button
-                            type="button"
+                          </HudButton>
+                          <HudButton
+                            variant="tactical"
+                            size="xs"
                             onClick={() => {
                               setCartItems([
                                 { name: "Very Heavy Pistol", category: "weapon", cost_eb: 100, qty: 1 },
@@ -4321,22 +4416,23 @@ export function CharacterCreatorModal({
                               ]);
                               setSelectedFashion([{ name: "Urban Flash Outfit", cost_eb: 320, style: "Urban Flash" }]);
                             }}
-                            className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20"
                           >
-                            <Wand2 className="h-3 w-3" /> Starter Loadout
-                          </button>
+                            <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Starter Loadout
+                          </HudButton>
                         </div>
                       </div>
 
                       {/* Collapsible Loadout Bag & Cyberware Warnings */}
                       {loadoutOpen && (
-                        <div className="max-h-52 overflow-y-auto space-y-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 text-xs">
+                        <div className="max-h-52 space-y-2 overflow-y-auto border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-2.5 text-xs">
                           {cartItems.length === 0 && selectedFashion.length === 0 ? (
-                            <p className="text-[11px] text-slate-400">Your bag is empty. Add weapons, armor, cyberware, or fashion below.</p>
+                            <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                              Your bag is empty. Add weapons, armor, cyberware, or fashion below.
+                            </p>
                           ) : (
                             <div className="space-y-2">
-                              <div className="flex items-center justify-between border-b border-slate-800/80 pb-1.5">
-                                <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                              <div className="flex items-center justify-between border-b border-[var(--hud-line-soft)] pb-1.5">
+                                <span className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
                                   Active Loadout ({cartItems.reduce((a, b) => a + b.qty, 0) + selectedFashion.length} selected)
                                 </span>
                                 <button
@@ -4345,7 +4441,7 @@ export function CharacterCreatorModal({
                                     setCartItems([]);
                                     setSelectedFashion([]);
                                   }}
-                                  className="rounded border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-400 hover:border-rose-500/40 hover:text-rose-300"
+                                  className="border border-[var(--hud-line-soft)] bg-black/55 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-muted)] hover:border-[var(--hud-primary-bright)] hover:text-[var(--hud-primary-bright)]"
                                 >
                                   Clear Loadout
                                 </button>
@@ -4354,17 +4450,17 @@ export function CharacterCreatorModal({
                                 {cartItems.map((it) => (
                                   <span
                                     key={`${it.category}-${it.name}`}
-                                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs ${
+                                    className={`inline-flex items-center gap-1.5 border px-2 py-0.5 text-xs ${
                                       it.category === "cyberware"
-                                        ? "border-violet-500/40 bg-violet-950/25 text-violet-100"
+                                        ? "border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
                                         : it.category === "weapon" || it.category === "armor"
-                                          ? "border-rose-500/35 bg-rose-950/20 text-slate-100"
-                                          : "border-emerald-500/35 bg-emerald-950/20 text-slate-100"
+                                          ? "border-[var(--hud-line)] bg-[var(--hud-row)] text-[var(--hud-text)]"
+                                          : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)]"
                                     }`}
                                   >
-                                    <span className="font-mono text-[9px] uppercase text-slate-400">{it.category}</span>
-                                    <span className="font-medium">{it.name} {it.qty > 1 ? `×${it.qty}` : ""}</span>
-                                    <span className="font-mono text-[10px] text-emerald-300">{it.cost_eb * it.qty}eb</span>
+                                    <span className="font-cyber-ui text-[9px] font-semibold uppercase text-[var(--hud-muted)]">{it.category}</span>
+                                    <span className="font-cyber-ui font-medium">{it.name} {it.qty > 1 ? `×${it.qty}` : ""}</span>
+                                    <span className="font-cyber-data text-[10px] text-[var(--hud-ok)]">{it.cost_eb * it.qty}eb</span>
                                     <button
                                       type="button"
                                       aria-label={`Remove ${it.name}`}
@@ -4379,20 +4475,20 @@ export function CharacterCreatorModal({
                                           ),
                                         )
                                       }
-                                      className="text-slate-400 hover:text-rose-400"
+                                      className="text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                                     >×</button>
                                   </span>
                                 ))}
                                 {selectedFashion.map((f, idx) => (
-                                  <span key={idx} className="inline-flex items-center gap-1.5 rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-0.5 text-xs">
-                                    <span className="font-mono text-[9px] uppercase text-cyan-300/80">fashion</span>
-                                    <span>{f.name}</span>
-                                    <span className="font-mono text-[10px] text-cyan-300">{f.cost_eb}eb</span>
+                                  <span key={idx} className="inline-flex items-center gap-1.5 border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)]/60 px-2 py-0.5 text-xs">
+                                    <span className="font-cyber-ui text-[9px] font-semibold uppercase text-[var(--hud-accent)]">fashion</span>
+                                    <span className="font-cyber-ui">{f.name}</span>
+                                    <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">{f.cost_eb}eb</span>
                                     <button
                                       type="button"
                                       aria-label={`Remove ${f.name}`}
                                       onClick={() => setSelectedFashion((p) => p.filter((_, i) => i !== idx))}
-                                      className="text-slate-400 hover:text-rose-400"
+                                      className="text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                                     >×</button>
                                   </span>
                                 ))}
@@ -4401,10 +4497,10 @@ export function CharacterCreatorModal({
                           )}
 
                           {cyberwarePrereqWarnings.length > 0 && (
-                            <div className="space-y-1 rounded border border-amber-500/40 bg-amber-500/10 p-2">
-                              <div className="font-semibold text-amber-200">Cyberware Foundation Needed (p. 358):</div>
+                            <div className="cyber-hazard-thin space-y-1 border border-[var(--hud-warn)]/60 p-2">
+                              <HazardBadge tone="warn">Cyberware Foundation Needed (p. 358)</HazardBadge>
                               {cyberwarePrereqWarnings.map((w) => (
-                                <div key={w.foundation} className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-100/90">
+                                <div key={w.foundation} className="flex flex-wrap items-center justify-between gap-2 font-cyber-ui text-[11px] text-[var(--hud-text)]">
                                   <span>
                                     <strong>{w.option}</strong> requires <strong>{w.foundation}</strong>.
                                   </span>
@@ -4416,7 +4512,7 @@ export function CharacterCreatorModal({
                                         { name: w.foundation, category: "cyberware", cost_eb: w.cost_eb, hl: w.hl, install: "Clinic", qty: 1 },
                                       ])
                                     }
-                                    className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] text-amber-100 hover:bg-amber-500/30"
+                                    className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]"
                                   >
                                     + Add {w.foundation} ({w.cost_eb}eb)
                                   </button>
@@ -4426,11 +4522,11 @@ export function CharacterCreatorModal({
                           )}
 
                           {cyberwareSlotWarnings.length > 0 && (
-                            <div className="space-y-1 rounded border border-amber-500/40 bg-amber-500/10 p-2">
-                              <div className="font-semibold text-amber-200">Cyberware Slot Cap Exceeded:</div>
+                            <div className="cyber-hazard-thin space-y-1 border border-[var(--hud-warn)]/60 p-2">
+                              <HazardBadge tone="warn">Cyberware Slot Cap Exceeded</HazardBadge>
                               {cyberwareSlotWarnings.map((w) => (
-                                <div key={w.foundation} className="text-[11px] text-amber-100/90">
-                                  <strong>{w.foundation}</strong>: {w.usedSlots}/{w.maxSlots} slots ({w.options.join(", ")}).
+                                <div key={w.foundation} className="font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                                  <strong>{w.foundation}</strong>: <span className="font-cyber-data">{w.usedSlots}/{w.maxSlots}</span> slots ({w.options.join(", ")}).
                                 </div>
                               ))}
                             </div>
@@ -4438,14 +4534,14 @@ export function CharacterCreatorModal({
 
                           {cyberdeckSlotSummary.hasDeck && (
                             <div
-                              className={`flex items-center justify-between rounded border px-2 py-1.5 text-[11px] ${
+                              className={`flex items-center justify-between border px-2 py-1.5 font-cyber-ui text-[11px] ${
                                 cyberdeckSlotSummary.overCapacity
-                                  ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
-                                  : "border-cyan-500/30 bg-cyan-950/20 text-cyan-200"
+                                  ? "cyber-hazard-thin border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
+                                  : "border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/50 text-[var(--hud-accent)]"
                               }`}
                             >
                               <span>Cyberdeck Program &amp; Hardware Slots:</span>
-                              <span className="font-mono font-bold">
+                              <span className="font-cyber-data font-bold">
                                 Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
                               </span>
                             </div>
@@ -4461,10 +4557,10 @@ export function CharacterCreatorModal({
                             type="button"
                             aria-label={cat}
                             onClick={() => setShopCategory(cat)}
-                            className={`rounded px-2.5 py-1 text-xs capitalize transition ${
+                            className={`border px-2.5 py-1 font-cyber-ui text-xs capitalize transition ${
                               shopCategory === cat
-                                ? "border border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200"
-                                : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
                             }`}
                           >
                             {cat === "vehicle" ? "Vehicles" : cat === "drug" ? "Drugs & Pharma" : cat}
@@ -4474,52 +4570,50 @@ export function CharacterCreatorModal({
 
                       {/* Search, Sort & Affordable Controls */}
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative flex-1 min-w-[160px]">
-                          <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-500" />
+                        <div className="relative min-w-[160px] flex-1">
+                          <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--hud-muted)]" />
                           <input
                             type="text"
                             value={shopSearch}
                             onChange={(e) => setShopSearch(e.target.value)}
                             placeholder={`Search ${shopCategory === "fashion" ? "fashion" : shopCategory}…`}
-                            className="w-full rounded border border-slate-700 bg-slate-950 py-1 pl-8 pr-7 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                            className="w-full border border-[var(--hud-line-soft)] bg-black/60 py-1 pl-8 pr-7 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                           />
                           {shopSearch && (
                             <button
                               type="button"
                               aria-label="Clear catalog search"
                               onClick={() => setShopSearch("")}
-                              className="absolute right-2 top-1.5 text-slate-500 hover:text-slate-200"
+                              className="absolute right-2 top-1.5 text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
                           )}
                         </div>
 
-                        <div className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">
-                          <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                        <div className="inline-flex items-center gap-1 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 text-xs">
+                          <ArrowUpDown className="h-3 w-3 text-[var(--hud-muted)]" />
                           <select
                             aria-label="Sort catalog"
                             value={shopSort}
                             onChange={(e) => setShopSort(e.target.value as typeof shopSort)}
-                            className="bg-transparent text-xs text-slate-200 focus:outline-none"
+                            className="bg-transparent font-cyber-ui text-xs text-[var(--hud-text)] focus:outline-none"
                           >
-                            <option value="cost_asc" className="bg-slate-950">Price: Low → High</option>
-                            <option value="cost_desc" className="bg-slate-950">Price: High → Low</option>
-                            <option value="name_asc" className="bg-slate-950">Name: A → Z</option>
-                            {shopCategory === "weapon" && <option value="tier_asc" className="bg-slate-950">Tier: Poor → Exotic</option>}
-                            {shopCategory === "weapon" && <option value="tier_desc" className="bg-slate-950">Tier: Exotic → Poor</option>}
-                            {shopCategory === "armor" && <option value="sp_desc" className="bg-slate-950">Armor SP: High → Low</option>}
-                            {shopCategory === "cyberware" && <option value="hl_asc" className="bg-slate-950">Humanity Loss: Low → High</option>}
+                            <option value="cost_asc" className="bg-[#090d16]">Price: Low → High</option>
+                            <option value="cost_desc" className="bg-[#090d16]">Price: High → Low</option>
+                            <option value="name_asc" className="bg-[#090d16]">Name: A → Z</option>
+                            {shopCategory === "weapon" && <option value="tier_asc" className="bg-[#090d16]">Tier: Poor → Exotic</option>}
+                            {shopCategory === "weapon" && <option value="tier_desc" className="bg-[#090d16]">Tier: Exotic → Poor</option>}
+                            {shopCategory === "armor" && <option value="sp_desc" className="bg-[#090d16]">Armor SP: High → Low</option>}
+                            {shopCategory === "cyberware" && <option value="hl_asc" className="bg-[#090d16]">Humanity Loss: Low → High</option>}
                           </select>
                         </div>
 
                         <button
                           type="button"
                           onClick={() => setSelectedOnly((v) => !v)}
-                          className={`rounded border px-2 py-1 text-[11px] font-medium transition ${
-                            selectedOnly
-                              ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
-                              : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                          className={`cyber-btn-tac cp-fx-hover px-2 py-1 font-cyber-ui text-[11px] font-medium ${
+                            selectedOnly ? "is-active" : ""
                           }`}
                         >
                           Selected Only
@@ -4529,10 +4623,8 @@ export function CharacterCreatorModal({
                           <button
                             type="button"
                             onClick={() => setAffordableOnly((v) => !v)}
-                            className={`rounded border px-2 py-1 text-[11px] font-medium transition ${
-                              affordableOnly
-                                ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200"
-                                : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                            className={`cyber-btn-tac cp-fx-hover px-2 py-1 font-cyber-ui text-[11px] font-medium ${
+                              affordableOnly ? "is-active" : ""
                             }`}
                           >
                             Affordable Only
@@ -4544,16 +4636,16 @@ export function CharacterCreatorModal({
                       {shopCategory === "weapon" && (
                         <div className="space-y-1.5">
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                            <span className="mr-1 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
                               Genre:
                             </span>
                             <button
                               type="button"
                               onClick={() => setWeaponGenres([])}
-                              className={`rounded px-2 py-0.5 text-[11px] ${
+                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                 weaponGenres.length === 0
-                                  ? "border border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200"
-                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               }`}
                             >
                               All Weapons
@@ -4579,10 +4671,10 @@ export function CharacterCreatorModal({
                                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
                                     )
                                   }
-                                  className={`rounded px-2 py-0.5 text-[11px] transition ${
+                                  className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                     active
-                                      ? "border border-rose-500/60 bg-rose-500/20 font-semibold text-rose-100"
-                                      : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                      ? "border-[var(--hud-primary-bright)] bg-[var(--hud-row)] font-semibold text-[var(--hud-text)]"
+                                      : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                                   }`}
                                 >
                                   {label}
@@ -4592,16 +4684,16 @@ export function CharacterCreatorModal({
                           </div>
 
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                            <span className="mr-1 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
                               Tier:
                             </span>
                             <button
                               type="button"
                               onClick={() => setWeaponTiers([])}
-                              className={`rounded px-2 py-0.5 text-[11px] ${
+                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                 weaponTiers.length === 0
-                                  ? "border border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200"
-                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               }`}
                             >
                               All Tiers
@@ -4626,10 +4718,10 @@ export function CharacterCreatorModal({
                                       prev.includes(tid) ? prev.filter((x) => x !== tid) : [...prev, tid],
                                     )
                                   }
-                                  className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                                  className={`inline-flex items-center gap-1 border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                     active
                                       ? `${tierTheme.pillActiveClass} font-semibold`
-                                      : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                      : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                                   }`}
                                 >
                                   <span className={`h-1.5 w-1.5 rounded-full ${tierTheme.dotClass}`} />
@@ -4639,13 +4731,13 @@ export function CharacterCreatorModal({
                             })}
                           </div>
                           {weaponGenres.includes("ammo") && (
-                            <div className="flex flex-wrap items-center gap-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px]">
-                              <span className="font-semibold text-slate-300">Ammo Caliber Tag:</span>
+                            <div className="flex flex-wrap items-center gap-2 border border-[var(--hud-line-soft)] bg-black/55 px-2.5 py-1.5 text-[11px]">
+                              <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">Ammo Caliber Tag:</span>
                               <select
                                 aria-label="Ammo Caliber"
                                 value={ammoCaliber}
                                 onChange={(e) => setAmmoCaliber(e.target.value)}
-                                className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100"
+                                className="border border-[var(--hud-line-soft)] bg-black/70 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               >
                                 <option value="">Standard / As Listed</option>
                                 {[
@@ -4680,10 +4772,10 @@ export function CharacterCreatorModal({
                               key={id}
                               type="button"
                               onClick={() => setArmorSubFilter(id)}
-                              className={`rounded px-2 py-0.5 text-[11px] ${
+                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                 armorSubFilter === id
-                                  ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
-                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               }`}
                             >
                               {label}
@@ -4710,10 +4802,10 @@ export function CharacterCreatorModal({
                               key={id}
                               type="button"
                               onClick={() => setCyberwareSubFilter(id)}
-                              className={`rounded px-2 py-0.5 text-[11px] ${
+                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                 cyberwareSubFilter === id
-                                  ? "border border-violet-500/50 bg-violet-500/15 text-violet-200"
-                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               }`}
                             >
                               {label}
@@ -4739,10 +4831,10 @@ export function CharacterCreatorModal({
                                   key={id}
                                   type="button"
                                   onClick={() => setProgramSubFilter(id)}
-                                  className={`rounded px-2 py-0.5 text-[11px] ${
+                                  className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                     programSubFilter === id
-                                      ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
-                                      : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                      ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                      : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                                   }`}
                                 >
                                   {label}
@@ -4752,10 +4844,10 @@ export function CharacterCreatorModal({
                           )}
                           {cyberdeckSlotSummary.hasDeck && (
                             <span
-                              className={`rounded border px-2 py-0.5 font-mono text-[10px] ${
+                              className={`border px-2 py-0.5 font-cyber-data text-[10px] ${
                                 cyberdeckSlotSummary.overCapacity
-                                  ? "border-amber-500/50 bg-amber-500/15 text-amber-200"
-                                  : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
+                                  ? "border-[var(--hud-warn)]/60 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                                  : "border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
                               }`}
                             >
                               Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
@@ -4771,10 +4863,10 @@ export function CharacterCreatorModal({
                               key={styleOpt}
                               type="button"
                               onClick={() => setFashionStyleFilter(styleOpt)}
-                              className={`rounded px-2 py-0.5 text-[11px] ${
+                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
                                 fashionStyleFilter === styleOpt
-                                  ? "border border-cyan-500/50 bg-cyan-500/15 font-semibold text-cyan-200"
-                                  : "border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                               }`}
                             >
                               {styleOpt}
@@ -4788,7 +4880,9 @@ export function CharacterCreatorModal({
                     <div className="space-y-1.5 pt-1">
                       {shopCategory === "fashion" ? (
                         fashionItemsForDisplay.length === 0 ? (
-                          <p className="py-6 text-center text-xs text-slate-500">No fashion items match your filter.</p>
+                          <p className="py-6 text-center font-cyber-ui text-xs text-[var(--hud-muted)]">
+                            No fashion items match your filter.
+                          </p>
                         ) : (
                           fashionItemsForDisplay.map((f) => {
                             const qty = selectedFashion.filter((x) => x.name === f.name).length;
@@ -4796,16 +4890,20 @@ export function CharacterCreatorModal({
                             return (
                               <div
                                 key={f.name}
-                                className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs hover:border-slate-700"
+                                className={`flex items-center justify-between gap-3 border px-3 py-2 text-xs transition ${
+                                  qty > 0
+                                    ? "border-l-4 border-l-[var(--hud-ok)] border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)]"
+                                    : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] hover:border-[var(--hud-line)]"
+                                }`}
                               >
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="font-semibold text-slate-100">{f.name}</span>
-                                    <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                                    <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{f.name}</span>
+                                    <span className="border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]">
                                       {f.style}
                                     </span>
                                   </div>
-                                  <p className="mt-0.5 text-[11px] text-slate-400">{f.summary}</p>
+                                  <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{f.summary}</p>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1.5">
                                   {qty > 0 && (
@@ -4816,7 +4914,7 @@ export function CharacterCreatorModal({
                                         if (idx >= 0) setSelectedFashion((p) => p.filter((_, i) => i !== idx));
                                       }}
                                       aria-label={`Remove ${f.name}`}
-                                      className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-300 hover:border-rose-400"
+                                      className="cyber-btn-tac cp-fx-hover px-1.5 py-1"
                                     >
                                       <Minus className="h-3 w-3" />
                                     </button>
@@ -4824,10 +4922,10 @@ export function CharacterCreatorModal({
                                   <button
                                     type="button"
                                     onClick={() => setSelectedFashion((p) => [...p, { name: f.name, cost_eb: f.cost_eb, style: f.style }])}
-                                    className={`rounded border px-2.5 py-1 font-mono text-[11px] ${
+                                    className={`cyber-btn-tac cp-fx-hover px-2.5 py-1 font-cyber-data text-[11px] ${
                                       overBudget
-                                        ? "border-slate-700 bg-slate-950 text-slate-400 hover:border-amber-500/50"
-                                        : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                                        ? "text-[var(--hud-muted)]"
+                                        : "text-[var(--hud-accent)]"
                                     }`}
                                   >
                                     +{f.cost_eb}eb{qty > 0 ? ` (${qty})` : ""}
@@ -4838,7 +4936,7 @@ export function CharacterCreatorModal({
                           })
                         )
                       ) : shopItemsForCategory.length === 0 ? (
-                        <p className="py-6 text-center text-xs text-slate-500">
+                        <p className="py-6 text-center font-cyber-ui text-xs text-[var(--hud-muted)]">
                           No {shopCategory} items match your current filter or search.
                         </p>
                       ) : (
@@ -4874,78 +4972,78 @@ export function CharacterCreatorModal({
                                 setInspectedItemId(item.id);
                                 setInspector(inspectPayload);
                               }}
-                              className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs transition ${
+                              className={`flex items-center justify-between gap-3 border px-3 py-2 text-xs transition ${
                                 inCart
-                                  ? "border-l-4 border-l-emerald-400 border-emerald-500/50 bg-emerald-950/20 shadow-sm"
+                                  ? "border-l-4 border-l-[var(--hud-ok)] border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
                                   : inspectedItemId === item.id
-                                    ? "border-cyan-500/60 bg-cyan-950/20"
+                                    ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)]/60"
                                     : weaponTierTheme
                                       ? weaponTierTheme.cardClass
-                                      : "border-slate-800 bg-slate-900/50 hover:border-slate-600"
+                                      : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] hover:border-[var(--hud-line)]"
                               }`}
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-semibold text-slate-100">{item.name}</span>
+                                  <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{item.name}</span>
                                   {inCart && (
-                                    <span className="rounded border border-emerald-400/60 bg-emerald-500/25 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-200">
-                                      SELECTED ×{inCart.qty}
+                                    <span className="border border-[var(--hud-ok)]/70 bg-black/55 px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold uppercase tracking-wider text-[var(--hud-ok)]">
+                                      SELECTED <span className="font-cyber-data">×{inCart.qty}</span>
                                     </span>
                                   )}
                                   {dmgVal && (
-                                    <span className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
+                                    <span className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-label)]">
                                       {dmgVal}
                                     </span>
                                   )}
                                   {isPrimaryWeapon && (
-                                    <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                                    <span className="border border-[var(--hud-line-soft)] bg-black/55 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-muted)]">
                                       {qualityVal === "Poor" ? "2 Att. Slots" : "3 Att. Slots"}
                                     </span>
                                   )}
                                   {weaponTierInfo && weaponTierInfo.primaryTier !== "other" && (
                                     <>
                                       {weaponTierInfo.tiers.includes("exotic") && (
-                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("exotic").badgeClass}`}>
+                                        <span className={`px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold ${getWeaponTierTheme("exotic").badgeClass}`}>
                                           EXOTIC
                                         </span>
                                       )}
                                       {weaponTierInfo.tiers.includes("excellent") && (
-                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("excellent").badgeClass}`}>
+                                        <span className={`px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold ${getWeaponTierTheme("excellent").badgeClass}`}>
                                           EXCELLENT (+1 HIT)
                                         </span>
                                       )}
                                       {weaponTierInfo.primaryTier === "standard" && (
-                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("standard").badgeClass}`}>
+                                        <span className={`px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold ${getWeaponTierTheme("standard").badgeClass}`}>
                                           STANDARD
                                         </span>
                                       )}
                                       {weaponTierInfo.primaryTier === "poor" && (
-                                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${getWeaponTierTheme("poor").badgeClass}`}>
+                                        <span className={`px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold ${getWeaponTierTheme("poor").badgeClass}`}>
                                           POOR
                                         </span>
                                       )}
                                     </>
                                   )}
                                   {spVal > 0 && (
-                                    <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                                    <span className="border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
                                       SP {spVal}{locVal ? ` · ${locVal}` : ""}
                                     </span>
                                   )}
                                   {hlVal > 0 && (
-                                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] text-violet-200">
+                                    <span className="border border-[var(--hud-warn)]/45 bg-[var(--hud-warn)]/10 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]">
                                       HL {hlVal}{installVal ? ` · ${installVal}` : ""}
                                     </span>
                                   )}
                                   {item.printed_page && (
-                                    <span className="font-mono text-[10px] text-slate-500">p.{item.printed_page}</span>
+                                    <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">p.{item.printed_page}</span>
                                   )}
                                 </div>
-                                <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{item.summary}</p>
+                                <p className="mt-0.5 font-cyber-ui text-[11px] leading-snug text-[var(--hud-muted)]">{item.summary}</p>
                               </div>
 
                               <div className="flex shrink-0 items-center gap-1.5">
                                 {inCart ? (
-                                  <div className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-950/30 px-1.5 py-0.5 font-mono text-[11px]">
+                                  <div className="inline-flex items-center gap-1 border border-[var(--hud-ok)]/60 bg-black/60 px-1.5 py-0.5 font-cyber-data text-[11px]">
                                     <button
                                       type="button"
                                       aria-label={`Decrease ${item.name}`}
@@ -4961,11 +5059,11 @@ export function CharacterCreatorModal({
                                           ),
                                         );
                                       }}
-                                      className="rounded p-0.5 text-slate-300 hover:text-rose-300"
+                                      className="p-0.5 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                                     >
                                       <Minus className="h-3 w-3" />
                                     </button>
-                                    <span className="min-w-[1.2rem] text-center font-bold text-emerald-200">{inCart.qty}</span>
+                                    <span className="min-w-[1.2rem] text-center font-bold text-[var(--hud-ok)]">{inCart.qty}</span>
                                     <button
                                       type="button"
                                       aria-label={`Increase ${item.name}`}
@@ -4977,7 +5075,7 @@ export function CharacterCreatorModal({
                                           ),
                                         );
                                       }}
-                                      className="rounded p-0.5 text-emerald-200 hover:text-white"
+                                      className="p-0.5 text-[var(--hud-ok)] hover:text-white"
                                     >
                                       <Plus className="h-3 w-3" />
                                     </button>
@@ -5002,10 +5100,10 @@ export function CharacterCreatorModal({
                                         },
                                       ]);
                                     }}
-                                    className={`rounded border px-2.5 py-1 font-mono text-[11px] ${
+                                    className={`cyber-btn-tac cp-fx-hover px-2.5 py-1 font-cyber-data text-[11px] ${
                                       overBudget
-                                        ? "border-slate-700 bg-slate-950 text-slate-400 hover:border-amber-500/50"
-                                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                                        ? "text-[var(--hud-muted)]"
+                                        : "text-[var(--hud-ok)]"
                                     }`}
                                   >
                                     +{item.cost_eb}eb
@@ -5026,22 +5124,22 @@ export function CharacterCreatorModal({
             {step === "review" && (
               <div className="space-y-4">
                 {validationIssues.length > 0 && (
-                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-200">
-                        <AlertTriangle className="h-4 w-4" /> Check Before Launching
-                      </span>
+                  <div className="cyber-hazard-thin space-y-2 border border-[var(--hud-warn)]/60 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <HazardBadge tone="warn">
+                        <AlertTriangle className="h-3.5 w-3.5" /> Check Before Launching
+                      </HazardBadge>
                       {method !== "freeform" && (
-                        <button
-                          type="button"
+                        <HudButton
+                          variant="tactical"
+                          size="xs"
                           onClick={() => setMethod("freeform")}
-                          className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 text-[11px] text-amber-100 hover:bg-amber-500/30"
                         >
                           Switch to Freeform Instead
-                        </button>
+                        </HudButton>
                       )}
                     </div>
-                    <ul className="list-disc pl-5 text-xs text-amber-100/90 space-y-0.5">
+                    <ul className="list-disc space-y-0.5 pl-5 font-cyber-ui text-xs text-[var(--hud-text)]">
                       {validationIssues.map((msg) => (
                         <li key={msg}>{msg}</li>
                       ))}
@@ -5049,68 +5147,102 @@ export function CharacterCreatorModal({
                   </div>
                 )}
 
-                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <CyberFrame variant="default" className="space-y-4 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hud-line-soft)] pb-3">
                     <div className="flex items-center gap-3">
                       {portraitUrl.trim() && (
                         <img
                           src={portraitUrl}
                           alt={name.trim() || realName.trim() || "Portrait"}
-                          className="h-12 w-12 rounded-lg border border-cyan-500/50 object-cover"
+                          className="h-12 w-12 border border-[var(--hud-accent-line)] object-cover"
                         />
                       )}
                       <div>
-                        <h3 className="text-base font-bold text-slate-100">
+                        <h3 className="font-cyber-display text-base font-bold uppercase tracking-wider text-[var(--hud-text)]">
                           {name.trim() || realName.trim() || "Unnamed Edgerunner"}
                         </h3>
                         {realName.trim() && (
-                          <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                            <span>Real Name: <strong className="text-slate-200">{realName.trim()}</strong></span>
-                            <span className="font-mono text-[10px] text-amber-300">
+                          <div className="flex items-center gap-1 font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                            <span>Real Name: <strong className="text-[var(--hud-text)]">{realName.trim()}</strong></span>
+                            <span className="font-cyber-ui text-[10px] text-[var(--hud-warn)]">
                               ({realNameHidden ? "Hidden / Known by Handle" : "Publicly Known"})
                             </span>
                           </div>
                         )}
-                        <p className="text-xs text-cyan-300">
-                          {selectedRole} (Rank 4 · {roleInfo?.ability}) · {culturalRegion} ({culturalLanguage})
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5 font-cyber-ui text-xs text-[var(--hud-accent)]">
+                          <RoleTag role={selectedRole} rank={4} />
+                          <span>({roleInfo?.ability}) · {culturalRegion} ({culturalLanguage})</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-3 font-mono text-xs">
-                      <span className="text-rose-300">HP {maxHp}</span>
+                    <div className="flex flex-wrap gap-3 font-cyber-data text-xs">
+                      <span className="text-[var(--hud-primary-bright)]">HP {maxHp}</span>
                       {effectiveBody !== activeStats.BODY && (
-                        <span className="text-amber-300">BODY {activeStats.BODY} → {effectiveBody}</span>
+                        <span className="text-[var(--hud-warn)]">BODY {activeStats.BODY} → {effectiveBody}</span>
                       )}
                       {subdermalSp > 0 && (
-                        <span className="text-cyan-300">{subdermalName} SP {subdermalSp}</span>
+                        <span className="text-[var(--hud-accent)]">{subdermalName} SP {subdermalSp}</span>
                       )}
-                      <span className="text-cyan-300">HUM {startingHumanity}/{maxHumanity}</span>
-                      {reputation > 0 && <span className="text-violet-300">REP {reputation}</span>}
-                      <span className="text-emerald-300">{gearSummary.money} eb</span>
+                      <span className="text-[var(--hud-accent)]">HUM {startingHumanity}/{maxHumanity}</span>
+                      {reputation > 0 && <span className="text-[var(--hud-warn)]">REP {reputation}</span>}
+                      <span className="text-[var(--hud-ok)]">{gearSummary.money} eb</span>
+                    </div>
+                  </div>
+
+                  {/* HP & Humanity Telemetry Bars */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1 border border-[var(--hud-line-soft)] bg-black/45 p-2.5">
+                      <div className="flex items-center justify-between font-cyber-ui text-[11px]">
+                        <span className="text-[var(--hud-muted)]">Starting Hit Points</span>
+                        <span className="font-cyber-data font-semibold text-[var(--hud-text)]">{maxHp} / {maxHp} HP</span>
+                      </div>
+                      <SegmentedBar
+                        value={maxHp}
+                        max={maxHp}
+                        segments={20}
+                        thresholdRatio={0.5}
+                        tone="primary"
+                        aria-label={`Starting HP ${maxHp} of ${maxHp}`}
+                      />
+                    </div>
+                    <div className="space-y-1 border border-[var(--hud-line-soft)] bg-black/45 p-2.5">
+                      <div className="flex items-center justify-between font-cyber-ui text-[11px]">
+                        <span className="text-[var(--hud-muted)]">Starting Humanity</span>
+                        <span className="font-cyber-data font-semibold text-[var(--hud-accent)]">{startingHumanity} / {maxHumanity}</span>
+                      </div>
+                      <SegmentedBar
+                        value={startingHumanity}
+                        max={maxHumanity}
+                        segments={10}
+                        tone={startingHumanity < maxHumanity * 0.4 ? "warn" : "accent"}
+                        aria-label={`Starting Humanity ${startingHumanity} of ${maxHumanity}`}
+                      />
                     </div>
                   </div>
 
                   {/* STAT Grid */}
-                  <div className="grid grid-cols-5 gap-1.5 font-mono text-center text-xs sm:grid-cols-10">
+                  <div className="grid grid-cols-5 gap-1.5 text-center text-xs sm:grid-cols-10">
                     {STAT_NAMES.map((s) => (
-                      <div key={s} className="rounded border border-slate-800 bg-slate-950 p-1.5">
-                        <div className="text-[10px] text-slate-400">{s}</div>
-                        <div className="font-bold text-slate-100">{activeStats[s]}</div>
+                      <div key={s} className="border border-[var(--hud-line-soft)] bg-black/50 p-1.5">
+                        <div className="font-cyber-ui text-[10px] text-[var(--hud-muted)]">{s}</div>
+                        <div className="font-cyber-data font-bold text-[var(--hud-text)]">{activeStats[s]}</div>
                       </div>
                     ))}
                   </div>
 
                   {/* Backstory & Established Ties */}
-                  <div className="space-y-1.5 text-xs">
-                    <div className="font-bold uppercase tracking-wider text-slate-400">Backstory &amp; History</div>
-                    <p className="text-slate-200">
+                  <div className="space-y-1.5 font-cyber-ui text-xs">
+                    <div className="font-cyber-display font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                      Backstory &amp; History
+                    </div>
+                    <p className="text-[var(--hud-text)]">
                       {backstorySummary.trim() || `${personality}; ${familyBackground.split("(", 1)[0].trim()} upbringing. Goal: ${lifeGoal}`}
                     </p>
                     {establishedHistory.trim() && (
-                      <p className="text-slate-300"><strong>Established Ties:</strong> {establishedHistory}</p>
+                      <p className="text-[var(--hud-text)]/85"><strong>Established Ties:</strong> {establishedHistory}</p>
                     )}
                     {(friends.length > 0 || enemies.length > 0) && (
-                      <p className="text-slate-400">
+                      <p className="text-[var(--hud-muted)]">
                         Connections: {friends.length} friend{friends.length === 1 ? "" : "s"}, {enemies.length} enem{enemies.length === 1 ? "y" : "ies"}, {loveAffairs.length} past romance{loveAffairs.length === 1 ? "" : "s"}.
                       </p>
                     )}
@@ -5118,15 +5250,15 @@ export function CharacterCreatorModal({
 
                   {/* Trained Skills Summary */}
                   <div className="space-y-1.5">
-                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Skills ({Object.keys(effectiveSkills).length})
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                      Skills (<span className="font-cyber-data">{Object.keys(effectiveSkills).length}</span>)
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {Object.entries(effectiveSkills)
                         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
                         .map(([skName, lvl]) => (
-                          <span key={skName} className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200">
-                            {skName} <strong className="font-mono text-cyan-300">+{lvl}</strong>
+                          <span key={skName} className="border border-[var(--hud-line-soft)] bg-black/55 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                            {skName} <strong className="font-cyber-data text-[var(--hud-accent)]">+{lvl}</strong>
                           </span>
                         ))}
                     </div>
@@ -5134,105 +5266,113 @@ export function CharacterCreatorModal({
 
                   {/* Gear & Cyberware Summary */}
                   <div className="space-y-1.5">
-                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Starting Loadout &amp; Cyberware ({Object.keys(gearSummary.inventory).length} items, {gearSummary.cyberware.length} cyberware)
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                      Starting Loadout &amp; Cyberware (<span className="font-cyber-data">{Object.keys(gearSummary.inventory).length}</span> items, <span className="font-cyber-data">{gearSummary.cyberware.length}</span> cyberware)
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {gearSummary.cyberware.map((cw, i) => (
-                        <span key={i} className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-200">
-                          {cw.name} {cw.hl ? `(-${cw.hl} HL)` : ""}
+                        <span key={i} className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]">
+                          {cw.name} {cw.hl ? <span className="font-cyber-data">(-{cw.hl} HL)</span> : ""}
                         </span>
                       ))}
                       {Object.entries(gearSummary.inventory).map(([itemName, qty]) => (
-                        <span key={itemName} className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-300">
-                          {itemName}{qty > 1 ? ` ×${qty}` : ""}
+                        <span key={itemName} className="border border-[var(--hud-line-soft)] bg-black/55 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                          {itemName}{qty > 1 ? <span className="font-cyber-data"> ×{qty}</span> : ""}
                         </span>
                       ))}
                     </div>
                     {cyberwarePrereqWarnings.length > 0 && (
-                      <p className="text-[11px] text-amber-300">
+                      <p className="font-cyber-ui text-[11px] text-[var(--hud-warn)]">
                         Cyberware Note: {cyberwarePrereqWarnings.map((w) => `${w.option} needs ${w.foundation}`).join("; ")}.
                       </p>
                     )}
                     {cyberwareSlotWarnings.length > 0 && (
-                      <p className="text-[11px] text-amber-300">
+                      <p className="font-cyber-ui text-[11px] text-[var(--hud-warn)]">
                         Cyberware Slot Cap Warning: {cyberwareSlotWarnings.map((w) => `${w.foundation} exceeds slot cap (${w.usedSlots}/${w.maxSlots} slots)`).join("; ")}.
                       </p>
                     )}
-                    <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5 text-[11px] text-slate-400">
-                      <strong className="text-slate-300">Starting Housing &amp; Lifestyle (pp. 377–378):</strong>{" "}
+                    <div className="border border-[var(--hud-line-soft)] bg-black/45 px-2.5 py-1.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                      <strong className="text-[var(--hud-text)]">Starting Housing &amp; Lifestyle (pp. 377–378):</strong>{" "}
                       {(refData?.housing_tiers ?? []).find((h) => h.id === housing)?.name ?? housing} + {lifestyle} Lifestyle
                       {traumaTeam !== "None" ? ` · Trauma Team ${traumaTeam}` : ""} (Month 1 covered).
                     </div>
                   </div>
-                </div>
+                </CyberFrame>
               </div>
             )}
           </div>
 
           {/* Right 4 cols: Sticky Live Sheet Preview + Hover Rulebook Inspector */}
-          <aside className="hidden min-h-0 lg:flex lg:col-span-4 flex-col overflow-hidden border-l border-slate-800 bg-[#0d1322] p-4 space-y-4">
+          <aside className="hidden min-h-0 flex-col space-y-4 overflow-hidden border-l border-[var(--hud-line)] bg-black/35 p-4 lg:col-span-4 lg:flex">
             {/* Live Vitals Card */}
-            <div className="shrink-0 space-y-3 rounded-lg border border-slate-800 bg-[#11192c] p-3.5">
+            <CyberFrame variant="hex" className="shrink-0 space-y-3 p-3.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   {portraitUrl.trim() && (
                     <img
                       src={portraitUrl}
                       alt={name.trim() || "Portrait"}
-                      className="h-8 w-8 shrink-0 rounded-md border border-cyan-500/40 object-cover"
+                      className="h-8 w-8 shrink-0 border border-[var(--hud-accent-line)] object-cover"
                     />
                   )}
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-100">
+                    <div className="truncate font-cyber-display text-sm font-bold text-[var(--hud-text)]">
                       {name.trim() || realName.trim() || "New Edgerunner"}
                     </div>
                     {realName.trim() && (
-                      <div className="truncate font-mono text-[10px] text-slate-400">
+                      <div className="truncate font-cyber-ui text-[10px] text-[var(--hud-muted)]">
                         {realName.trim()} {realNameHidden ? "(Hidden)" : "(Public)"}
                       </div>
                     )}
                   </div>
                 </div>
-                <span className="shrink-0 rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                  {selectedRole} R4
-                </span>
+                <RoleTag role={selectedRole} rank={4} className="shrink-0 border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 text-[var(--hud-accent)]" />
               </div>
 
-              <div className="grid grid-cols-2 gap-2 font-mono text-xs">
-                <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <Heart className="h-3 w-3 text-rose-400" /> HP / Wound
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="border border-[var(--hud-line-soft)] bg-black/55 p-2">
+                  <div className="flex items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-muted)]">
+                    <Heart className="h-3 w-3 text-[var(--hud-primary-bright)]" /> HP / Wound
                   </div>
-                  <div className="mt-0.5 font-bold text-slate-100">{maxHp} HP <span className="text-[10px] text-slate-400" title={`Seriously Wounded: < ${woundThreshold} HP`}>(SW &lt;{woundThreshold})</span></div>
+                  <div className="mt-0.5 font-cyber-data font-bold text-[var(--hud-text)]">
+                    {maxHp} HP <span className="text-[10px] text-[var(--hud-muted)]" title={`Seriously Wounded: < ${woundThreshold} HP`}>(SW &lt;{woundThreshold})</span>
+                  </div>
+                  <SegmentedBar value={maxHp} max={maxHp} segments={10} thresholdRatio={0.5} tone="primary" className="mt-1" />
                 </div>
-                <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <Cpu className="h-3 w-3 text-cyan-400" /> Humanity
+                <div className="border border-[var(--hud-line-soft)] bg-black/55 p-2">
+                  <div className="flex items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-muted)]">
+                    <Cpu className="h-3 w-3 text-[var(--hud-accent)]" /> Humanity
                   </div>
-                  <div className="mt-0.5 font-bold text-cyan-300">
-                    {startingHumanity}/{maxHumanity} <span className="text-[10px] text-slate-400">(EMP {effectiveEmp})</span>
+                  <div className="mt-0.5 font-cyber-data font-bold text-[var(--hud-accent)]">
+                    {startingHumanity}/{maxHumanity} <span className="text-[10px] text-[var(--hud-muted)]">(EMP {effectiveEmp})</span>
+                  </div>
+                  <SegmentedBar
+                    value={startingHumanity}
+                    max={maxHumanity}
+                    segments={10}
+                    tone={startingHumanity < maxHumanity * 0.4 ? "warn" : "accent"}
+                    className="mt-1"
+                  />
+                </div>
+                <div className="border border-[var(--hud-line-soft)] bg-black/55 p-2">
+                  <div className="flex items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-muted)]">
+                    <Shield className="h-3 w-3 text-[var(--hud-warn)]" /> Death / Dodge
+                  </div>
+                  <div className="mt-0.5 font-cyber-data text-[11px] font-bold text-[var(--hud-text)]">
+                    Death Save: {deathSave} · <span className="font-cyber-ui">{activeStats.REF >= 8 ? "Bullet Dodge" : "Melee Dodge"}</span>
                   </div>
                 </div>
-                <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <Shield className="h-3 w-3 text-amber-400" /> Death / Dodge
+                <div className="border border-[var(--hud-line-soft)] bg-black/55 p-2">
+                  <div className="flex items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-muted)]">
+                    <Backpack className="h-3 w-3 text-[var(--hud-ok)]" /> Eddies / Gear
                   </div>
-                  <div className="mt-0.5 font-bold text-slate-100">
-                    Death Save: {deathSave} · {activeStats.REF >= 8 ? "Bullet Dodge" : "Melee Dodge"}
-                  </div>
-                </div>
-                <div className="rounded border border-slate-800 bg-slate-950/70 p-2">
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <Backpack className="h-3 w-3 text-emerald-400" /> Eddies / Gear
-                  </div>
-                  <div className="mt-0.5 font-bold text-emerald-300">
+                  <div className="mt-0.5 font-cyber-data font-bold text-[var(--hud-ok)]">
                     {gearSummary.money} eb · {Object.keys(gearSummary.inventory).length} items
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-1 border-t border-slate-800/80 pt-2 font-mono text-[10px] text-slate-400">
+              <div className="flex flex-wrap items-center justify-between gap-1 border-t border-[var(--hud-line-soft)] pt-2 font-cyber-data text-[10px] text-[var(--hud-muted)]">
                 <span>Seriously Wounded: &lt; {woundThreshold} HP</span>
                 <span>
                   Death Save: {deathSave}
@@ -5240,86 +5380,86 @@ export function CharacterCreatorModal({
                 </span>
               </div>
               {subdermalSp > 0 && (
-                <div className="rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-1 font-mono text-[10px] text-cyan-200">
+                <div className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-2 py-1 font-cyber-data text-[10px] text-[var(--hud-accent)]">
                   Passive Cyberware Armor: {subdermalName} (SP {subdermalSp})
                 </div>
               )}
 
-              <div className="grid grid-cols-5 gap-1 font-mono text-center text-[11px]">
+              <div className="grid grid-cols-5 gap-1 text-center text-[11px]">
                 {STAT_NAMES.map((s) => (
-                  <div key={s} className="rounded border border-slate-800/80 bg-slate-950 py-1">
-                    <div className="text-[9px] text-slate-500">{s}</div>
-                    <div className="font-bold text-slate-200">{activeStats[s]}</div>
+                  <div key={s} className="border border-[var(--hud-line-soft)] bg-black/55 py-1">
+                    <div className="font-cyber-ui text-[9px] text-[var(--hud-muted)]">{s}</div>
+                    <div className="font-cyber-data font-bold text-[var(--hud-text)]">{activeStats[s]}</div>
                   </div>
                 ))}
               </div>
-            </div>
+            </CyberFrame>
 
             {/* Contextual Hover / Click Inspector */}
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3.5 space-y-2">
-              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-cyan-300">
+            <CyberFrame variant="default" className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3.5">
+              <div className="flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                 <BookOpen className="h-3.5 w-3.5" />
                 Live Rulebook Inspector
               </div>
               <div>
-                <h4 className="text-sm font-bold text-slate-100">{inspector.title}</h4>
+                <h4 className="font-cyber-ui text-sm font-bold text-[var(--hud-text)]">{inspector.title}</h4>
                 {inspector.subtitle && (
-                  <div className="font-mono text-[10px] text-cyan-300/90">{inspector.subtitle}</div>
+                  <div className="font-cyber-ui text-[11px] text-[var(--hud-accent)]/90">{inspector.subtitle}</div>
                 )}
               </div>
-              <p className="text-xs leading-relaxed text-slate-200">{inspector.body}</p>
+              <p className="font-cyber-ui text-xs leading-relaxed text-[var(--hud-text)]/90">{inspector.body}</p>
               {inspector.mechanics && (
-                <div className="rounded border border-slate-800 bg-slate-950/60 p-2 text-[11px] leading-relaxed text-slate-300">
-                  <strong className="text-cyan-300">Mechanics: </strong>
+                <div className="border border-[var(--hud-line-soft)] bg-black/45 p-2 font-cyber-ui text-[11px] leading-relaxed text-[var(--hud-text)]/85">
+                  <strong className="text-[var(--hud-accent)]">Mechanics: </strong>
                   {inspector.mechanics}
                 </div>
               )}
               {inspector.tip && (
-                <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] leading-relaxed text-amber-200">
+                <div className="cyber-hazard-thin border border-[var(--hud-warn)]/45 p-2 font-cyber-ui text-[11px] leading-relaxed text-[var(--hud-warn)]">
                   <Sparkles className="mr-1 inline h-3 w-3" />
                   <strong>Beginner Tip: </strong>
                   {inspector.tip}
                 </div>
               )}
-            </div>
+            </CyberFrame>
           </aside>
         </div>
 
         {/* Bottom Footer Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-[#0f1625] px-4 py-3">
-          <button
-            type="button"
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hud-line)] bg-[#5a0b1c]/25 px-4 py-3 sm:px-5">
+          <HudButton
+            variant="ghost"
+            size="md"
             disabled={currentStepIdx === 0}
             onClick={() => setStep(STEPS[Math.max(0, currentStepIdx - 1)].id)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-40"
           >
             <ChevronLeft className="h-3.5 w-3.5" /> Previous
-          </button>
+          </HudButton>
 
           <div className="flex items-center gap-2">
             {step !== "review" ? (
-              <button
-                type="button"
+              <HudButton
+                variant="tactical"
+                size="md"
                 onClick={() => setStep(STEPS[Math.min(STEPS.length - 1, currentStepIdx + 1)].id)}
-                className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500"
               >
                 Next: {STEPS[Math.min(STEPS.length - 1, currentStepIdx + 1)].short}
                 <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+              </HudButton>
             ) : null}
 
-            <button
-              type="button"
+            <HudButton
+              variant="cta"
+              size="md"
               disabled={busy || validationIssues.length > 0}
               onClick={handleSubmit}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
             >
               <Check className="h-3.5 w-3.5" />
               {busy ? "Creating…" : "Create & Attach to Campaign"}
-            </button>
+            </HudButton>
           </div>
         </div>
-      </div>
+      </CyberFrame>
     </div>
   );
 

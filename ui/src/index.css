@@ -2,15 +2,104 @@
 @source "../node_modules/streamdown/dist/*.js";
 
 @layer base {
-  :root {
+  :root,
+  html[data-hud-theme="2077"] {
     color-scheme: dark;
-    --font-cyber-display: "Orbitron", "Rajdhani", ui-sans-serif, system-ui, sans-serif;
-    --font-cyber-hud: "Rajdhani", ui-sans-serif, system-ui, sans-serif;
-    --font-cyber-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --hud-bg: #040509;
+    --hud-glass-top: rgba(78, 9, 22, 0.34);
+    --hud-glass-bot: rgba(8, 10, 18, 0.90);
+    --hud-panel: rgba(10, 13, 22, 0.86);
+    --hud-row: rgba(54, 10, 22, 0.30);
+    --hud-line: rgba(225, 29, 72, 0.48);
+    --hud-line-soft: rgba(225, 29, 72, 0.22);
+    --hud-primary: #e11d48;
+    --hud-primary-bright: #ff2e55;
+    --hud-accent: #67e8f9;
+    --hud-accent-line: rgba(34, 211, 238, 0.72);
+    --hud-accent-navy: rgba(10, 26, 44, 0.86);
+    --hud-label: #e0637c;
+    --hud-warn: #fcee0a;
+    --hud-ok: #22d3ee;
+    --hud-text: #f1f5f9;
+    --hud-muted: #94a3b8;
     --cyber-crimson: #ff003c;
     --cyber-yellow: #fcee0a;
     --cyber-cyan: #00f0ff;
     --ui-body-weight: 600;
+  }
+
+  html[data-hud-theme="red-core"] {
+    --hud-bg: #050203;
+    --hud-glass-top: rgba(102, 10, 22, 0.42);
+    --hud-glass-bot: rgba(10, 4, 6, 0.93);
+    --hud-panel: rgba(14, 5, 8, 0.88);
+    --hud-row: rgba(88, 10, 22, 0.38);
+    --hud-line: rgba(251, 10, 38, 0.56);
+    --hud-line-soft: rgba(251, 10, 38, 0.24);
+    --hud-primary: #e10a24;
+    --hud-primary-bright: #ff1f3d;
+    --hud-accent: #ffffff;
+    --hud-accent-line: rgba(255, 255, 255, 0.82);
+    --hud-accent-navy: rgba(138, 12, 28, 0.58);
+    --hud-label: #f06575;
+    --hud-warn: #ffb000;
+    --hud-ok: #fbbf24;
+    --hud-text: #f8f9fa;
+    --hud-muted: #a6989c;
+  }
+
+  html[data-hud-theme="red-deck"] {
+    --hud-bg: #040406;
+    --hud-glass-top: rgba(92, 8, 20, 0.36);
+    --hud-glass-bot: rgba(10, 10, 14, 0.92);
+    --hud-panel: rgba(14, 13, 18, 0.88);
+    --hud-row: rgba(74, 8, 18, 0.34);
+    --hud-line: rgba(251, 10, 38, 0.52);
+    --hud-line-soft: rgba(251, 10, 38, 0.22);
+    --hud-primary: #e10a24;
+    --hud-primary-bright: #fb0a26;
+    --hud-accent: #46ebeb;
+    --hud-accent-line: rgba(70, 235, 235, 0.72);
+    --hud-accent-navy: rgba(12, 34, 38, 0.86);
+    --hud-label: #ea5b6d;
+    --hud-warn: #f59e0b;
+    --hud-ok: #46ebeb;
+    --hud-text: #f3f4f6;
+    --hud-muted: #9ca3af;
+  }
+
+  :root,
+  html[data-font-preset="cyber"] {
+    --font-cyber-display: "Chakra Petch", "Orbitron", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-ui: "Rajdhani", "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-data: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-cyber-hud: var(--font-cyber-ui);
+    --font-cyber-mono: var(--font-cyber-data);
+  }
+
+  html[data-font-preset="oxanium"] {
+    --font-cyber-display: "Orbitron", "Oxanium", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-ui: "Oxanium", "Rajdhani", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-data: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-cyber-hud: var(--font-cyber-ui);
+    --font-cyber-mono: var(--font-cyber-data);
+  }
+
+  html[data-font-preset="clean"] {
+    --font-cyber-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-ui: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-cyber-data: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-cyber-hud: var(--font-cyber-ui);
+    --font-cyber-mono: var(--font-cyber-data);
+  }
+
+  html[data-font-preset="hyperlegible"] {
+    --font-cyber-display: "Atkinson Hyperlegible", Verdana, sans-serif;
+    --font-cyber-ui: "Atkinson Hyperlegible", Verdana, sans-serif;
+    --font-cyber-data: "Atkinson Hyperlegible", ui-monospace, sans-serif;
+    --font-cyber-hud: var(--font-cyber-ui);
+    --font-cyber-mono: var(--font-cyber-data);
+    letter-spacing: 0.02em;
   }
 
   html {
@@ -43,11 +132,15 @@
   }
 
   body {
-    font-family: var(--font-cyber-hud);
+    font-family: var(--font-cyber-ui);
     font-weight: var(--ui-body-weight);
     letter-spacing: 0.015em;
-    background-color: #06080e;
-    color: #f1f5f9;
+    background-color: var(--hud-bg);
+    color: var(--hud-text);
+  }
+
+  html[data-font-preset="hyperlegible"] body {
+    letter-spacing: 0.02em;
   }
 
   html[data-ui-scale="large"] .text-\[10px\] {
@@ -63,13 +156,22 @@
     font-size: 13.5px;
   }
 
-  h1, h2, h3 {
+  h1,
+  h2,
+  h3 {
     font-family: var(--font-cyber-display);
     letter-spacing: 0.06em;
   }
 
-  code, pre, .font-mono {
-    font-family: var(--font-cyber-mono);
+  code,
+  pre {
+    font-family: var(--font-cyber-data);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :where(a:any-link, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--hud-accent);
+    outline-offset: 2px;
   }
 }
 
@@ -77,10 +179,309 @@
   font-family: var(--font-cyber-display);
 }
 
+.font-cyber-ui,
 .font-cyber-hud {
-  font-family: var(--font-cyber-hud);
+  font-family: var(--font-cyber-ui);
 }
 
+.font-cyber-data,
+.font-mono-hud,
+.font-mono {
+  font-family: var(--font-cyber-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==================== HUD BACKDROP, TEXTURES & GLASS PANELS ==================== */
+.hud-backdrop {
+  background-color: var(--hud-bg);
+  background-image:
+    radial-gradient(ellipse at 72% 18%, rgba(165, 16, 44, 0.16) 0%, transparent 55%),
+    linear-gradient(to right, rgba(225, 29, 72, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(225, 29, 72, 0.035) 1px, transparent 1px);
+  background-size: 100% 100%, 44px 44px, 44px 44px;
+}
+
+.hud-scanlines,
+.cyber-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.014) 0px,
+    rgba(255, 255, 255, 0.014) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.cyber-glass-panel,
+.hud-glass-panel {
+  position: relative;
+  background: linear-gradient(180deg, var(--hud-glass-top) 0%, var(--hud-glass-bot) 100%);
+  border: 1px solid var(--hud-line);
+}
+
+.cyber-glass-panel::before,
+.cyber-glass-panel::after,
+.hud-glass-panel::before,
+.hud-glass-panel::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.cyber-glass-panel::before,
+.hud-glass-panel::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--hud-primary-bright);
+  border-left: 2px solid var(--hud-primary-bright);
+}
+
+.cyber-glass-panel::after,
+.hud-glass-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid var(--hud-primary-bright);
+  border-right: 2px solid var(--hud-primary-bright);
+}
+
+.cyber-no-ticks::before,
+.cyber-no-ticks::after {
+  display: none;
+}
+
+.cyber-dot-matrix,
+.hud-dot-matrix {
+  background-image: radial-gradient(rgba(103, 232, 249, 0.25) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+.cyber-hazard-thin,
+.hud-hazard-thin {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(252, 238, 10, 0.14),
+    rgba(252, 238, 10, 0.14) 5px,
+    transparent 5px,
+    transparent 10px
+  );
+}
+
+.cyber-hex-overlay,
+.hud-hex {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill='none' stroke='%23e11d48' stroke-opacity='0.14' stroke-width='0.8'%3E%3Cpath d='M14 0l14 8.2v16.3L14 32.7 0 24.5V8.2L14 0zm0 16.3l14 8.2v16.3L14 49 0 40.8V24.5l14-8.2z'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 24px 42px;
+}
+
+/* ==================== 2077 / RED CTA & TACTICAL BUTTONS ==================== */
+.cyber-cta-wrap,
+.cp-cta-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.cyber-cta-wrap:has(:focus-visible),
+.cp-cta-wrap:has(:focus-visible) {
+  outline: 2px solid var(--hud-accent);
+  outline-offset: 3px;
+}
+
+.cyber-cta-wrap::after,
+.cp-cta-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 3px -3px -3px 3px;
+  border: 1px solid var(--hud-accent-line);
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+  pointer-events: none;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.cyber-cta-wrap:hover::after,
+.cp-cta-wrap:hover::after {
+  transform: translate(1px, 1px);
+  border-color: var(--hud-warn);
+}
+
+.cyber-cta,
+.cp-cta {
+  position: relative;
+  overflow: hidden;
+  background: var(--hud-primary);
+  color: #fff;
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+  transition: background-color 140ms ease;
+}
+
+.cyber-cta:not(:disabled):hover,
+.cp-cta:not(:disabled):hover {
+  background: var(--hud-primary-bright);
+}
+
+.cyber-cta:disabled,
+.cp-cta:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cyber-cta::before,
+.cp-cta::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: translateX(-140%) skewX(-20deg);
+  transition: transform 360ms ease;
+  pointer-events: none;
+}
+
+.cyber-cta:not(:disabled):hover::before,
+.cp-cta:not(:disabled):hover::before {
+  transform: translateX(320%) skewX(-20deg);
+}
+
+.cyber-btn-tac,
+.cp-btn-tac {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(25, 8, 16, 0.72);
+  border: 1px solid var(--hud-line);
+  border-left: 3px solid var(--hud-primary-bright);
+  color: var(--hud-text);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.cyber-btn-tac:not(:disabled):hover,
+.cyber-btn-tac[aria-pressed="true"],
+.cyber-btn-tac.is-active,
+.cp-btn-tac:not(:disabled):hover,
+.cp-btn-tac[aria-pressed="true"],
+.cp-btn-tac.is-active {
+  background: var(--hud-accent-navy);
+  border-color: var(--hud-accent-line);
+  border-left-color: var(--hud-accent);
+  color: var(--hud-accent);
+}
+
+.cyber-btn-tac:focus-visible,
+.cp-btn-tac:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--hud-accent);
+}
+
+.cyber-btn-tac:disabled,
+.cp-btn-tac:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ==================== SAFE, TACTILE 2077 FX (ZERO PANEL CLIPPING) ==================== */
+@keyframes cpTitleGlitch {
+  0%, 86%, 100% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+  87% {
+    transform: translate(-1.5px, 0);
+    text-shadow: 2px 0 var(--hud-accent), -2px 0 var(--hud-primary-bright);
+  }
+  88% {
+    transform: translate(1.5px, 0);
+    text-shadow: -2px 0 var(--hud-accent), 2px 0 var(--hud-primary-bright);
+  }
+  89% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+}
+
+@keyframes cpTitleSlice {
+  0%, 85%, 100% {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0;
+  }
+  87% {
+    clip-path: inset(18% 0 52% 0);
+    transform: translate(-2px, 0);
+    opacity: 0.9;
+  }
+  88% {
+    clip-path: inset(58% 0 14% 0);
+    transform: translate(2px, 0);
+    opacity: 0.85;
+  }
+  89% {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0;
+  }
+}
+
+@keyframes cpBtnSnap {
+  0% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+  30% {
+    transform: translate(-1.5px, 0);
+    text-shadow: 1.5px 0 var(--hud-accent), -1.5px 0 var(--hud-primary-bright);
+  }
+  65% {
+    transform: translate(1.5px, 0);
+    text-shadow: -1.5px 0 var(--hud-accent), 1.5px 0 var(--hud-primary-bright);
+  }
+  100% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+}
+
+@keyframes cpPulse {
+  0%, 100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.cp-glitch {
+  position: relative;
+  display: inline-block;
+}
+
+.cp-glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  color: var(--hud-accent);
+  pointer-events: none;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cp-glitch {
+    animation: cpTitleGlitch 5.5s infinite linear;
+  }
+
+  .cp-glitch::after {
+    animation: cpTitleSlice 5.5s infinite steps(2, end);
+  }
+
+  .cp-fx-hover:not(:disabled):hover {
+    animation: cpBtnSnap 160ms steps(2, end) 1;
+  }
+
+  .cp-pulse {
+    animation: cpPulse 2.2s ease-in-out infinite;
+  }
+}
+
+/* ==================== LEGACY HUD UTILITIES (PRESERVED FOR TRANSITION) ==================== */
 .cyber-cut {
   clip-path: polygon(
     0 0,
@@ -103,7 +504,6 @@
   );
 }
 
-/* Subtle cyberpunk grid + CRT scanlines */
 .cyber-grid-overlay {
   background-image:
     linear-gradient(to right, rgba(34, 211, 238, 0.045) 1px, transparent 1px),
@@ -111,17 +511,6 @@
   background-size: 42px 42px;
 }
 
-.cyber-scanlines {
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.015) 0px,
-    rgba(255, 255, 255, 0.015) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-}
-
-/* Glitching cyberpunk title animation (occasional crisp chromatic jitter) */
 @keyframes cyber-glitch-jitter {
   0%, 86%, 100% {
     transform: translate(0, 0);
@@ -403,7 +792,42 @@
   animation: cyber-overclock-scan 1.4s linear infinite;
 }
 
+/* ==================== REDUCED FX & REDUCED MOTION OVERRIDES ==================== */
+html[data-hud-fx="reduced"] .hud-scanlines,
+html[data-hud-fx="reduced"] .cyber-scanlines,
+html[data-hud-fx="reduced"] .hud-hex,
+html[data-hud-fx="reduced"] .cyber-hex-overlay {
+  display: none !important;
+}
+
+html[data-hud-fx="reduced"] .cp-glitch,
+html[data-hud-fx="reduced"] .cp-glitch::after,
+html[data-hud-fx="reduced"] .cp-pulse,
+html[data-hud-fx="reduced"] .cp-fx-hover:hover,
+html[data-hud-fx="reduced"] .cyber-cta::before,
+html[data-hud-fx="reduced"] .cp-cta::before,
+html[data-hud-fx="reduced"] .cyber-cta-wrap::after,
+html[data-hud-fx="reduced"] .cp-cta-wrap::after,
+html[data-hud-fx="reduced"] .cyber-glitch-title,
+html[data-hud-fx="reduced"] .cyber-glitch-title::after,
+html[data-hud-fx="reduced"] .cyber-brand-badge,
+html[data-hud-fx="reduced"] .cyber-brand-badge::before,
+html[data-hud-fx="reduced"] .cyber-holo-sweep::after,
+html[data-hud-fx="reduced"] .cyber-cta-pulse,
+html[data-hud-fx="reduced"] .cyber-eq-bar,
+html[data-hud-fx="reduced"] .cyber-overclock-active,
+html[data-hud-fx="reduced"] .cyber-overclock-active::after {
+  animation: none !important;
+  text-shadow: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .cp-glitch,
+  .cp-glitch::after,
+  .cp-pulse,
+  .cp-fx-hover:hover,
+  .cyber-cta::before,
+  .cp-cta::before,
   .cyber-glitch-title,
   .cyber-glitch-title::after,
   .cyber-brand-badge,
@@ -414,5 +838,17 @@
   .cyber-overclock-active,
   .cyber-overclock-active::after {
     animation: none !important;
+    text-shadow: none !important;
+  }
+
+  .cyber-cta-wrap::after,
+  .cp-cta-wrap::after {
+    transition: border-color 140ms ease !important;
+    transform: none !important;
+  }
+
+  .cyber-cta::before,
+  .cp-cta::before {
+    display: none !important;
   }
 }

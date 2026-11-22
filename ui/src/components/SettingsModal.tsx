@@ -22,6 +22,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { CyberFrame, HudButton, HudSlider, HudToggle } from "./cyber";
 import {
   deleteAuthAccount,
   fetchAllSettings,
@@ -58,6 +59,8 @@ export type SettingsTab =
 
 export type UiTextScale = "standard" | "large" | "xl";
 export type UiFontWeight = "normal" | "semibold" | "bold";
+export type HudTheme = "2077" | "red-core" | "red-deck";
+export type HudFontPreset = "cyber" | "oxanium" | "clean" | "hyperlegible";
 
 export interface SettingsModalProps {
   open: boolean;
@@ -67,8 +70,14 @@ export interface SettingsModalProps {
   authStatus?: AuthStatus | null;
   uiScale?: UiTextScale;
   uiWeight?: UiFontWeight;
+  hudTheme?: HudTheme;
+  fontPreset?: HudFontPreset;
+  hudReducedFx?: boolean;
   onChangeUiScale?: (scale: UiTextScale) => void;
   onChangeUiWeight?: (weight: UiFontWeight) => void;
+  onChangeHudTheme?: (theme: HudTheme) => void;
+  onChangeFontPreset?: (preset: HudFontPreset) => void;
+  onChangeHudReducedFx?: (reduced: boolean) => void;
   onClose: () => void;
   onSaved: (updated: LLMSettings) => void;
   onAuthChanged?: () => Promise<void> | void;
@@ -345,7 +354,7 @@ function AutoSizeTextarea({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       style={{ overflow: "hidden" }}
-      className="w-full resize-none rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100 focus:border-cyan-400 focus:outline-none"
+      className="w-full resize-none border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-xs leading-relaxed text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
     />
   );
 }
@@ -533,8 +542,14 @@ export function SettingsModal({
   authStatus,
   uiScale = "standard",
   uiWeight = "semibold",
+  hudTheme = "2077",
+  fontPreset = "cyber",
+  hudReducedFx = false,
   onChangeUiScale,
   onChangeUiWeight,
+  onChangeHudTheme,
+  onChangeFontPreset,
+  onChangeHudReducedFx,
   onClose,
   onSaved,
   onAuthChanged,
@@ -1235,31 +1250,35 @@ export function SettingsModal({
       aria-modal="true"
       aria-label={dialogHeading}
     >
-      <div className="cyber-cut cyber-panel-glow flex max-h-[92dvh] w-full max-w-4xl flex-col border border-cyan-500/30 bg-[#0b1019] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 sm:px-5 sm:py-3.5">
+      <CyberFrame
+        variant="modal"
+        className="cyber-glass-panel flex max-h-[92dvh] w-full max-w-4xl flex-col bg-[var(--hud-panel)]"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--hud-line)] bg-[#5a0b1c]/55 px-5 py-3">
           <div>
             <h2
               data-text={dialogHeading}
-              className="cyber-glitch-title font-cyber-display text-sm font-bold tracking-wider text-slate-100 uppercase"
+              className="cp-glitch font-cyber-display text-sm font-semibold tracking-wider text-[var(--hud-text)] uppercase"
             >
               {dialogHeading}
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--hud-muted)]">
               {dialogSubtitle}
             </p>
           </div>
-          <button
-            type="button"
+          <HudButton
+            variant="tactical"
+            size="xs"
             onClick={onClose}
             aria-label="Close settings"
-            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+            className="px-2.5 py-1"
           >
             <X className="h-4 w-4" />
-          </button>
+          </HudButton>
         </div>
 
         {/* Navigation tabs */}
-        <div className="flex items-center justify-between gap-1 overflow-x-auto border-b border-slate-800 bg-slate-950/70 px-4 py-2">
+        <div className="flex items-center justify-between gap-1 overflow-x-auto border-b border-[var(--hud-line)] bg-black/50 px-4 py-1.5 text-[11px]">
           <div className="flex items-center gap-1">
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
@@ -1270,10 +1289,10 @@ export function SettingsModal({
                   setError(null);
                   setNotice(null);
                 }}
-                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1 text-[11px] font-semibold transition ${
                   activeTab === id
-                    ? "border border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
-                    : "border border-transparent text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                    ? "border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                    : "border border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -1282,7 +1301,7 @@ export function SettingsModal({
             ))}
           </div>
           {loadingAll && (
-            <span className="ml-2 inline-flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
+            <span className="ml-2 inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--hud-muted)]">
               <Loader2 className="h-3 w-3 animate-spin" /> Syncing...
             </span>
           )}
@@ -1294,12 +1313,12 @@ export function SettingsModal({
           className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4"
         >
           {notice && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+            <div className="border border-[var(--hud-ok)]/50 bg-[var(--hud-accent-navy)] px-3 py-2 text-xs text-[var(--hud-ok)]">
               {notice}
             </div>
           )}
           {error && (
-            <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+            <div className="border border-[var(--hud-primary-bright)]/60 bg-[#5a0b1c]/45 px-3 py-2 text-xs text-rose-200">
               {error}
             </div>
           )}
@@ -1428,158 +1447,151 @@ export function SettingsModal({
                   OpenAI-Compatible Base URL
                   <HelpCircle className="h-3 w-3 text-slate-500" />
                 </label>
-                <input
-                  type="url"
-                  required
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="http://127.0.0.1:11434/v1"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label
-                  className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                  title="Exact model identifier expected by your provider (e.g. nvidia/nemotron-3-ultra-550b-a55b, gpt-4o-mini, llama3)."
-                >
-                  Model ID
-                  <HelpCircle className="h-3 w-3 text-slate-500" />
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="llama3"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label
-                    className="inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
-                    title="Bearer token sent to your LLM provider. Stored privately on the server; leave blank to keep your saved key."
-                  >
-                    API Key{" "}
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
-                    {settings?.has_api_key ? (
-                      <span className="font-mono text-[11px] text-emerald-400">
-                        (saved: {settings.api_key_masked})
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-slate-500">(optional for local LLMs)</span>
-                    )}
-                  </label>
-                  {settings?.has_api_key && (
-                    <label className="flex items-center gap-1 text-xs text-rose-300 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={clearKey}
-                        onChange={(e) => setClearKey(e.target.checked)}
-                      />
-                      Clear saved key
-                    </label>
-                  )}
-                </div>
-                <input
-                  type="password"
-                  disabled={clearKey}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={settings?.has_api_key ? "Leave blank to keep existing key" : "sk-..."}
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-400 focus:outline-none disabled:opacity-40"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <label className="block" title="HTTP request timeout in seconds before aborting a slow or stalled model call (5–600s).">
-                  <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                    Timeout (sec) <HelpCircle className="h-3 w-3 text-slate-500" />
-                  </span>
-                  <input
-                    type="number"
-                    min={5}
-                    max={600}
-                    step="any"
-                    value={timeoutS}
-                    onChange={(e) => setTimeoutS(parseFloat(e.target.value) || 90)}
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
-                  />
-                </label>
-                <label className="block" title="How many times to automatically retry transient API rate-limit (429) or overload (503) errors before failing the turn.">
-                  <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                    Retry Attempts (0–5) <HelpCircle className="h-3 w-3 text-slate-500" />
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={5}
-                    value={retryAttempts}
-                    onChange={(e) => setRetryAttempts(parseInt(e.target.value, 10) || 0)}
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
-                  />
-                </label>
-              </div>
-
-              {testResult && (
-                <div
-                  className={`rounded-md border px-3 py-2 text-xs ${
-                    testResult.ok
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                      : "border-rose-500/40 bg-rose-500/10 text-rose-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 font-medium">
-                    {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                    {testResult.detail}
+                    <input
+                      type="url"
+                      required
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder="http://127.0.0.1:11434/v1"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
                   </div>
-                  {testResult.models.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {testResult.models.slice(0, 12).map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() => setModel(m)}
-                          className="rounded bg-slate-900 px-2 py-0.5 font-mono text-[11px] text-cyan-300 hover:bg-slate-800"
-                        >
-                          {m}
-                        </button>
-                      ))}
+
+                  <div>
+                    <label
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-[var(--hud-text)] cursor-help"
+                      title="Exact model identifier expected by your provider (e.g. nvidia/nemotron-3-ultra-550b-a55b, gpt-4o-mini, llama3)."
+                    >
+                      Model ID
+                      <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="llama3"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <label
+                        className="inline-flex items-center gap-1 text-xs font-medium text-[var(--hud-text)] cursor-help"
+                        title="Bearer token sent to your LLM provider. Stored privately on the server; leave blank to keep your saved key."
+                      >
+                        API Key{" "}
+                        <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
+                        {settings?.has_api_key ? (
+                          <span className="font-cyber-data text-[11px] text-emerald-400">
+                            (saved: {settings.api_key_masked})
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[var(--hud-muted)]">(optional for local LLMs)</span>
+                        )}
+                      </label>
+                      {settings?.has_api_key && (
+                        <label className="flex items-center gap-2 text-xs text-rose-300 cursor-pointer">
+                          <HudToggle
+                            as="checkbox"
+                            checked={clearKey}
+                            onCheckedChange={setClearKey}
+                            className="min-w-12 py-0.5 text-[10px]"
+                          />
+                          Clear saved key
+                        </label>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      disabled={clearKey}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder={settings?.has_api_key ? "Leave blank to keep existing key" : "sk-..."}
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none disabled:opacity-40"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block" title="HTTP request timeout in seconds before aborting a slow or stalled model call (5–600s).">
+                      <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                        Timeout (sec) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
+                      </span>
+                      <input
+                        type="number"
+                        min={5}
+                        max={600}
+                        step="any"
+                        value={timeoutS}
+                        onChange={(e) => setTimeoutS(parseFloat(e.target.value) || 90)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      />
+                    </label>
+                    <label className="block" title="How many times to automatically retry transient API rate-limit (429) or overload (503) errors before failing the turn.">
+                      <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                        Retry Attempts (0–5) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={5}
+                        value={retryAttempts}
+                        onChange={(e) => setRetryAttempts(parseInt(e.target.value, 10) || 0)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      />
+                    </label>
+                  </div>
+
+                  {testResult && (
+                    <div
+                      className={`border px-3 py-2 text-xs ${
+                        testResult.ok
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-medium">
+                        {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                        {testResult.detail}
+                      </div>
+                      {testResult.models.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {testResult.models.slice(0, 12).map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setModel(m)}
+                              className="border border-[var(--hud-line-soft)] bg-black/50 px-2 py-0.5 font-cyber-data text-[11px] text-[var(--hud-accent)] hover:border-[var(--hud-accent-line)]"
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
 
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={handleTest}
-                  disabled={testing}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 hover:border-cyan-500/60"
-                >
-                  {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5 text-cyan-400" />}
-                  Test Connection
-                </button>
+                  <div className="flex items-center justify-between border-t border-[var(--hud-line-soft)] pt-3">
+                    <HudButton
+                      variant="tactical"
+                      size="md"
+                      onClick={handleTest}
+                      disabled={testing}
+                    >
+                      {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5 text-[var(--hud-accent)]" />}
+                      Test Connection
+                    </HudButton>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-                  >
-                    {saving ? "Saving..." : "Save Settings"}
-                  </button>
-                </div>
-              </div>
+                    <div className="flex items-center gap-2">
+                      <HudButton variant="ghost" size="md" onClick={onClose}>
+                        Cancel
+                      </HudButton>
+                      <HudButton variant="cta" size="md" type="submit" disabled={saving}>
+                        {saving ? "Saving..." : "Save Settings"}
+                      </HudButton>
+                    </div>
+                  </div>
             </form>
           )}
 
@@ -1609,14 +1621,14 @@ export function SettingsModal({
                 </div>
 
                 {corebookStatus?.rules_indexed && (
-                  <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300 space-y-1">
+                  <div className="border border-[var(--hud-line-soft)] bg-black/50 px-3 py-2 text-xs text-[var(--hud-text)] space-y-1">
                     <div>
                       Loaded file:{" "}
-                      <span className="font-mono text-cyan-300">
+                      <span className="font-cyber-data text-[var(--hud-accent)]">
                         {corebookStatus.source_filename || "Cyberpunk RED Corebook.pdf"}
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-400">
+                    <div className="text-[11px] text-[var(--hud-muted)]">
                       {corebookStatus.indexed_pages} pages indexed
                       {corebookStatus.semantic_indexed ? " · topic meaning search active" : ""}
                     </div>
@@ -1636,14 +1648,14 @@ export function SettingsModal({
                 />
 
                 {corebookStatus?.semantic_available && (
-                  <label className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-200 cursor-pointer">
-                    <input
-                      type="checkbox"
+                  <label className="flex items-center justify-between gap-3 border border-[var(--hud-line-soft)] bg-black/40 px-3 py-2 text-xs text-[var(--hud-text)] cursor-pointer">
+                    <span>Also index rule meanings so search finds rules by topic, not just exact words (optional)</span>
+                    <HudToggle
+                      as="checkbox"
                       checked={runSemanticOnUpload}
                       disabled={uploadingPdf || isIndexing}
-                      onChange={(e) => setRunSemanticOnUpload(e.target.checked)}
+                      onCheckedChange={setRunSemanticOnUpload}
                     />
-                    <span>Also index rule meanings so search finds rules by topic, not just exact words (optional)</span>
                   </label>
                 )}
 
@@ -1657,24 +1669,25 @@ export function SettingsModal({
                     const file = e.dataTransfer.files?.[0];
                     void handleCorebookFileSelected(file);
                   }}
-                  className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-700 bg-slate-900/40 px-4 py-6 text-center transition hover:border-cyan-500/60"
+                  className="flex flex-col items-center justify-center border border-dashed border-[var(--hud-line)] bg-black/40 px-4 py-6 text-center transition hover:border-[var(--hud-accent-line)]"
                 >
-                  <Upload className="mb-2 h-7 w-7 text-cyan-400" />
-                  <div className="text-xs font-medium text-slate-200">
+                  <Upload className="mb-2 h-7 w-7 text-[var(--hud-accent)]" />
+                  <div className="text-xs font-medium text-[var(--hud-text)]">
                     {uploadingPdf || isIndexing
                       ? `Processing ${selectedPdfName || corebookStatus?.job?.filename || "Corebook PDF"}...`
                       : "Drag & drop your Cyberpunk RED Corebook PDF here, or click below"}
                   </div>
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-[var(--hud-muted)]">
                     {corebookStatus?.rules_indexed
                       ? "Uploading a new PDF safely replaces the existing rulebook database."
                       : "Without a PDF, you can still create Freeform characters and homebrew rules."}
                   </p>
-                  <button
-                    type="button"
+                  <HudButton
+                    variant="tactical"
+                    size="md"
                     disabled={uploadingPdf || isIndexing}
                     onClick={() => pdfInputRef.current?.click()}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                    className="mt-3"
                   >
                     {uploadingPdf || isIndexing ? (
                       <>
@@ -1687,21 +1700,21 @@ export function SettingsModal({
                         {corebookStatus?.rules_indexed ? "Replace Corebook PDF" : "Upload Corebook PDF"}
                       </>
                     )}
-                  </button>
+                  </HudButton>
                 </div>
 
                 {(uploadingPdf || isIndexing || corebookStatus?.job?.status === "completed") && (
                   <div
-                    className="rounded-md border border-slate-800 bg-slate-900/80 p-3 space-y-2"
+                    className="border border-[var(--hud-line-soft)] bg-black/50 p-3 space-y-2"
                     aria-live="polite"
                   >
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-slate-200">
+                      <span className="font-medium text-[var(--hud-text)]">
                         {uploadingPdf
                           ? `Uploading PDF to server (${uploadPercent}%)...`
                           : corebookStatus?.job?.message || "Building Corebook database..."}
                       </span>
-                      <span className="font-mono text-cyan-300">
+                      <span className="font-cyber-data text-[var(--hud-accent)]">
                         {uploadingPdf || isIndexing ? `${combinedProgress}%` : "100%"}
                       </span>
                     </div>
@@ -1710,13 +1723,13 @@ export function SettingsModal({
                       aria-valuenow={uploadingPdf || isIndexing ? combinedProgress : 100}
                       aria-valuemin={0}
                       aria-valuemax={100}
-                      className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
+                      className="h-2.5 w-full overflow-hidden border border-[var(--hud-line-soft)] bg-black/70"
                     >
                       <div
                         className={`h-full transition-all duration-300 ${
                           corebookStatus?.job?.status === "completed" && !uploadingPdf
                             ? "bg-emerald-500"
-                            : "bg-cyan-500"
+                            : "bg-[var(--hud-accent)]"
                         }`}
                         style={{
                           width: `${uploadingPdf || isIndexing ? combinedProgress : 100}%`,
@@ -1724,7 +1737,7 @@ export function SettingsModal({
                       />
                     </div>
                     {isIndexing && (corebookStatus?.job?.total ?? 0) > 0 && (
-                      <div className="text-[11px] text-slate-400">
+                      <div className="font-cyber-data text-[11px] text-[var(--hud-muted)]">
                         Page {corebookStatus?.job?.current} of {corebookStatus?.job?.total}
                       </div>
                     )}
@@ -1733,13 +1746,9 @@ export function SettingsModal({
               </div>
 
               <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
-                >
+                <HudButton variant="ghost" size="md" onClick={onClose}>
                   Close
-                </button>
+                </HudButton>
               </div>
             </div>
           )}
@@ -1892,20 +1901,20 @@ export function SettingsModal({
               </div>
 
               {/* Unified Turn Architecture & Chronicler */}
-              <div className="rounded-lg border border-emerald-500/30 bg-slate-950/70 p-3 space-y-3">
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span
-                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] cursor-help"
                     title="Controls how many AI passes run each turn: Pass 1 (Rules Planner), Pass 2 (Streamed GM), and optional Pass 3 (Chronicler note-taker)."
                   >
                     Turn Architecture &amp; Chronicler
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                   </span>
                   <span
-                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                    className={`border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                       enableChronicler
-                        ? "bg-emerald-500/20 text-emerald-200"
-                        : "bg-slate-800 text-slate-400"
+                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                        : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)]"
                     }`}
                   >
                     Chronicler {enableChronicler ? "ON" : "OFF"}
@@ -1914,23 +1923,23 @@ export function SettingsModal({
 
                 <div>
                   <label
-                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                    className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-[var(--hud-text)] cursor-help"
                     title="Two-Pass runs a dedicated JSON rules/dice Planner before streaming prose (most accurate). Single-Pass streams prose + <gm_ops> in one call (faster, fewer API calls)."
                   >
                     Turn Architecture
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                   </label>
                   <select
                     value={mode}
                     onChange={(e) =>
                       setMode(e.target.value === "single_pass_tagged" ? "single_pass_tagged" : "two_pass")
                     }
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                   >
                     <option value="two_pass">Two-Pass Planner + Streamed GM</option>
                     <option value="single_pass_tagged">Single-Pass Streamed GM</option>
                   </select>
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-[var(--hud-muted)]">
                     {mode === "two_pass"
                       ? "Best rules/dice accuracy: resolves checks & state before writing prose."
                       : "Faster single request: streams prose and embeds state ops at the end."}
@@ -1938,35 +1947,34 @@ export function SettingsModal({
                 </div>
 
                 <label
-                  className="flex items-start gap-2 rounded-md border border-emerald-500/25 bg-emerald-950/15 p-2.5 text-xs text-slate-200 cursor-pointer"
+                  className="flex items-center justify-between gap-3 border border-[var(--hud-line-soft)] bg-black/40 p-2.5 text-xs text-[var(--hud-text)] cursor-pointer"
                   title="Runs a background note-taker after each GM reply to log newly seen NPCs, clues, scene changes, and elapsed time."
                 >
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={enableChronicler}
-                    onChange={(e) => setEnableChronicler(e.target.checked)}
-                  />
                   <span>
                     Post-Turn Chronicler (Auto Note-Taker — Pass 3)
-                    <span className="block text-[11px] text-slate-400">
+                    <span className="block text-[11px] text-[var(--hud-muted)]">
                       Runs after narration to record newly seen NPCs, clues, scene moves, and elapsed time. Turn off to save 1 AI call per turn.
                     </span>
                   </span>
+                  <HudToggle
+                    as="checkbox"
+                    checked={enableChronicler}
+                    onCheckedChange={setEnableChronicler}
+                  />
                 </label>
               </div>
 
               {/* Group 1: GM Thinking & Style */}
-              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <span
-                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                    className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] cursor-help"
                     title="Controls reasoning depth, narrative tone, and response length."
                   >
                     GM Thinking &amp; Style
-                    <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                   </span>
-                  <span className="font-mono text-[11px] text-slate-400">
+                  <span className="font-cyber-data text-[11px] text-[var(--hud-muted)]">
                     {gmThinkingMode === "balanced" ? "Balanced (~43s)" : "Quality (~73s)"}
                   </span>
                 </div>
@@ -2096,77 +2104,79 @@ export function SettingsModal({
               </div>
 
               {/* Group 2: Sampling & Output */}
-              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 space-y-3">
                 <div
-                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] cursor-help"
                   title="Controls how creative vs deterministic the model's wording is, and how long each output can be."
                 >
                   Sampling &amp; Output
-                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                  <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-12 items-center gap-3 text-xs">
                     <label
-                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      htmlFor="tuning-story-temp"
+                      className="col-span-5 flex items-center justify-between gap-1 font-medium text-[var(--hud-text)] cursor-help"
                       title="Controls creativity in story prose (0.0 = predictable, 1.5 = wild & inventive)."
                     >
                       <span className="inline-flex items-center gap-1">
-                        Story Temperature ({temperature.toFixed(2)})
-                        <HelpCircle className="h-3 w-3 text-slate-500" />
+                        Story Temperature
+                        <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                       </span>
-                      <span className="font-mono text-[10px] text-slate-400">
+                      <span className="text-[10px] text-[var(--hud-muted)]">
                         {temperature >= 0.7 ? "Expressive" : temperature <= 0.4 ? "Blunt" : "Balanced"}
                       </span>
                     </label>
-                    <input
-                      type="range"
+                    <HudSlider
+                      id="tuning-story-temp"
                       min={0}
                       max={1.5}
                       step={0.05}
                       value={temperature}
-                      onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                      className="w-full accent-cyan-400"
+                      onValueChange={setTemperature}
+                      formatValue={(v) => v.toFixed(2)}
+                      className="col-span-7"
                     />
                   </div>
-                  <div>
+                  <div className="grid grid-cols-12 items-center gap-3 text-xs">
                     <label
-                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      htmlFor="tuning-rules-temp"
+                      className="col-span-5 inline-flex items-center gap-1 font-medium text-[var(--hud-text)] cursor-help"
                       title="Temperature used for rules checks, state updates, and session memory (lower = stricter JSON & rules accuracy; 0.10 recommended)."
                     >
-                      <span className="inline-flex items-center gap-1">
-                        Rules Temp ({plannerTemperature.toFixed(2)})
-                        <HelpCircle className="h-3 w-3 text-slate-500" />
-                      </span>
+                      Rules Temp
+                      <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </label>
-                    <input
-                      type="range"
+                    <HudSlider
+                      id="tuning-rules-temp"
                       min={0}
                       max={1.5}
                       step={0.05}
                       value={plannerTemperature}
-                      onChange={(e) => setPlannerTemperature(parseFloat(e.target.value))}
-                      className="w-full accent-cyan-400"
+                      onValueChange={setPlannerTemperature}
+                      formatValue={(v) => v.toFixed(2)}
+                      className="col-span-7"
                     />
                   </div>
-                  <div>
+                  <div className="grid grid-cols-12 items-center gap-3 text-xs">
                     <label
-                      className="mb-1 flex items-center justify-between text-xs font-medium text-slate-300 cursor-help"
+                      htmlFor="tuning-creator-temp"
+                      className="col-span-5 inline-flex items-center gap-1 font-medium text-[var(--hud-text)] cursor-help"
                       title="Temperature used when generating character backstories, contacts, and campaign pitches."
                     >
-                      <span className="inline-flex items-center gap-1">
-                        Creator Temp ({creationTemperature.toFixed(2)})
-                        <HelpCircle className="h-3 w-3 text-slate-500" />
-                      </span>
+                      Creator Temp
+                      <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </label>
-                    <input
-                      type="range"
+                    <HudSlider
+                      id="tuning-creator-temp"
                       min={0}
                       max={1.5}
                       step={0.05}
                       value={creationTemperature}
-                      onChange={(e) => setCreationTemperature(parseFloat(e.target.value))}
-                      className="w-full accent-cyan-400"
+                      onValueChange={setCreationTemperature}
+                      formatValue={(v) => v.toFixed(2)}
+                      className="col-span-7"
                     />
                   </div>
                 </div>
@@ -2174,11 +2184,11 @@ export function SettingsModal({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label
-                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-[var(--hud-text)] cursor-help"
                       title="Maximum output tokens the model can generate per response (does not limit input context). Reasoning models spend thinking tokens out of this budget — 4096–8192 is recommended."
                     >
                       Max Output Tokens
-                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                      <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </label>
                     <input
                       type="number"
@@ -2187,16 +2197,16 @@ export function SettingsModal({
                       step={1}
                       value={maxTokens}
                       onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 1200)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                   <div>
                     <label
-                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-300 cursor-help"
+                      className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-[var(--hud-text)] cursor-help"
                       title="Dedicated output token limit for the Introductory First Message briefing so the full Cyberpunk RED guide never gets cut off."
                     >
                       Intro Message Token Limit
-                      <HelpCircle className="h-3 w-3 text-slate-500" />
+                      <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </label>
                     <input
                       type="number"
@@ -2205,15 +2215,15 @@ export function SettingsModal({
                       step={1}
                       value={introMaxTokens}
                       onChange={(e) => setIntroMaxTokens(parseInt(e.target.value, 10) || 4096)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">
                   <label className="block" title="Nucleus sampling: limits token choices to the top cumulative probability mass (lower = more focused, 1.0 = full vocabulary).">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Top-P <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Top-P <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2222,12 +2232,12 @@ export function SettingsModal({
                       step="any"
                       value={topP}
                       onChange={(e) => setTopP(parseFloat(e.target.value) || 0.95)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                   <label className="block" title="Penalizes tokens that already appeared at least once, encouraging new topics and descriptions (-2 to 2).">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Presence Penalty <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Presence Penalty <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2236,12 +2246,12 @@ export function SettingsModal({
                       step="any"
                       value={presencePenalty}
                       onChange={(e) => setPresencePenalty(parseFloat(e.target.value) || 0)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                   <label className="block" title="Penalizes tokens proportionally to how often they already appeared, reducing repetitive phrasing (-2 to 2).">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Frequency Penalty <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Frequency Penalty <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2250,26 +2260,26 @@ export function SettingsModal({
                       step="any"
                       value={frequencyPenalty}
                       onChange={(e) => setFrequencyPenalty(parseFloat(e.target.value) || 0)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                 </div>
               </div>
 
               {/* Group 3: Context, Memory & World */}
-              <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 space-y-3">
                 <div
-                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-300 cursor-help"
+                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] cursor-help"
                   title="Controls how much chat history, rulebook lore, and automatic world-state tracking runs each turn."
                 >
                   Context, Memory &amp; World
-                  <HelpCircle className="h-3 w-3 text-slate-500" />
+                  <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <label className="block" title="How many recent chat messages are sent to the AI on each turn (Narrator uses up to 500; Planner uses up to 200).">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      History Window (4–500) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      History Window (4–500) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2277,12 +2287,12 @@ export function SettingsModal({
                       max={500}
                       value={historyWindow}
                       onChange={(e) => setHistoryWindow(parseInt(e.target.value, 10) || 14)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                   <label className="block" title="Turns since last compression before the UI nudges you to compress older turns into Campaign Library dossiers & summary.">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Compress After (6–1000) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Compress After (6–1000) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2290,12 +2300,12 @@ export function SettingsModal({
                       max={1000}
                       value={compressionThreshold}
                       onChange={(e) => setCompressionThreshold(parseInt(e.target.value, 10) || 14)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                   <label className="block" title="Number of Corebook & Campaign Library entries retrieved and injected into each turn's context (1–30).">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Rule Citations (1–30) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Rule Citations (1–30) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2303,12 +2313,12 @@ export function SettingsModal({
                       max={30}
                       value={citationLimit}
                       onChange={(e) => setCitationLimit(parseInt(e.target.value, 10) || 4)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                   <label className="block" title="In-game minutes automatically added to the Night City world clock per turn when the Chronicler doesn't specify an elapsed time.">
-                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-slate-300 cursor-help">
-                      Default Time Step (m) <HelpCircle className="h-3 w-3 text-slate-500" />
+                    <span className="mb-1 inline-flex items-center gap-1 text-xs text-[var(--hud-text)] cursor-help">
+                      Default Time Step (m) <HelpCircle className="h-3 w-3 text-[var(--hud-muted)]" />
                     </span>
                     <input
                       type="number"
@@ -2316,74 +2326,66 @@ export function SettingsModal({
                       max={1440}
                       value={defaultTimeStep}
                       onChange={(e) => setDefaultTimeStep(parseInt(e.target.value, 10) || 0)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-slate-100"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>
                 </div>
 
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <label
-                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    className="flex items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-black/40 px-3 py-2 text-xs text-[var(--hud-text)] cursor-pointer"
                     title="Highlights key names, places, and amounts in color inside GM replies."
                   >
-                    <input
-                      type="checkbox"
-                      checked={enableHighlights}
-                      onChange={(e) => setEnableHighlights(e.target.checked)}
-                    />
                     <span>Highlight key terms in color in GM replies</span>
+                    <HudToggle
+                      as="checkbox"
+                      checked={enableHighlights}
+                      onCheckedChange={setEnableHighlights}
+                    />
                   </label>
                   <label
-                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer"
+                    className="flex items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-black/40 px-3 py-2 text-xs text-[var(--hud-text)] cursor-pointer"
                     title="Lets the AI GM save new recurring NPCs, locations, and custom items directly into your Campaign Library."
                   >
-                    <input
-                      type="checkbox"
-                      checked={allowAiHomebrew}
-                      onChange={(e) => setAllowAiHomebrew(e.target.checked)}
-                    />
                     <span>Allow AI to save new Library entries automatically</span>
+                    <HudToggle
+                      as="checkbox"
+                      checked={allowAiHomebrew}
+                      onCheckedChange={setAllowAiHomebrew}
+                    />
                   </label>
                   <label
-                    className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 cursor-pointer sm:col-span-2"
+                    className="flex items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-black/40 px-3 py-2 text-xs text-[var(--hud-text)] cursor-pointer sm:col-span-2"
                     title="Shows a gentle reminder to compress old chat history into Library dossiers once a branch gets long."
                   >
-                    <input
-                      type="checkbox"
-                      checked={autoCompressPrompt}
-                      onChange={(e) => setAutoCompressPrompt(e.target.checked)}
-                    />
                     <span>Show story compression reminders when chat grows</span>
+                    <HudToggle
+                      as="checkbox"
+                      checked={autoCompressPrompt}
+                      onCheckedChange={setAutoCompressPrompt}
+                    />
                   </label>
                   <label
-                    className="flex items-center gap-2 rounded-md border border-cyan-500/30 bg-cyan-950/15 px-3 py-2 text-xs text-slate-200 cursor-pointer sm:col-span-2"
+                    className="flex items-center justify-between gap-2 border border-[var(--hud-accent-line)]/40 bg-[var(--hud-accent-navy)]/40 px-3 py-2 text-xs text-[var(--hud-text)] cursor-pointer sm:col-span-2"
                     title="When enabled (default), non-admin players must create or attach a character sheet before they can speak in chat. Turn off to allow characterless players/observers to speak freely."
                   >
-                    <input
-                      type="checkbox"
-                      checked={requireCharacterToSpeak}
-                      onChange={(e) => setRequireCharacterToSpeak(e.target.checked)}
-                    />
                     <span>Require players to have a character before speaking in chat (Default: ON)</span>
+                    <HudToggle
+                      as="checkbox"
+                      checked={requireCharacterToSpeak}
+                      onCheckedChange={setRequireCharacterToSpeak}
+                    />
                   </label>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-md px-3 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
-                >
+              <div className="flex justify-end gap-2 border-t border-[var(--hud-line-soft)] pt-3">
+                <HudButton variant="ghost" size="md" onClick={onClose}>
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-                >
+                </HudButton>
+                <HudButton variant="cta" size="md" type="submit" disabled={saving}>
                   {saving ? "Saving..." : "Save Turn Tuning"}
-                </button>
+                </HudButton>
               </div>
             </form>
           )}
@@ -2391,29 +2393,29 @@ export function SettingsModal({
           {activeTab === "prompts" && (
             <form onSubmit={handleSavePrompts} className="space-y-5">
               {/* Pipeline Overview Banner */}
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-500/25 bg-slate-950/80 p-3 text-[11px] text-slate-300">
+              <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3 text-[11px] text-[var(--hud-text)]">
                 <div>
-                  <div className="mb-1.5 font-semibold uppercase tracking-wider text-cyan-300">
+                  <div className="mb-1.5 font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                     How AI Prompts Flow Each Turn
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
-                    <span className="rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-cyan-200">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span className="border border-[var(--hud-accent-line)]/60 bg-[var(--hud-accent-navy)] px-2 py-0.5 text-[var(--hud-accent)]">
                       Player Turn Format
                     </span>
-                    <span className="text-slate-500">→</span>
-                    <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                    <span className="text-[var(--hud-muted)]">→</span>
+                    <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/10 px-2 py-0.5 text-[var(--hud-warn)]">
                       1. Rules &amp; Dice Planner
                     </span>
-                    <span className="text-slate-500">→</span>
-                    <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                    <span className="text-[var(--hud-muted)]">→</span>
+                    <span className="border border-[var(--hud-line)] bg-[var(--hud-row)] px-2 py-0.5 text-[var(--hud-label)]">
                       2. GM Story Narrator
                     </span>
-                    <span className="text-slate-500">→</span>
+                    <span className="text-[var(--hud-muted)]">→</span>
                     <span
-                      className={`rounded border px-2 py-0.5 ${
+                      className={`border px-2 py-0.5 ${
                         enableChronicler
                           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                          : "border-slate-700 bg-slate-900 text-slate-500 line-through"
+                          : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)] line-through"
                       }`}
                     >
                       3. Post-Turn Chronicler ({enableChronicler ? "ON" : "OFF"})
@@ -2421,24 +2423,24 @@ export function SettingsModal({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
                     onClick={() => {
                       const next: Record<string, boolean> = {};
                       for (const f of PROMPT_FIELDS) next[f.key] = true;
                       setExpandedPrompts(next);
                     }}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500/50 hover:text-cyan-200"
                   >
                     Expand All
-                  </button>
-                  <button
-                    type="button"
+                  </HudButton>
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
                     onClick={() => setExpandedPrompts({})}
-                    className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-slate-500 hover:text-slate-100"
                   >
                     Collapse All
-                  </button>
+                  </HudButton>
                 </div>
               </div>
 
@@ -2509,10 +2511,10 @@ export function SettingsModal({
                           type="button"
                           disabled={saving}
                           onClick={() => void handleToggleChroniclerInline()}
-                          className={`shrink-0 rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold transition ${
+                          className={`cyber-btn-tac cp-fx-hover shrink-0 px-2.5 py-1 text-[11px] font-semibold ${
                             enableChronicler
-                              ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30"
-                              : "border-slate-700 bg-slate-900 text-slate-400 hover:border-emerald-500/40 hover:text-emerald-200"
+                              ? "is-active"
+                              : "text-[var(--hud-muted)]"
                           }`}
                         >
                           Chronicler: {enableChronicler ? "ON" : "OFF"}
@@ -2535,7 +2537,7 @@ export function SettingsModal({
                         return (
                           <div
                             key={field.key}
-                            className="rounded-md border border-slate-800 bg-slate-900/55 transition"
+                            className="border border-[var(--hud-line-soft)] bg-black/45 transition"
                           >
                             <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                               <button
@@ -2546,21 +2548,21 @@ export function SettingsModal({
                               >
                                 <div className="min-w-0 space-y-0.5">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-xs font-semibold text-slate-100">
+                                    <span className="text-xs font-semibold text-[var(--hud-text)]">
                                       {field.label}
                                     </span>
-                                    <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                                    <span className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-1.5 py-0.5 text-[10px] text-[var(--hud-accent)]">
                                       {field.sentTo}
                                     </span>
                                     {isModified && (
-                                      <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-200">
+                                      <span className="border border-[var(--hud-warn)]/40 bg-[var(--hud-warn)]/15 px-1.5 py-0.5 text-[9px] text-[var(--hud-warn)]">
                                         Modified
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-[11px] text-slate-400">{field.hint}</p>
+                                  <p className="text-[11px] text-[var(--hud-muted)]">{field.hint}</p>
                                 </div>
-                                <span className="shrink-0 text-slate-400">
+                                <span className="shrink-0 text-[var(--hud-muted)]">
                                   {isExpanded ? (
                                     <ChevronUp className="h-4 w-4" />
                                   ) : (
@@ -2577,7 +2579,7 @@ export function SettingsModal({
                                       [field.key]: defVal,
                                     }))
                                   }
-                                  className="shrink-0 text-[11px] text-cyan-300 hover:underline"
+                                  className="shrink-0 text-[11px] text-[var(--hud-accent)] hover:underline"
                                 >
                                   Revert
                                 </button>
@@ -2585,7 +2587,7 @@ export function SettingsModal({
                             </div>
 
                             {isExpanded && (
-                              <div className="border-t border-slate-800/80 px-3 pb-3 pt-2.5 space-y-2">
+                              <div className="border-t border-[var(--hud-line-soft)] px-3 pb-3 pt-2.5 space-y-2">
                                 {field.singleLine ? (
                                   <input
                                     type="text"
@@ -2594,7 +2596,7 @@ export function SettingsModal({
                                     onChange={(e) =>
                                       setPrompts((prev) => ({ ...prev, [field.key]: e.target.value }))
                                     }
-                                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                                    className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                                   />
                                 ) : (
                                   <AutoSizeTextarea
@@ -2607,8 +2609,8 @@ export function SettingsModal({
                                   />
                                 )}
                                 {previewSample && (
-                                  <div className="rounded border border-slate-800 bg-slate-900/70 px-2.5 py-1 font-mono text-[11px] text-slate-300">
-                                    <span className="text-slate-500">Preview sent to AI: </span>
+                                  <div className="border border-[var(--hud-line-soft)] bg-black/50 px-2.5 py-1 font-cyber-data text-[11px] text-[var(--hud-text)]">
+                                    <span className="text-[var(--hud-muted)]">Preview sent to AI: </span>
                                     {previewSample}
                                   </div>
                                 )}
@@ -2622,18 +2624,18 @@ export function SettingsModal({
                 );
               })}
 
-              <div className="rounded-lg border border-slate-800 bg-slate-950/60">
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)]">
                 <button
                   type="button"
                   onClick={() => setShowAdvancedPrompts((prev) => !prev)}
-                  className="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold text-slate-200 hover:text-cyan-200"
+                  className="flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-semibold text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
                 >
                   <span>Advanced: Full Built-In System Rules (Narrator, Planner, Chronicler, Archivist)</span>
                   {showAdvancedPrompts ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </button>
                 {showAdvancedPrompts && (
-                  <div className="space-y-3 border-t border-slate-800 p-3.5">
-                    <p className="text-[11px] text-amber-200/80">
+                  <div className="space-y-3 border-t border-[var(--hud-line-soft)] p-3.5">
+                    <p className="text-[11px] text-[var(--hud-warn)]/90">
                       These are the full default system rules sent to each pass. You can tweak banned NPC names, economy pacing, Fog-of-War rules, or anything else here—and click Revert or Reset All Prompts anytime.
                     </p>
                     {PROMPT_FIELDS.filter((f) => f.advanced).map((field) => {
@@ -2642,7 +2644,7 @@ export function SettingsModal({
                       const isExpanded = Boolean(expandedPrompts[field.key]);
                       const isModified = val !== defVal;
                       return (
-                        <div key={field.key} className="rounded-md border border-slate-800 bg-slate-900/55">
+                        <div key={field.key} className="border border-[var(--hud-line-soft)] bg-black/45">
                           <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                             <button
                               type="button"
@@ -2652,19 +2654,19 @@ export function SettingsModal({
                             >
                               <div className="min-w-0 space-y-0.5">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-xs font-semibold text-slate-200">{field.label}</span>
-                                  <span className="rounded bg-slate-800/90 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                                  <span className="text-xs font-semibold text-[var(--hud-text)]">{field.label}</span>
+                                  <span className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-1.5 py-0.5 text-[10px] text-[var(--hud-warn)]">
                                     {field.sentTo}
                                   </span>
                                   {isModified && (
-                                    <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-200">
+                                    <span className="border border-[var(--hud-warn)]/40 bg-[var(--hud-warn)]/15 px-1.5 py-0.5 text-[9px] text-[var(--hud-warn)]">
                                       Modified
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] text-slate-400">{field.hint}</p>
+                                <p className="text-[11px] text-[var(--hud-muted)]">{field.hint}</p>
                               </div>
-                              <span className="shrink-0 text-slate-400">
+                              <span className="shrink-0 text-[var(--hud-muted)]">
                                 {isExpanded ? (
                                   <ChevronUp className="h-4 w-4" />
                                 ) : (
@@ -2681,14 +2683,14 @@ export function SettingsModal({
                                     [field.key]: defVal,
                                   }))
                                 }
-                                className="shrink-0 text-[11px] text-cyan-300 hover:underline"
+                                className="shrink-0 text-[11px] text-[var(--hud-accent)] hover:underline"
                               >
                                 Revert
                               </button>
                             )}
                           </div>
                           {isExpanded && (
-                            <div className="border-t border-slate-800/80 px-3 pb-3 pt-2.5">
+                            <div className="border-t border-[var(--hud-line-soft)] px-3 pb-3 pt-2.5">
                               <AutoSizeTextarea
                                 ariaLabel={field.label}
                                 minRows={field.rows}
@@ -2706,31 +2708,23 @@ export function SettingsModal({
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
+              <div className="flex items-center justify-between border-t border-[var(--hud-line-soft)] pt-3">
+                <HudButton
+                  variant="tactical"
+                  size="md"
                   disabled={saving}
                   onClick={() => void handleResetPrompts()}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-300 hover:border-amber-500/60 hover:text-amber-200"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                   Reset All Prompts
-                </button>
+                </HudButton>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-md px-3 py-2 text-xs text-slate-400 hover:text-slate-200"
-                  >
+                  <HudButton variant="ghost" size="md" onClick={onClose}>
                     Close
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-                  >
+                  </HudButton>
+                  <HudButton variant="cta" size="md" type="submit" disabled={saving}>
                     {saving ? "Saving..." : "Save Prompts"}
-                  </button>
+                  </HudButton>
                 </div>
               </div>
             </form>
@@ -2739,20 +2733,20 @@ export function SettingsModal({
           {activeTab === "network" && (
             <form onSubmit={handleSaveNetwork} className="space-y-4">
               {runtimeInfo && (
-                <div className="rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
+                <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-3 py-2 text-xs text-[var(--hud-text)]">
                   <div>
                     Active listener:{" "}
-                    <span className="font-mono text-cyan-300">
+                    <span className="font-cyber-data text-[var(--hud-accent)]">
                       {runtimeInfo.active_host}:{runtimeInfo.active_port}
                     </span>
                     {runtimeInfo.in_docker && (
-                      <span className="ml-2 rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                      <span className="ml-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 text-[10px] text-[var(--hud-accent)]">
                         Docker
                       </span>
                     )}
                   </div>
                   {runtimeInfo.restart_required && (
-                    <div className="mt-1 text-[11px] text-amber-300">
+                    <div className="mt-1 text-[11px] text-[var(--hud-warn)]">
                       Saved IP/Port differs from active listener. Restart server to rebind.
                     </div>
                   )}
@@ -2761,7 +2755,7 @@ export function SettingsModal({
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-300">
+                  <label className="mb-1 block text-xs font-medium text-[var(--hud-text)]">
                     Bind IP / Interface
                   </label>
                   <input
@@ -2770,28 +2764,28 @@ export function SettingsModal({
                     value={serverCfg.bind_host}
                     onChange={(e) => setServerCfg((prev) => ({ ...prev, bind_host: e.target.value }))}
                     placeholder="127.0.0.1 or 0.0.0.0"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                   />
                   <div className="mt-1.5 flex gap-1.5">
-                    <button
-                      type="button"
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
                       onClick={() => setServerCfg((prev) => ({ ...prev, bind_host: "127.0.0.1" }))}
-                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 hover:border-cyan-500/60"
                     >
                       127.0.0.1 (Local)
-                    </button>
-                    <button
-                      type="button"
+                    </HudButton>
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
                       onClick={() => setServerCfg((prev) => ({ ...prev, bind_host: "0.0.0.0" }))}
-                      className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300 hover:border-cyan-500/60"
                     >
                       0.0.0.0 (LAN / Public)
-                    </button>
+                    </HudButton>
                   </div>
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-300">Listen Port</label>
+                  <label className="mb-1 block text-xs font-medium text-[var(--hud-text)]">Listen Port</label>
                   <input
                     type="number"
                     min={1}
@@ -2801,13 +2795,13 @@ export function SettingsModal({
                     onChange={(e) =>
                       setServerCfg((prev) => ({ ...prev, port: parseInt(e.target.value, 10) || 8765 }))
                     }
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                   />
                 </div>
               </div>
 
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-300">
+                <span className="mb-1 block text-xs font-medium text-[var(--hud-text)]">
                   Public URL (for reverse-proxied Party join links, optional)
                 </span>
                 <input
@@ -2815,12 +2809,12 @@ export function SettingsModal({
                   value={serverCfg.public_url}
                   onChange={(e) => setServerCfg((prev) => ({ ...prev, public_url: e.target.value }))}
                   placeholder="https://redgm.example.com"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                 />
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-300">
+                <span className="mb-1 block text-xs font-medium text-[var(--hud-text)]">
                   Allowed Browser Origins (one exact http(s)://host[:port] per line)
                 </span>
                 <textarea
@@ -2828,42 +2822,35 @@ export function SettingsModal({
                   value={originsText}
                   onChange={(e) => setOriginsText(e.target.value)}
                   placeholder="https://redgm.example.com"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                 />
               </label>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hud-line-soft)] pt-3">
                 {runtimeInfo?.restart_supported ? (
-                  <button
-                    type="button"
+                  <HudButton
+                    variant="tactical"
+                    size="md"
                     disabled={restarting}
                     onClick={() => void handleRestartServer()}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                    className="border-[var(--hud-warn)]/50 text-[var(--hud-warn)]"
                   >
                     {restarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                     Restart Server Now
-                  </button>
+                  </HudButton>
                 ) : (
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-[11px] text-[var(--hud-muted)]">
                     Restart the process manually after saving IP/port when not running under `redkb.py serve`.
                   </span>
                 )}
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-md px-3 py-2 text-xs text-slate-400 hover:text-slate-200"
-                  >
+                  <HudButton variant="ghost" size="md" onClick={onClose}>
                     Close
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-                  >
+                  </HudButton>
+                  <HudButton variant="cta" size="md" type="submit" disabled={saving}>
                     {saving ? "Saving..." : "Save Network Settings"}
-                  </button>
+                  </HudButton>
                 </div>
               </div>
             </form>
@@ -2934,43 +2921,39 @@ export function SettingsModal({
                     </label>
                   </div>
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-                    >
+                    <HudButton variant="cta" size="md" type="submit" disabled={saving}>
                       <Shield className="h-3.5 w-3.5" />
                       Enable Accounts
-                    </button>
+                    </HudButton>
                   </div>
                 </form>
               ) : (
                 <>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5 space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       Configured Accounts
                     </div>
                     {accounts.length === 0 ? (
-                      <p className="text-xs text-slate-400">No file-backed accounts listed (using env or PIN).</p>
+                      <p className="text-xs text-[var(--hud-muted)]">No file-backed accounts listed (using env or PIN).</p>
                     ) : (
-                      <div className="divide-y divide-slate-800/80">
+                      <div className="divide-y divide-[var(--hud-line-soft)]">
                         {accounts.map((acc) => {
                           const adminCount = accounts.filter((a) => a.role === "admin").length;
                           const isLastAdmin = acc.role === "admin" && adminCount <= 1;
                           return (
                             <div key={acc.username} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono font-semibold text-slate-100">{acc.username}</span>
+                                <span className="font-semibold text-[var(--hud-text)]">{acc.username}</span>
                                 <span
-                                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  className={`border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
                                     acc.role === "admin"
-                                      ? "bg-rose-500/20 text-rose-300"
-                                      : "bg-cyan-500/20 text-cyan-300"
+                                      ? "border-[var(--hud-primary)]/60 bg-[var(--hud-primary)]/20 text-rose-200"
+                                      : "border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
                                   }`}
                                 >
                                   {acc.role}
                                 </span>
-                                <span className="text-[11px] text-slate-500">({acc.source})</span>
+                                <span className="text-[11px] text-[var(--hud-muted)]">({acc.source})</span>
                               </div>
                               {acc.source !== "env" && (
                                 <div className="flex items-center gap-1.5">
@@ -2985,10 +2968,10 @@ export function SettingsModal({
                                           : "Grant Admin privileges"
                                     }
                                     onClick={() => void handleToggleAccountRole(acc.username, acc.role)}
-                                    className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition disabled:opacity-40 ${
+                                    className={`cyber-btn-tac cp-fx-hover px-2 py-1 text-[11px] font-medium disabled:opacity-40 ${
                                       acc.role === "admin"
-                                        ? "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/60 hover:text-amber-200"
-                                        : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                                        ? "text-[var(--hud-text)]"
+                                        : "border-[var(--hud-accent-line)]/60 text-[var(--hud-accent)]"
                                     }`}
                                   >
                                     <Shield className="h-3 w-3" />
@@ -2998,7 +2981,7 @@ export function SettingsModal({
                                     type="button"
                                     disabled={saving || isLastAdmin}
                                     onClick={() => void handleDeleteAccount(acc.username)}
-                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-rose-300 hover:bg-[var(--hud-primary)]/15 disabled:opacity-40"
                                   >
                                     <Trash2 className="h-3 w-3" />
                                     Remove
@@ -3012,9 +2995,9 @@ export function SettingsModal({
                     )}
                   </div>
 
-                  <form onSubmit={handleUpsertAccount} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
-                      <UserPlus className="h-3.5 w-3.5 text-cyan-400" />
+                  <form onSubmit={handleUpsertAccount} className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5 space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                      <UserPlus className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
                       Add or Update Account
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -3024,7 +3007,7 @@ export function SettingsModal({
                         value={newUserName}
                         onChange={(e) => setNewUserName(e.target.value)}
                         placeholder="Username"
-                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                       <input
                         type="password"
@@ -3033,59 +3016,55 @@ export function SettingsModal({
                         value={newUserPass}
                         onChange={(e) => setNewUserPass(e.target.value)}
                         placeholder={newUserRole === "admin" ? "Password (min 6)" : "Password (min 4)"}
-                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                       <select
                         value={newUserRole}
                         onChange={(e) => setNewUserRole(e.target.value === "admin" ? "admin" : "user")}
-                        className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         <option value="user">User (Play Only)</option>
                         <option value="admin">Admin (Full Access)</option>
                       </select>
                     </div>
                     <div className="flex justify-end">
-                      <button
-                        type="submit"
-                        disabled={saving}
-                        className="rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
-                      >
+                      <HudButton variant="tactical" size="sm" type="submit" disabled={saving}>
                         Save Account
-                      </button>
+                      </HudButton>
                     </div>
                   </form>
 
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       Player Policy &amp; Sessions
                     </div>
-                    <label className="flex items-center gap-2 text-xs text-slate-200">
-                      <input
-                        type="checkbox"
+                    <label className="flex items-center justify-between gap-3 text-xs text-[var(--hud-text)] cursor-pointer">
+                      <span>Allow new players to create their own accounts</span>
+                      <HudToggle
+                        as="checkbox"
                         checked={allowSelfSignup}
-                        onChange={(e) => setAllowSelfSignup(e.target.checked)}
+                        onCheckedChange={setAllowSelfSignup}
                       />
-                      Allow new players to create their own accounts
                     </label>
-                    <label className="flex items-center gap-2 text-xs text-slate-200">
-                      <input
-                        type="checkbox"
+                    <label className="flex items-center justify-between gap-3 text-xs text-[var(--hud-text)] cursor-pointer">
+                      <span>Allow passwordless guest player sign-in</span>
+                      <HudToggle
+                        as="checkbox"
                         checked={allowGuests}
-                        onChange={(e) => setAllowGuests(e.target.checked)}
+                        onCheckedChange={setAllowGuests}
                       />
-                      Allow passwordless guest player sign-in
                     </label>
-                    <label className="flex items-center gap-2 text-xs text-slate-200">
-                      <input
-                        type="checkbox"
+                    <label className="flex items-center justify-between gap-3 text-xs text-[var(--hud-text)] cursor-pointer">
+                      <span>Require non-admin players to have a character before speaking in chat (Default: ON)</span>
+                      <HudToggle
+                        as="checkbox"
                         checked={requireCharacterToSpeak}
-                        onChange={(e) => setRequireCharacterToSpeak(e.target.checked)}
+                        onCheckedChange={setRequireCharacterToSpeak}
                       />
-                      Require non-admin players to have a character before speaking in chat (Default: ON)
                     </label>
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-[var(--hud-muted)]">
                           Update shared Player Passcode {passcodeConfigured ? "(currently set)" : "(none)"}
                         </span>
                         {passcodeConfigured && (
@@ -3104,26 +3083,26 @@ export function SettingsModal({
                         value={sharedPasscode}
                         onChange={(e) => setSharedPasscode(e.target.value)}
                         placeholder="Leave blank to keep unchanged"
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <button
-                        type="button"
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hud-line-soft)] pt-3">
+                      <HudButton
+                        variant="danger"
+                        size="sm"
                         disabled={saving}
                         onClick={() => void handleUpdateAccessPolicy(true)}
-                        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-500/20"
                       >
                         Revoke All Existing Tokens
-                      </button>
-                      <button
-                        type="button"
+                      </HudButton>
+                      <HudButton
+                        variant="cta"
+                        size="sm"
                         disabled={saving}
                         onClick={() => void handleUpdateAccessPolicy(false)}
-                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
                       >
                         Save Access Policy
-                      </button>
+                      </HudButton>
                     </div>
                   </div>
                 </>
@@ -3133,16 +3112,154 @@ export function SettingsModal({
 
           {activeTab === "display" && (
             <div className="space-y-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+              {/* 1. HUD Theme */}
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 space-y-3">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                    HUD Theme
+                  </div>
+                  <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
+                    Switch between Cyberpunk 2077 and official Cyberpunk RED color palettes (saved in this browser).
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {(
+                    [
+                      {
+                        id: "2077",
+                        label: "Cyberpunk 2077",
+                        desc: "Crimson Glass / Cyan / Acid Yellow — default",
+                        swatches: ["#e11d48", "#67e8f9", "#fcee0a"],
+                      },
+                      {
+                        id: "red-core",
+                        label: "RED Core",
+                        desc: "Crimson Glass / Stark White / Amber-Gold",
+                        swatches: ["#e10a24", "#ffffff", "#ffb000"],
+                      },
+                      {
+                        id: "red-deck",
+                        label: "RED Deck",
+                        desc: "Deep Ink / #fb0a26 Crimson / CRT Teal",
+                        swatches: ["#fb0a26", "#46ebeb", "#f59e0b"],
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={hudTheme === opt.id}
+                      onClick={() => onChangeHudTheme?.(opt.id)}
+                      className={`border px-3 py-2.5 text-left transition ${
+                        hudTheme === opt.id
+                          ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                          : "border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold">{opt.label}</span>
+                        <span className="flex items-center gap-1" aria-hidden="true">
+                          {opt.swatches.map((hex) => (
+                            <span
+                              key={hex}
+                              className="h-2.5 w-2.5 border border-white/25"
+                              style={{ backgroundColor: hex }}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-[var(--hud-muted)]">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Font & Accessibility Preset */}
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 space-y-3">
+                <div>
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                    Font &amp; Accessibility Preset
+                  </div>
+                  <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
+                    Choose between stylized Cyberpunk typography, low-fatigue sans, or Atkinson Hyperlegible for maximum clarity.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {(
+                    [
+                      {
+                        id: "cyber",
+                        label: "Cyber HUD",
+                        desc: "Chakra Petch + Rajdhani + JetBrains Mono — default",
+                      },
+                      {
+                        id: "oxanium",
+                        label: "Neon Tactical",
+                        desc: "Orbitron + Oxanium",
+                      },
+                      {
+                        id: "clean",
+                        label: "Clean Sans",
+                        desc: "Inter UI & prose for low-fatigue sessions",
+                      },
+                      {
+                        id: "hyperlegible",
+                        label: "Atkinson Hyperlegible",
+                        desc: "Maximum glyph clarity across all UI chrome, prose & numbers",
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={fontPreset === opt.id}
+                      onClick={() => onChangeFontPreset?.(opt.id)}
+                      className={`border px-3 py-2.5 text-left transition ${
+                        fontPreset === opt.id
+                          ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                          : "border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{opt.label}</div>
+                      <div className="mt-0.5 text-[11px] text-[var(--hud-muted)]">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Visual Effects / Reduced FX */}
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4">
+                <label className="flex items-center justify-between gap-4 cursor-pointer">
+                  <div>
+                    <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                      Clean / Reduced FX
+                    </div>
+                    <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
+                      Disable scanlines, hex overlays, title glitching, and hover flicker while keeping full HUD contrast.
+                    </p>
+                  </div>
+                  <HudToggle
+                    as="checkbox"
+                    checked={hudReducedFx}
+                    onCheckedChange={(checked) => onChangeHudReducedFx?.(checked)}
+                    onLabel="REDUCED"
+                    offLabel="FULL FX"
+                    className="min-w-20"
+                  />
+                </label>
+              </div>
+
+              {/* 4. HUD Text Size */}
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 space-y-3">
+                <div>
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                     HUD Text Size
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
+                  <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
                     Adjust overall font scale across chat messages, character sheets, and briefings (saved in this browser).
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {(
                     [
                       { id: "standard", label: "Standard (100%)", desc: "Default compact HUD" },
@@ -3153,30 +3270,32 @@ export function SettingsModal({
                     <button
                       key={opt.id}
                       type="button"
+                      aria-pressed={uiScale === opt.id}
                       onClick={() => onChangeUiScale?.(opt.id)}
-                      className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                      className={`border px-3 py-2.5 text-left transition ${
                         uiScale === opt.id
-                          ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
-                          : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                          ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                          : "border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                       }`}
                     >
                       <div className="text-xs font-bold">{opt.label}</div>
-                      <div className="text-[11px] text-slate-400">{opt.desc}</div>
+                      <div className="text-[11px] text-[var(--hud-muted)]">{opt.desc}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+              {/* 5. Font Thickness / Boldness */}
+              <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 space-y-3">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                     Font Thickness / Boldness
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
+                  <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
                     Increase font weight so thin strokes feel fuller and sharper against dark panels.
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {(
                     [
                       { id: "normal", label: "Slim (500)", desc: "Lighter HUD strokes" },
@@ -3187,15 +3306,16 @@ export function SettingsModal({
                     <button
                       key={opt.id}
                       type="button"
+                      aria-pressed={uiWeight === opt.id}
                       onClick={() => onChangeUiWeight?.(opt.id)}
-                      className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                      className={`border px-3 py-2.5 text-left transition ${
                         uiWeight === opt.id
-                          ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
-                          : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                          ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                          : "border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
                       }`}
                     >
                       <div className="text-xs font-bold">{opt.label}</div>
-                      <div className="text-[11px] text-slate-400">{opt.desc}</div>
+                      <div className="text-[11px] text-[var(--hud-muted)]">{opt.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -3206,82 +3326,78 @@ export function SettingsModal({
           {activeTab === "account" && (
             <div className="space-y-4">
               {!authStatus?.auth_enabled ? (
-                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+                <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 text-xs text-[var(--hud-text)]">
                   Account authentication is currently off (Open Table Mode). Enable Access &amp; Auth in Admin settings to use named user accounts.
                 </div>
               ) : !authStatus.username || authStatus.username === "player" && authStatus.pin_only_mode ? (
-                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
+                <div className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4 text-xs text-[var(--hud-text)]">
                   You are currently connected as a guest / passcode player. Sign in or register a named account to manage your own username and password.
                 </div>
               ) : (
-                <form onSubmit={handleUpdateMyAccount} className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <form onSubmit={handleUpdateMyAccount} className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
                         Account Credentials ({authStatus.username})
                       </div>
-                      <p className="mt-0.5 text-xs text-slate-400">
+                      <p className="mt-0.5 text-xs text-[var(--hud-muted)]">
                         Change your login username or password. Owned character sheets stay linked to your account automatically.
                       </p>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block space-y-1 text-xs">
-                      <span className="text-slate-300">Username</span>
+                      <span className="text-[var(--hud-text)]">Username</span>
                       <input
                         type="text"
                         value={acctNewUsername}
                         onChange={(e) => setAcctNewUsername(e.target.value)}
                         placeholder={authStatus.username}
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </label>
                     <label className="block space-y-1 text-xs">
-                      <span className="text-slate-300">Current Password *</span>
+                      <span className="text-[var(--hud-text)]">Current Password *</span>
                       <input
                         type="password"
                         value={acctCurrentPassword}
                         onChange={(e) => setAcctCurrentPassword(e.target.value)}
                         placeholder="Confirm current password"
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </label>
                     <label className="block space-y-1 text-xs">
-                      <span className="text-slate-300">New Password (optional)</span>
+                      <span className="text-[var(--hud-text)]">New Password (optional)</span>
                       <input
                         type="password"
                         value={acctNewPassword}
                         onChange={(e) => setAcctNewPassword(e.target.value)}
                         placeholder="Leave blank to keep current"
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </label>
                     <label className="block space-y-1 text-xs">
-                      <span className="text-slate-300">Confirm New Password</span>
+                      <span className="text-[var(--hud-text)]">Confirm New Password</span>
                       <input
                         type="password"
                         value={acctConfirmPassword}
                         onChange={(e) => setAcctConfirmPassword(e.target.value)}
                         placeholder="Repeat new password"
-                        className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </label>
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="rounded-md bg-cyan-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
-                    >
+                  <div className="flex justify-end pt-1">
+                    <HudButton variant="cta" size="md" type="submit" disabled={saving}>
                       {saving ? "Updating..." : "Update Account"}
-                    </button>
+                    </HudButton>
                   </div>
                 </form>
               )}
             </div>
           )}
         </div>
-      </div>
+      </CyberFrame>
     </div>
   );
 }

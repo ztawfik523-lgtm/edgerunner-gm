@@ -49,15 +49,15 @@ export function TopBar({
   const canAdminSettings = isTrueAdmin && !viewAsUser;
 
   return (
-    <header className="shrink-0 border-b border-rose-500/25 bg-[#0b0f18]/92 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.45)]">
+    <header className="shrink-0 border-b border-[var(--hud-line)] bg-[var(--hud-panel)] backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.45)]">
       <div className="flex flex-nowrap items-center justify-between gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5">
         {/* Left: Compact Brand */}
         <div className="flex shrink-0 items-center gap-1.5">
-          <div className="cyber-cut-sm cyber-brand-badge flex items-center gap-1.5 border border-rose-500/50 bg-gradient-to-r from-rose-600/25 via-rose-950/35 to-cyan-950/30 px-1.5 py-0.5 sm:px-2">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]" />
+          <div className="flex items-center gap-2 border border-[var(--hud-line)] bg-[var(--hud-row)] px-2.5 py-0.5">
+            <span className="cp-pulse h-1.5 w-1.5 shrink-0 bg-[var(--hud-primary-bright)]" />
             <span
               data-text="Cyberpunk RED"
-              className="cyber-glitch-title font-cyber-display text-[10px] font-bold tracking-[0.12em] text-rose-200 uppercase"
+              className="cp-glitch font-cyber-display text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--hud-text)]"
             >
               <span className="sm:hidden">CP:RED</span>
               <span className="hidden sm:inline">Cyberpunk RED</span>
@@ -71,16 +71,20 @@ export function TopBar({
             type="button"
             onClick={onOpenCoop}
             title="Party players & LAN hosting"
-            className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:gap-1.5 sm:px-2 sm:text-xs ${
+            className={`cyber-btn-tac cp-fx-hover shrink-0 px-2 py-1 text-[11px] font-medium sm:px-2.5 sm:text-xs ${
               health?.lan_enabled
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                : "border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-500/60"
+                ? "border-[var(--hud-ok)]/60 text-[var(--hud-ok)]"
+                : ""
             }`}
           >
-            {health?.lan_enabled ? <Globe className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5 text-cyan-400" />}
+            {health?.lan_enabled ? (
+              <Globe className="h-3.5 w-3.5 text-[var(--hud-ok)]" />
+            ) : (
+              <Users className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+            )}
             <span>Party</span>
             {coopCount > 0 && (
-              <span className="rounded-full bg-slate-800 px-1.5 font-mono text-[10px] text-cyan-300">
+              <span className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-1.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
                 {coopCount}
               </span>
             )}
@@ -96,10 +100,10 @@ export function TopBar({
                   : "Settings"
                 : "Display & Account Settings"
             }
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs font-medium text-slate-200 transition hover:border-cyan-500/60 hover:text-cyan-200 sm:px-2"
+            className="cyber-btn-tac cp-fx-hover shrink-0 px-2 py-1 text-xs font-medium sm:px-2.5"
           >
-            <Settings className="h-3.5 w-3.5 text-cyan-400" />
-            <span className="font-cyber-hud tracking-wide hidden sm:inline">Settings</span>
+            <Settings className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+            <span className="hidden sm:inline">Settings</span>
           </button>
 
           {isTrueAdmin && onToggleViewAsUser && (
@@ -116,35 +120,35 @@ export function TopBar({
                   ? "Currently previewing as a Player (GM secrets & admin controls hidden). Click to switch back to Admin."
                   : "Switch to Player view without signing out (hides GM secrets & admin controls)."
               }
-              className={`inline-flex shrink-0 items-center justify-center rounded-md border p-1 transition sm:p-1.5 ${
+              className={`cyber-btn-tac cp-fx-hover shrink-0 justify-center p-1 sm:p-1.5 ${
                 viewAsUser
-                  ? "border-amber-400/70 bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
-                  : "border-rose-500/45 bg-rose-500/10 text-rose-200 hover:border-rose-400 hover:bg-rose-500/20"
+                  ? "border-[var(--hud-warn)]/70 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                  : ""
               }`}
             >
               {viewAsUser ? (
-                <UserCheck className="h-3.5 w-3.5 text-amber-300" />
+                <UserCheck className="h-3.5 w-3.5 text-[var(--hud-warn)]" />
               ) : (
-                <Shield className="h-3.5 w-3.5 text-rose-400" />
+                <Shield className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" />
               )}
             </button>
           )}
 
           {authStatus?.auth_enabled && (authStatus.role === "admin" || authStatus.role === "user") && (
-            <div className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1 text-[11px] sm:px-2">
+            <div className="inline-flex shrink-0 items-center gap-1 border border-[var(--hud-line)] bg-black/40 px-2 py-1 text-[11px] text-[var(--hud-text)] sm:px-2.5">
               {authStatus.role === "admin" && !viewAsUser ? (
-                <Shield className="h-3 w-3 shrink-0 text-rose-400" aria-hidden="true" />
+                <Shield className="h-3 w-3 shrink-0 text-[var(--hud-primary-bright)]" aria-hidden="true" />
               ) : (
-                <UserCheck className="h-3 w-3 shrink-0 text-cyan-400" aria-hidden="true" />
+                <UserCheck className="h-3 w-3 shrink-0 text-[var(--hud-accent)]" aria-hidden="true" />
               )}
-              <span className="max-w-[68px] truncate font-semibold text-slate-200 sm:max-w-[110px]">
+              <span className="max-w-[68px] truncate font-semibold text-[var(--hud-accent)] sm:max-w-[110px]">
                 {authStatus.username || (authStatus.role === "admin" ? "Admin" : "Player")}
               </span>
               {authStatus.role === "user" && onOpenAuth && (
                 <button
                   type="button"
                   onClick={onOpenAuth}
-                  className="ml-1 rounded px-1 text-[10px] text-amber-300 hover:bg-slate-800"
+                  className="ml-1 border border-[var(--hud-warn)]/40 bg-[var(--hud-warn)]/10 px-1.5 py-0.5 text-[10px] text-[var(--hud-warn)] hover:bg-[var(--hud-warn)]/20"
                 >
                   Admin Login
                 </button>
@@ -155,7 +159,7 @@ export function TopBar({
                   onClick={onSignOut}
                   title="Sign out"
                   aria-label="Sign out"
-                  className="ml-0.5 rounded p-0.5 text-slate-400 hover:bg-slate-800 hover:text-rose-300"
+                  className="ml-0.5 p-0.5 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                 >
                   <LogOut className="h-3 w-3" />
                 </button>
@@ -168,9 +172,9 @@ export function TopBar({
               type="button"
               onClick={onOpenAuth}
               title="Enable Admin & Player sign-in accounts"
-              className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200"
+              className="cyber-btn-tac cp-fx-hover shrink-0 px-2 py-1 text-[11px] font-medium"
             >
-              <Shield className="h-3 w-3 text-amber-400" />
+              <Shield className="h-3 w-3 text-[var(--hud-warn)]" />
               <span className="hidden sm:inline">Accounts</span>
             </button>
           )}
@@ -181,15 +185,15 @@ export function TopBar({
                 type="button"
                 onClick={onOpenCorebookSettings}
                 title="Upload your Cyberpunk RED Corebook PDF under Settings -> BYOC (Freeform & Homebrew play works without it)"
-                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
+                className="cyber-btn-tac cp-fx-hover shrink-0 border-[var(--hud-warn)]/50 px-2 py-1 text-[11px] font-medium text-[var(--hud-warn)]"
               >
-                <BookOpen className="h-3 w-3" />
+                <BookOpen className="h-3 w-3 text-[var(--hud-warn)]" />
                 <span className="hidden sm:inline">No BYOC</span>
               </button>
             ) : (
               <span
                 title={health.detail ?? "No Corebook uploaded yet (Homebrew & Freeform play still active)"}
-                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200"
+                className="inline-flex shrink-0 items-center gap-1 border border-[var(--hud-warn)]/50 bg-[var(--hud-row)] px-2 py-1 text-[11px] text-[var(--hud-warn)]"
               >
                 <BookOpen className="h-3 w-3" />
                 <span className="hidden sm:inline">No BYOC</span>
@@ -200,7 +204,7 @@ export function TopBar({
       </div>
 
       {revisionMismatch && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-amber-500/30 bg-amber-500/10 px-4 py-1 text-[11px] text-amber-300">
+        <div className="cyber-hazard-thin flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hud-warn)]/50 bg-black/60 px-4 py-1 text-[11px] text-[var(--hud-warn)]">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <span>
@@ -211,7 +215,7 @@ export function TopBar({
             <button
               type="button"
               onClick={() => void onSyncRevisions()}
-              className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-100 hover:bg-amber-500/30"
+              className="cyber-btn-tac cp-fx-hover border-[var(--hud-warn)]/60 px-2 py-0.5 text-[10px] font-semibold text-[var(--hud-warn)]"
             >
               Sync Branch State
             </button>

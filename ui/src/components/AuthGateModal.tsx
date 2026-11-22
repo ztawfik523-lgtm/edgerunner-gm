@@ -3,6 +3,7 @@ import { KeyRound, Loader2, Shield, ShieldCheck, UserCheck, UserPlus, X } from "
 import { loginAuth, logoutAuth, registerAuth, setupInitialAuth } from "../api";
 import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
 import type { AuthStatus } from "../types";
+import { CyberFrame, HazardBadge, HudButton, HudToggle } from "./cyber";
 
 interface AuthGateModalProps {
   open: boolean;
@@ -178,6 +179,15 @@ export function AuthGateModal({
         { id: "admin", label: "Admin Sign-In" },
       ];
 
+  const modalTitle =
+    tab === "setup"
+      ? "First-Time Setup — Admin Account"
+      : tab === "signup"
+        ? "Create Player Account"
+        : tab === "admin"
+          ? "Admin Sign-In"
+          : "User Sign-In";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-4 backdrop-blur-sm"
@@ -185,21 +195,27 @@ export function AuthGateModal({
       aria-modal="true"
       aria-label="Cyberpunk RED GM Access"
     >
-      <div className="cyber-cut cyber-panel-glow max-h-[92dvh] w-full max-w-md overflow-y-auto border border-cyan-500/35 bg-[#0b1019] shadow-2xl">
-        {/* Cyberpunk Banner Header */}
-        <div className="relative border-b border-slate-800 px-5 py-4">
+      <CyberFrame
+        variant="modal"
+        className="max-h-[92dvh] w-full max-w-md overflow-y-auto"
+      >
+        {/* Slim Crimson Header Band with Cyberpunk Backdrop */}
+        <div className="relative overflow-hidden border-b border-[var(--hud-line)] bg-[#5a0b1c]/55 px-4 py-3 sm:px-5">
           <img
             src={cyberHeroBackdrop}
             alt=""
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
           />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#090d16]/95 via-[#0b1019]/85 to-[#090d16]/90" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#3a0712]/80 via-[#5a0b1c]/55 to-[#12070c]/85" />
           <div className="relative z-10 flex items-start justify-between gap-2">
             <div className="flex items-start gap-2.5">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-cyan-400" />
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--hud-accent)]" />
               <div>
-                <div className="mb-1 inline-flex items-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-rose-300">
+                <HazardBadge
+                  tone={tab === "setup" || tab === "admin" ? "danger" : "accent"}
+                  className="mb-1 text-[9px]"
+                >
                   {tab === "setup"
                     ? "FIRST-TIME INSTALL // ADMIN SETUP"
                     : tab === "signup"
@@ -207,28 +223,14 @@ export function AuthGateModal({
                       : tab === "admin"
                         ? "ROOT ACCESS // ADMIN"
                         : "NIGHT CITY NET // SIGN IN"}
-                </div>
+                </HazardBadge>
                 <h2
-                  data-text={
-                    tab === "setup"
-                      ? "First-Time Setup — Admin Account"
-                      : tab === "signup"
-                        ? "Create Player Account"
-                        : tab === "admin"
-                          ? "Admin Sign-In"
-                          : "User Sign-In"
-                  }
-                  className="cyber-glitch-title font-cyber-display text-sm font-bold uppercase tracking-wider text-slate-100"
+                  data-text={modalTitle}
+                  className="cp-glitch font-cyber-display text-sm font-semibold uppercase tracking-wider text-[var(--hud-text)]"
                 >
-                  {tab === "setup"
-                    ? "First-Time Setup — Admin Account"
-                    : tab === "signup"
-                      ? "Create Player Account"
-                      : tab === "admin"
-                        ? "Admin Sign-In"
-                        : "User Sign-In"}
+                  {modalTitle}
                 </h2>
-                <p className="mt-0.5 text-[11px] text-slate-300">
+                <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                   {tab === "admin"
                     ? "Full access: AI provider, Corebook PDF, prompts, network IP/port, and user management."
                     : tab === "signup"
@@ -240,281 +242,295 @@ export function AuthGateModal({
               </div>
             </div>
             {!blocking && onClose && (
-              <button
-                type="button"
+              <HudButton
+                variant="tactical"
+                size="xs"
                 onClick={onClose}
                 aria-label="Close"
-                className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                className="px-2 py-1"
               >
                 <X className="h-4 w-4" />
-              </button>
+              </HudButton>
             )}
           </div>
         </div>
 
         <div className="p-5">
+          <div className="mb-4 flex gap-1 border border-[var(--hud-line-soft)] bg-black/50 p-1">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  setError(null);
+                }}
+                className={`flex-1 px-2.5 py-1.5 font-cyber-ui text-xs font-semibold transition ${
+                  tab === t.id
+                    ? "border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                    : "border border-transparent text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-        <div className="mb-4 flex gap-1.5 rounded-lg bg-slate-950 p-1">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => {
-                setTab(t.id);
-                setError(null);
-              }}
-              className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
-                tab === t.id
-                  ? "bg-cyan-600/30 text-cyan-200 border border-cyan-500/40"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tab === "setup" ? (
-          <form onSubmit={handleSetup} className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-medium text-slate-300">
-                One-time Admin bootstrap token (provided by the server operator)
-              </span>
-              <input
-                type="password"
-                required
-                minLength={32}
-                autoComplete="off"
-                value={bootstrapToken}
-                onChange={(e) => setBootstrapToken(e.target.value)}
-                placeholder="Server bootstrap token"
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-              <span className="mt-1 block text-[10px] text-slate-500">
-                The operator must configure REDGM_BOOTSTRAP_TOKEN before first setup.
-              </span>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
+          {tab === "setup" ? (
+            <form onSubmit={handleSetup} className="space-y-3">
+              <label className="block">
+                <span className="mb-1 block font-cyber-ui text-[11px] font-medium text-[var(--hud-text)]">
+                  One-time Admin bootstrap token (provided by the server operator)
+                </span>
+                <input
+                  type="password"
+                  required
+                  minLength={32}
+                  autoComplete="off"
+                  value={bootstrapToken}
+                  onChange={(e) => setBootstrapToken(e.target.value)}
+                  placeholder="Server bootstrap token"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                />
+                <span className="mt-1 block font-cyber-ui text-[10px] text-[var(--hud-muted)]">
+                  The operator must configure REDGM_BOOTSTRAP_TOKEN before first setup.
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
                 <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-slate-300">Admin username</span>
+                  <span className="mb-1 block font-cyber-ui text-[11px] font-medium text-[var(--hud-text)]">
+                    Admin username
+                  </span>
                   <input
                     type="text"
                     required
                     value={setupAdminUser}
                     onChange={(e) => setSetupAdminUser(e.target.value)}
                     placeholder="e.g. fixer_boss"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                   />
                 </label>
+                <label className="block">
+                  <span className="mb-1 block font-cyber-ui text-[11px] font-medium text-[var(--hud-text)]">
+                    Admin password (min 6)
+                  </span>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={setupAdminPass}
+                    onChange={(e) => setSetupAdminPass(e.target.value)}
+                    placeholder="Strong password"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+                <div className="font-cyber-display text-[11px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                  Normal User Access (Optional)
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                      Player username
+                    </span>
+                    <input
+                      type="text"
+                      value={setupPlayerUser}
+                      onChange={(e) => setSetupPlayerUser(e.target.value)}
+                      placeholder="player"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                      Player password
+                    </span>
+                    <input
+                      type="password"
+                      value={setupPlayerPass}
+                      onChange={(e) => setSetupPlayerPass(e.target.value)}
+                      placeholder="Optional (min 4)"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                    Or shared Player room passcode (min 4 chars)
+                  </span>
+                  <input
+                    type="password"
+                    value={setupRoomPasscode}
+                    onChange={(e) => setSetupRoomPasscode(e.target.value)}
+                    placeholder="Optional shared table passcode"
+                    className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                  />
+                </label>
+                <label className="flex cursor-pointer items-center justify-between gap-2 font-cyber-ui text-xs text-[var(--hud-text)]">
+                  <span>Allow players to create their own accounts (Sign Up)</span>
+                  <HudToggle
+                    as="checkbox"
+                    checked={allowSelfSignup}
+                    onCheckedChange={setAllowSelfSignup}
+                  />
+                </label>
+                <label className="flex cursor-pointer items-center justify-between gap-2 font-cyber-ui text-xs text-[var(--hud-text)]">
+                  <span>Allow passwordless guest player sign-in</span>
+                  <HudToggle
+                    as="checkbox"
+                    checked={allowGuests}
+                    onCheckedChange={setAllowGuests}
+                  />
+                </label>
+              </div>
+
+              {error && (
+                <div className="cyber-hazard-thin border border-[var(--hud-primary-bright)]/70 bg-[#5a0b1c]/40 px-3 py-2 font-cyber-ui text-xs text-rose-100">
+                  {error}
+                </div>
+              )}
+
+              <HudButton
+                type="submit"
+                variant="cta"
+                size="md"
+                disabled={busy}
+                className="w-full py-2"
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}
+                Create Admin &amp; Enable Auth
+              </HudButton>
+            </form>
+          ) : tab === "signup" ? (
+            <form onSubmit={handleSignup} className="space-y-3">
               <label className="block">
-                <span className="mb-1 block text-[11px] font-medium text-slate-300">
-                  Admin password (min 6)
+                <span className="mb-1 block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
+                  Choose Username
+                </span>
+                <input
+                  type="text"
+                  required
+                  maxLength={40}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g. choom_v"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
+                  Password (min 4 characters)
                 </span>
                 <input
                   type="password"
                   required
-                  minLength={6}
-                  value={setupAdminPass}
-                  onChange={(e) => setSetupAdminPass(e.target.value)}
-                  placeholder="Strong password"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  minLength={4}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Choose a password..."
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                 />
               </label>
-            </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Normal User Access (Optional)
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="mb-1 block text-[11px] text-slate-400">Player username</span>
-                  <input
-                    type="text"
-                    value={setupPlayerUser}
-                    onChange={(e) => setSetupPlayerUser(e.target.value)}
-                    placeholder="player"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] text-slate-400">Player password</span>
-                  <input
-                    type="password"
-                    value={setupPlayerPass}
-                    onChange={(e) => setSetupPlayerPass(e.target.value)}
-                    placeholder="Optional (min 4)"
-                    className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                  />
-                </label>
-              </div>
               <label className="block">
-                <span className="mb-1 block text-[11px] text-slate-400">
-                  Or shared Player room passcode (min 4 chars)
+                <span className="mb-1 block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
+                  Confirm Password
                 </span>
                 <input
                   type="password"
-                  value={setupRoomPasscode}
-                  onChange={(e) => setSetupRoomPasscode(e.target.value)}
-                  placeholder="Optional shared table passcode"
-                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  required
+                  minLength={4}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat password..."
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                 />
               </label>
-              <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={allowSelfSignup}
-                  onChange={(e) => setAllowSelfSignup(e.target.checked)}
-                />
-                Allow players to create their own accounts (Sign Up)
-              </label>
-              <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={allowGuests}
-                  onChange={(e) => setAllowGuests(e.target.checked)}
-                />
-                Allow passwordless guest player sign-in
-              </label>
-            </div>
 
-            {error && (
-              <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                {error}
-              </div>
-            )}
+              {error && (
+                <div className="cyber-hazard-thin border border-[var(--hud-primary-bright)]/70 bg-[#5a0b1c]/40 px-3 py-2 font-cyber-ui text-xs text-rose-100">
+                  {error}
+                </div>
+              )}
 
-              <button
+              <HudButton
                 type="submit"
+                variant="cta"
+                size="md"
                 disabled={busy}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+                className="w-full py-2"
               >
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}
-                Create Admin &amp; Enable Auth
-              </button>
-          </form>
-        ) : tab === "signup" ? (
-          <form onSubmit={handleSignup} className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-300">
-                Choose Username
-              </span>
-              <input
-                type="text"
-                required
-                maxLength={40}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. choom_v"
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </label>
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+                Create Player Account
+              </HudButton>
+            </form>
+          ) : (
+            <form onSubmit={handleLogin} className="space-y-3">
+              <label className="block">
+                <span className="mb-1 block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
+                  {tab === "admin" ? "Admin Username" : "Username (optional if using room passcode)"}
+                </span>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required={tab === "admin"}
+                  placeholder={tab === "admin" ? "Enter admin username..." : "Username"}
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                />
+              </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-300">
-                Password (min 4 characters)
-              </span>
-              <input
-                type="password"
-                required
-                minLength={4}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Choose a password..."
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </label>
+              <label className="block">
+                <span className="mb-1 block font-cyber-ui text-xs font-medium text-[var(--hud-text)]">
+                  {tab === "admin" ? "Admin Password" : "Password or Shared Player Passcode"}
+                </span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required={tab === "admin" || !authStatus?.allow_guest_users}
+                  placeholder="Enter password..."
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                />
+              </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-300">
-                Confirm Password
-              </span>
-              <input
-                type="password"
-                required
-                minLength={4}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repeat password..."
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </label>
+              {error && (
+                <div className="cyber-hazard-thin border border-[var(--hud-primary-bright)]/70 bg-[#5a0b1c]/40 px-3 py-2 font-cyber-ui text-xs text-rose-100">
+                  {error}
+                </div>
+              )}
 
-            {error && (
-              <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
-            >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
-              Create Player Account
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleLogin} className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-300">
-                {tab === "admin" ? "Admin Username" : "Username (optional if using room passcode)"}
-              </span>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required={tab === "admin"}
-                placeholder={tab === "admin" ? "Enter admin username..." : "Username"}
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-300">
-                {tab === "admin" ? "Admin Password" : "Password or Shared Player Passcode"}
-              </span>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required={tab === "admin" || !authStatus?.allow_guest_users}
-                placeholder="Enter password..."
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-              />
-            </label>
-
-            {error && (
-              <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-            >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
-              {tab === "admin" ? "Sign In as Admin" : "Sign In as Player"}
-            </button>
-
-            {tab === "user" && authStatus?.allow_guest_users && (
-              <button
-                type="button"
+              <HudButton
+                type="submit"
+                variant="cta"
+                size="md"
                 disabled={busy}
-                onClick={() => void handleQuickGuest()}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
+                className="w-full py-2"
               >
-                <UserCheck className="h-3.5 w-3.5" />
-                Join as Guest Player
-              </button>
-            )}
-          </form>
-        )}
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                {tab === "admin" ? "Sign In as Admin" : "Sign In as Player"}
+              </HudButton>
+
+              {tab === "user" && authStatus?.allow_guest_users && (
+                <HudButton
+                  type="button"
+                  variant="tactical"
+                  size="md"
+                  disabled={busy}
+                  onClick={() => void handleQuickGuest()}
+                  className="w-full py-2"
+                >
+                  <UserCheck className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  Join as Guest Player
+                </HudButton>
+              )}
+            </form>
+          )}
         </div>
-      </div>
+      </CyberFrame>
     </div>
   );
 }

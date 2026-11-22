@@ -30,6 +30,7 @@ import {
 } from "../api";
 import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
 import type { CampaignPresets, CampaignRecord, CharacterRecord } from "../types";
+import { CyberFrame, HazardBadge, HudButton, HudToggle, SegmentedBar } from "./cyber";
 import { FieldAiActions } from "./FieldAiActions";
 
 interface CampaignCreatorModalProps {
@@ -1211,7 +1212,7 @@ export function CampaignCreatorModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Campaign Creator"
@@ -1219,514 +1220,676 @@ export function CampaignCreatorModal({
         if (e.key === "Escape") onClose();
       }}
     >
-      <form
-        onSubmit={handleSubmit}
-        className="cyber-hud-card flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-[#0b0f19] shadow-2xl"
+      <CyberFrame
+        variant="modal"
+        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden"
       >
-        {/* Header with Night Market Hero Strip */}
-        <div className="relative flex items-center justify-between overflow-hidden border-b border-cyan-500/30 bg-[#0e1424] px-5 py-3.5">
-          <img
-            src={nightMarketHero}
-            alt=""
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25"
-          />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0b0f19]/95 via-[#0e1424]/85 to-[#0b0f19]/90" />
-          <div className="relative z-10 flex items-center gap-2.5">
-            <Compass className="h-5 w-5 text-cyan-400" />
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-cyber-display text-sm font-bold tracking-wide text-slate-100 uppercase">
-                  Corebook Campaign Architect (Night City 2045)
-                </h2>
-                {draftRestored && (
-                  <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
-                    Draft Restored
-                  </span>
-                )}
-              </div>
-              <p className="font-cyber-hud text-[11px] text-slate-400">
-                District threat, active gangs &amp; factions, Beat Chart, and spoiler-shielded GM truths.
-              </p>
-            </div>
-          </div>
-          <div className="relative z-10 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleResetDraft}
-              title="Clear unsaved draft and reset form"
-              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/90 px-2 py-1 text-[11px] text-slate-300 hover:border-rose-500/50 hover:text-rose-200"
-            >
-              <RotateCcw className="h-3 w-3" />
-              <span className="hidden sm:inline">Reset</span>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close Campaign Creator"
-              className="rounded-md p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Quick AI / Scaffold Bar */}
-          <div className="space-y-2.5 rounded-lg border border-cyan-500/30 bg-cyan-950/15 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Slim Crimson Header Band with Night Market Hero Strip */}
+          <div className="relative flex items-center justify-between overflow-hidden border-b border-[var(--hud-line)] bg-[#5a0b1c]/55 px-4 py-3 sm:px-5">
+            <img
+              src={nightMarketHero}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
+            />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#3a0712]/80 via-[#5a0b1c]/55 to-[#12070c]/85" />
+            <div className="relative z-10 flex items-center gap-2.5">
+              <Compass className="h-5 w-5 shrink-0 text-[var(--hud-accent)]" />
               <div>
-                <div className="font-cyber-hud text-xs font-bold tracking-wide text-cyan-200 uppercase">
-                  World Builder &amp; Co-Architect
-                </div>
-                <p className="text-[11px] text-slate-300">
-                  {lockChoices
-                    ? "Locked mode: Generate from Scratch builds around your chosen District, Style, Gangs, and counts."
-                    : "Auto mode: Generate from Scratch picks the District, Style, Gangs, and starting NPC/Objective counts."}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  aria-pressed={lockChoices}
-                  onClick={() => setLockChoices((v) => !v)}
-                  title="Lock District, Caper Style, Gangs, and starting NPC/Objective counts so AI generates around them"
-                  className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 text-[11px] font-semibold transition ${
-                    lockChoices
-                      ? "border-amber-500/70 bg-amber-500/20 text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
-                      : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/50 hover:text-amber-200"
-                  }`}
-                >
-                  {lockChoices ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
-                  {lockChoices ? "Choices Locked" : "Lock Choices"}
-                </button>
-                <button
-                  type="button"
-                  onClick={applyPresetScaffold}
-                  className="inline-flex items-center gap-1 rounded border border-slate-600 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:border-cyan-400"
-                >
-                  <Dices className="h-3.5 w-3.5 text-cyan-400" /> Apply Preset Scaffold
-                </button>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={() => void handleAiCampaign("scratch")}
-                  className="inline-flex items-center gap-1 rounded border border-cyan-500/50 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50"
-                >
-                  <Sparkles className="h-3 w-3" /> {aiBusyField === "scratch" ? "Architecting…" : "Generate from Scratch"}
-                </button>
-              </div>
-            </div>
-
-            {lockChoices && (
-              <div className="flex flex-wrap items-center gap-3 border-t border-cyan-500/20 pt-2 text-[11px] text-amber-200">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
-                  Locked Counts:
-                </span>
-                <label className="inline-flex items-center gap-1.5">
-                  <span>Starting NPCs</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={8}
-                    aria-label="Locked starting NPCs count"
-                    value={targetNpcCount}
-                    onChange={(e) => setTargetNpcCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
-                    className="w-14 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-center font-mono text-xs text-slate-100"
-                  />
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <span>Starting Objectives</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={8}
-                    aria-label="Locked starting Objectives count"
-                    value={targetObjectiveCount}
-                    onChange={(e) => setTargetObjectiveCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
-                    className="w-14 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-center font-mono text-xs text-slate-100"
-                  />
-                </label>
-              </div>
-            )}
-          </div>
-
-          {error && (
-            <div className="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-              {error}
-            </div>
-          )}
-
-          {/* Setting & Style (Collapsible) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-3">
-            <button
-              type="button"
-              onClick={() => setShowSettingStyle((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <MapPin className="h-3.5 w-3.5 text-rose-400" />
-                Setting &amp; Style
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showSettingStyle ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showSettingStyle && (
-              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
-                {/* Row 1: Title + Guidance */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="block text-xs font-semibold text-slate-200">
-                        Campaign Title *
-                      </label>
-                      <FieldAiActions
-                        label="Campaign Title"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("name")}
-                        onImprove={() => void handleAiCampaign("expand", "name")}
-                        onRegen={() => void handleAiCampaign("scratch", "name")}
-                      />
-                    </div>
-                    <input
-                      autoFocus
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Chrome over Kabuki"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-200">
-                      Direction / Theme Prompt
-                    </label>
-                    <input
-                      type="text"
-                      value={aiGuidance}
-                      onChange={(e) => setAiGuidance(e.target.value)}
-                      placeholder="e.g. Noir smuggling crew caught between Maelstrom & Trauma Team"
-                      className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Row 2: District & Caper Style */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-                    <label className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                      <span className="inline-flex items-center gap-1.5">
-                        <MapPin className="h-3.5 w-3.5 text-rose-400" /> Starting District
-                      </span>
-                      {activeDistrict && (
-                        <div className="flex items-center gap-1.5">
-                          {activeDistrict.zone_type && (
-                            <span className="rounded border border-cyan-500/40 bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
-                              {activeDistrict.zone_type}
-                            </span>
-                          )}
-                          <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] text-rose-200">
-                            {activeDistrict.threat_rating}
-                          </span>
-                        </div>
-                      )}
-                    </label>
-                    <select
-                      value={district}
-                      onChange={(e) => setDistrict(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                    >
-                      {presets.districts.map((d) => (
-                        <option key={d.name} value={d.name}>
-                          {d.name} ({d.zone_type ? `${d.zone_type} · ` : ""}{d.threat_rating})
-                        </option>
-                      ))}
-                    </select>
-                    {activeDistrict && (
-                      <p className="text-[11px] text-slate-400">{activeDistrict.summary}</p>
-                    )}
-                  </div>
-
-                  <div className={`rounded-lg border p-3 space-y-2 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-                    <label className="flex items-center justify-between gap-1.5 text-xs font-semibold text-slate-200">
-                      <span className="inline-flex items-center gap-1.5">
-                        <Target className="h-3.5 w-3.5 text-cyan-400" /> Campaign / Caper Style
-                      </span>
-                      <span className="font-mono text-[10px] text-slate-400">
-                        {lockChoices ? "Locked" : "Auto on Scratch"}
-                      </span>
-                    </label>
-                    <select
-                      value={caperStyle}
-                      onChange={(e) => setCaperStyle(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                    >
-                      {presets.caper_styles.map((s) => (
-                        <option key={s.id} value={s.name}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                    {activeStyle && <p className="text-[11px] text-slate-400">{activeStyle.summary}</p>}
-                  </div>
-                </div>
-
-                {/* Factions & Screamsheet Hook */}
-                <div className={`rounded-lg border p-3 space-y-3 ${lockChoices ? "border-amber-500/40 bg-amber-950/10" : "border-slate-800 bg-slate-900/50"}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-slate-200">
-                      Active Gangs &amp; Factions (up to 4)
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2
+                    data-text="Corebook Campaign Architect (Night City 2045)"
+                    className="cp-glitch font-cyber-display text-sm font-semibold uppercase tracking-wider text-[var(--hud-text)]"
+                  >
+                    Corebook Campaign Architect (Night City 2045)
+                  </h2>
+                  {draftRestored && (
+                    <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                      Draft Restored
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setScreamsheetHook(pickOne(presets.screamsheet_hooks))}
-                      className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
-                    >
-                      <Dices className="h-3 w-3" /> Roll Screamsheet Hook
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {presets.factions.map((fac) => {
-                      const picked = selectedFactions.includes(fac.name);
-                      return (
-                        <button
-                          key={fac.name}
-                          type="button"
-                          title={`${fac.type}: ${fac.summary}`}
-                          onClick={() => toggleFaction(fac.name)}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                            picked
-                              ? "border-cyan-500/60 bg-cyan-500/20 text-cyan-100"
-                              : "border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          {fac.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input
-                    type="text"
-                    value={screamsheetHook}
-                    onChange={(e) => setScreamsheetHook(e.target.value)}
-                    placeholder="Screamsheet broadcast headline or rumor hitting Night City Nets today…"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                  {selectedFactions.length > 0 && (
-                    <div className="space-y-1.5 border-t border-slate-800/80 pt-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Faction Dispositions &amp; Turf (Seeded to Campaign Library)
-                      </div>
-                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                        {selectedFactions.map((fname) => {
-                          const meta = factionMeta[fname] ?? { disposition: "Neutral", turf: "" };
-                          return (
-                            <div key={fname} className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-950/70 px-2 py-1">
-                              <span className="min-w-[90px] truncate text-[11px] font-medium text-slate-200">{fname}</span>
-                              <select
-                                aria-label={`${fname} disposition`}
-                                value={meta.disposition}
-                                onChange={(e) =>
-                                  setFactionMeta((prev) => ({
-                                    ...prev,
-                                    [fname]: { disposition: e.target.value, turf: meta.turf },
-                                  }))
-                                }
-                                className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-100"
-                              >
-                                {["Hostile", "Wary", "Neutral", "Allied"].map((d) => (
-                                  <option key={d} value={d}>{d}</option>
-                                ))}
-                              </select>
-                              <input
-                                type="text"
-                                value={meta.turf}
-                                onChange={(e) =>
-                                  setFactionMeta((prev) => ({
-                                    ...prev,
-                                    [fname]: { disposition: meta.disposition, turf: e.target.value },
-                                  }))
-                                }
-                                placeholder="Turf / agenda…"
-                                className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* Premise & Opening Scene (Collapsible) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
-            <button
-              type="button"
-              onClick={() => setShowPremiseOpening((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-                Premise &amp; Opening Scene
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showPremiseOpening ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showPremiseOpening && (
-              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
-                <div>
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="block text-xs font-semibold text-slate-200">
-                      Campaign Premise &amp; Central Conflict
-                    </label>
-                    <FieldAiActions
-                      label="Campaign Premise"
-                      compact
-                      disabled={aiBusy}
-                      busyAction={busyFor("summary")}
-                      onImprove={() => void handleAiCampaign("expand", "summary")}
-                      onRegen={() => void handleAiCampaign("scratch", "summary")}
-                    />
-                  </div>
-                  <textarea
-                    rows={3}
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    placeholder="Core stakes, Fixer/Corp friction, and campaign tone…"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="block text-xs font-semibold text-slate-200">
-                      Opening Scene (Where Session 1 Drops In)
-                    </label>
-                    <FieldAiActions
-                      label="Opening Scene"
-                      compact
-                      disabled={aiBusy}
-                      busyAction={busyFor("opening_scene")}
-                      onImprove={() => void handleAiCampaign("expand", "opening_scene")}
-                      onRegen={() => void handleAiCampaign("scratch", "opening_scene")}
-                    />
-                  </div>
-                  <textarea
-                    rows={3}
-                    value={openingScene}
-                    onChange={(e) => setOpeningScene(e.target.value)}
-                    placeholder="Sensory hook right before Turn 1: rain-slick alley, Afterlife booth, convoy checkpoint…"
-                    className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Beat Chart Outline (Collapsible) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-            <button
-              type="button"
-              onClick={() => setShowBeatChart((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
-                Beat Chart Outline
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showBeatChart ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showBeatChart && (
-              <div className="space-y-2 border-t border-slate-800/80 pt-2">
-                <p className="text-[11px] text-amber-200/80">
-                  Beat Chart: alternate Action, Investigation, and Character-Interaction beats.
+                <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                  District threat, active gangs &amp; factions, Beat Chart, and spoiler-shielded GM truths.
                 </p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {([
-                    ["Hook", "beat_hook", beatHook, setBeatHook, "Inciting Screamsheet / Fixer offer"],
-                    ["Developments", "beat_developments", beatDev, setBeatDev, "Complications & mid-run twists"],
-                    ["Cliffhanger", "beat_cliffhanger", beatCliff, setBeatCliff, "Reversal or trap raising stakes"],
-                    ["Climax", "beat_climax", beatClimax, setBeatClimax, "Showdown / extraction payoff"],
-                    ["Resolution", "beat_resolution", beatRes, setBeatRes, "Eddie payout, Rep & IP aftermath"],
-                  ] as const).map(([label, fieldKey, val, setter, ph]) => (
-                    <div key={label}>
-                      <div className="mb-0.5 flex items-center justify-between gap-1">
-                        <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                          {label}
+              </div>
+            </div>
+            <div className="relative z-10 flex items-center gap-1.5">
+              <HudButton
+                variant="tactical"
+                size="xs"
+                onClick={handleResetDraft}
+                title="Clear unsaved draft and reset form"
+                className="text-[11px]"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span className="hidden sm:inline">Reset</span>
+              </HudButton>
+              <HudButton
+                variant="tactical"
+                size="xs"
+                onClick={onClose}
+                aria-label="Close Campaign Creator"
+                className="px-2 py-1"
+              >
+                <X className="h-4 w-4" />
+              </HudButton>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 space-y-4 overflow-y-auto p-5 font-cyber-ui">
+            {/* Quick AI / Scaffold Bar */}
+            <div className="space-y-2.5 border border-[var(--hud-accent-line)]/55 bg-[var(--hud-accent-navy)]/50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                    World Builder &amp; Co-Architect
+                  </div>
+                  <p className="font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                    {lockChoices
+                      ? "Locked mode: Generate from Scratch builds around your chosen District, Style, Gangs, and counts."
+                      : "Auto mode: Generate from Scratch picks the District, Style, Gangs, and starting NPC/Objective counts."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
+                    active={lockChoices}
+                    aria-pressed={lockChoices}
+                    onClick={() => setLockChoices((v) => !v)}
+                    title="Lock District, Caper Style, Gangs, and starting NPC/Objective counts so AI generates around them"
+                    className={
+                      lockChoices
+                        ? "border-[var(--hud-warn)]/80 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                        : ""
+                    }
+                  >
+                    {lockChoices ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                    {lockChoices ? "Choices Locked" : "Lock Choices"}
+                  </HudButton>
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
+                    onClick={applyPresetScaffold}
+                  >
+                    <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Apply Preset Scaffold
+                  </HudButton>
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
+                    disabled={aiBusy}
+                    onClick={() => void handleAiCampaign("scratch")}
+                    className="border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                  >
+                    <Sparkles className="h-3 w-3" /> {aiBusyField === "scratch" ? "Architecting…" : "Generate from Scratch"}
+                  </HudButton>
+                </div>
+              </div>
+
+              {lockChoices && (
+                <div className="flex flex-wrap items-center gap-3 border-t border-[var(--hud-line-soft)] pt-2 font-cyber-ui text-[11px] text-[var(--hud-warn)]">
+                  <span className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
+                    Locked Counts:
+                  </span>
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>Starting NPCs</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      aria-label="Locked starting NPCs count"
+                      value={targetNpcCount}
+                      onChange={(e) => setTargetNpcCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
+                      className="w-14 border border-[var(--hud-warn)]/50 bg-black/60 px-2 py-0.5 text-center font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-warn)] focus:outline-none"
+                    />
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>Starting Objectives</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      aria-label="Locked starting Objectives count"
+                      value={targetObjectiveCount}
+                      onChange={(e) => setTargetObjectiveCount(Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)))}
+                      className="w-14 border border-[var(--hud-warn)]/50 bg-black/60 px-2 py-0.5 text-center font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-warn)] focus:outline-none"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="cyber-hazard-thin border border-[var(--hud-primary-bright)]/70 bg-[#5a0b1c]/40 px-3 py-2 font-cyber-ui text-xs text-rose-100">
+                {error}
+              </div>
+            )}
+
+            {/* Setting & Style (Collapsible) */}
+            <div className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowSettingStyle((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" />
+                  Setting &amp; Style
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">{showSettingStyle ? "▲ Hide" : "▼ Expand"}</span>
+              </button>
+              {showSettingStyle && (
+                <div className="space-y-3 border-t border-[var(--hud-line-soft)] pt-2.5">
+                  {/* Row 1: Title + Guidance */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <label className="block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                          Campaign Title *
                         </label>
                         <FieldAiActions
-                          label={label}
+                          label="Campaign Title"
                           compact
                           disabled={aiBusy}
-                          busyAction={busyFor(fieldKey)}
-                          onImprove={() => void handleAiCampaign("expand", fieldKey)}
-                          onRegen={() => void handleAiCampaign("scratch", fieldKey)}
+                          busyAction={busyFor("name")}
+                          onImprove={() => void handleAiCampaign("expand", "name")}
+                          onRegen={() => void handleAiCampaign("scratch", "name")}
                         />
                       </div>
                       <input
+                        autoFocus
                         type="text"
-                        value={val}
-                        onChange={(e) => setter(e.target.value)}
-                        placeholder={ph}
-                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="e.g. Chrome over Kabuki"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Starting NPCs & Objectives (Collapsible) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
-            <button
-              type="button"
-              onClick={() => setShowNpcsObjectives((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Users className="h-3.5 w-3.5 text-cyan-400" />
-                Starting NPCs ({npcPairs.length}) &amp; Objectives ({objectivePairs.length})
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showNpcsObjectives ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showNpcsObjectives && (
-              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                      <Users className="h-3.5 w-3.5 text-cyan-400" /> Starting NPCs ({npcPairs.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setNpcPairs((p) => [...p, { key: "", val: "" }])}
-                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-cyan-300"
-                    >
-                      <Plus className="h-3 w-3" /> Add
-                    </button>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        Direction / Theme Prompt
+                      </label>
+                      <input
+                        type="text"
+                        value={aiGuidance}
+                        onChange={(e) => setAiGuidance(e.target.value)}
+                        placeholder="e.g. Noir smuggling crew caught between Maelstrom & Trauma Team"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                      />
+                    </div>
                   </div>
-                  {npcPairs.map((item, idx) => (
-                    <div key={idx} className="space-y-1.5 rounded border border-slate-800/80 bg-slate-950/40 p-1.5">
-                      <div className="flex flex-wrap items-center gap-1">
+
+                  {/* Row 2: District & Caper Style */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div
+                      className={`space-y-2 border p-3 bg-[var(--hud-panel)] ${
+                        lockChoices ? "border-[var(--hud-warn)]/60" : "border-[var(--hud-line-soft)]"
+                      }`}
+                    >
+                      <label className="flex items-center justify-between font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <MapPin className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" /> Starting District
+                        </span>
+                        {activeDistrict && (
+                          <div className="flex items-center gap-1.5">
+                            {activeDistrict.zone_type && (
+                              <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                                {activeDistrict.zone_type}
+                              </span>
+                            )}
+                            <span className="border border-[var(--hud-primary)]/60 bg-[#5a0b1c]/45 px-1.5 py-0.5 font-cyber-data text-[10px] text-rose-200">
+                              {activeDistrict.threat_rating}
+                            </span>
+                          </div>
+                        )}
+                      </label>
+                      <select
+                        value={district}
+                        onChange={(e) => setDistrict(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        {presets.districts.map((d) => (
+                          <option key={d.name} value={d.name}>
+                            {d.name} ({d.zone_type ? `${d.zone_type} · ` : ""}{d.threat_rating})
+                          </option>
+                        ))}
+                      </select>
+                      {activeDistrict && (
+                        <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">{activeDistrict.summary}</p>
+                      )}
+                    </div>
+
+                    <div
+                      className={`space-y-2 border p-3 bg-[var(--hud-panel)] ${
+                        lockChoices ? "border-[var(--hud-warn)]/60" : "border-[var(--hud-line-soft)]"
+                      }`}
+                    >
+                      <label className="flex items-center justify-between gap-1.5 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Target className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Campaign / Caper Style
+                        </span>
+                        <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                          {lockChoices ? "Locked" : "Auto on Scratch"}
+                        </span>
+                      </label>
+                      <select
+                        value={caperStyle}
+                        onChange={(e) => setCaperStyle(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        {presets.caper_styles.map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                      {activeStyle && (
+                        <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">{activeStyle.summary}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Factions & Screamsheet Hook */}
+                  <div
+                    className={`space-y-3 border p-3 bg-[var(--hud-panel)] ${
+                      lockChoices ? "border-[var(--hud-warn)]/60" : "border-[var(--hud-line-soft)]"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        Active Gangs &amp; Factions (up to 4)
+                      </span>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        onClick={() => setScreamsheetHook(pickOne(presets.screamsheet_hooks))}
+                      >
+                        <Dices className="h-3 w-3 text-[var(--hud-accent)]" /> Roll Screamsheet Hook
+                      </HudButton>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {presets.factions.map((fac) => {
+                        const picked = selectedFactions.includes(fac.name);
+                        return (
+                          <button
+                            key={fac.name}
+                            type="button"
+                            title={`${fac.type}: ${fac.summary}`}
+                            onClick={() => toggleFaction(fac.name)}
+                            className={`border px-2.5 py-0.5 font-cyber-ui text-[11px] transition ${
+                              picked
+                                ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
+                            }`}
+                          >
+                            {fac.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      type="text"
+                      value={screamsheetHook}
+                      onChange={(e) => setScreamsheetHook(e.target.value)}
+                      placeholder="Screamsheet broadcast headline or rumor hitting Night City Nets today…"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                    {selectedFactions.length > 0 && (
+                      <div className="space-y-1.5 border-t border-[var(--hud-line-soft)] pt-2">
+                        <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                          Faction Dispositions &amp; Turf (Seeded to Campaign Library)
+                        </div>
+                        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                          {selectedFactions.map((fname) => {
+                            const meta = factionMeta[fname] ?? { disposition: "Neutral", turf: "" };
+                            return (
+                              <div
+                                key={fname}
+                                className="flex items-center gap-1.5 border border-[var(--hud-line-soft)] bg-black/50 px-2 py-1"
+                              >
+                                <span className="min-w-[90px] truncate font-cyber-ui text-[11px] font-medium text-[var(--hud-text)]">
+                                  {fname}
+                                </span>
+                                <select
+                                  aria-label={`${fname} disposition`}
+                                  value={meta.disposition}
+                                  onChange={(e) =>
+                                    setFactionMeta((prev) => ({
+                                      ...prev,
+                                      [fname]: { disposition: e.target.value, turf: meta.turf },
+                                    }))
+                                  }
+                                  className="border border-[var(--hud-line)] bg-black/70 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                                >
+                                  {["Hostile", "Wary", "Neutral", "Allied"].map((d) => (
+                                    <option key={d} value={d}>{d}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={meta.turf}
+                                  onChange={(e) =>
+                                    setFactionMeta((prev) => ({
+                                      ...prev,
+                                      [fname]: { disposition: meta.disposition, turf: e.target.value },
+                                    }))
+                                  }
+                                  placeholder="Turf / agenda…"
+                                  className="min-w-0 flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Premise & Opening Scene (Collapsible) */}
+            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowPremiseOpening((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  Premise &amp; Opening Scene
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">{showPremiseOpening ? "▲ Hide" : "▼ Expand"}</span>
+              </button>
+              {showPremiseOpening && (
+                <div className="grid grid-cols-1 gap-3 border-t border-[var(--hud-line-soft)] pt-2.5 sm:grid-cols-2">
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        Campaign Premise &amp; Central Conflict
+                      </label>
+                      <FieldAiActions
+                        label="Campaign Premise"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("summary")}
+                        onImprove={() => void handleAiCampaign("expand", "summary")}
+                        onRegen={() => void handleAiCampaign("scratch", "summary")}
+                      />
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={summary}
+                      onChange={(e) => setSummary(e.target.value)}
+                      placeholder="Core stakes, Fixer/Corp friction, and campaign tone…"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        Opening Scene (Where Session 1 Drops In)
+                      </label>
+                      <FieldAiActions
+                        label="Opening Scene"
+                        compact
+                        disabled={aiBusy}
+                        busyAction={busyFor("opening_scene")}
+                        onImprove={() => void handleAiCampaign("expand", "opening_scene")}
+                        onRegen={() => void handleAiCampaign("scratch", "opening_scene")}
+                      />
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={openingScene}
+                      onChange={(e) => setOpeningScene(e.target.value)}
+                      placeholder="Sensory hook right before Turn 1: rain-slick alley, Afterlife booth, convoy checkpoint…"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Beat Chart Outline (Collapsible) */}
+            <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowBeatChart((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5 text-[var(--hud-warn)]" />
+                  Beat Chart Outline
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">{showBeatChart ? "▲ Hide" : "▼ Expand"}</span>
+              </button>
+              {showBeatChart && (
+                <div className="space-y-2 border-t border-[var(--hud-line-soft)] pt-2">
+                  <p className="font-cyber-ui text-[11px] text-[var(--hud-warn)]/90">
+                    Beat Chart: alternate Action, Investigation, and Character-Interaction beats.
+                  </p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {([
+                      ["Hook", "beat_hook", beatHook, setBeatHook, "Inciting Screamsheet / Fixer offer"],
+                      ["Developments", "beat_developments", beatDev, setBeatDev, "Complications & mid-run twists"],
+                      ["Cliffhanger", "beat_cliffhanger", beatCliff, setBeatCliff, "Reversal or trap raising stakes"],
+                      ["Climax", "beat_climax", beatClimax, setBeatClimax, "Showdown / extraction payoff"],
+                      ["Resolution", "beat_resolution", beatRes, setBeatRes, "Eddie payout, Rep & IP aftermath"],
+                    ] as const).map(([label, fieldKey, val, setter, ph]) => (
+                      <div key={label}>
+                        <div className="mb-0.5 flex items-center justify-between gap-1">
+                          <label className="block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                            {label}
+                          </label>
+                          <FieldAiActions
+                            label={label}
+                            compact
+                            disabled={aiBusy}
+                            busyAction={busyFor(fieldKey)}
+                            onImprove={() => void handleAiCampaign("expand", fieldKey)}
+                            onRegen={() => void handleAiCampaign("scratch", fieldKey)}
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          value={val}
+                          onChange={(e) => setter(e.target.value)}
+                          placeholder={ph}
+                          className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Starting NPCs & Objectives (Collapsible) */}
+            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowNpcsObjectives((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Users className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  Starting NPCs (<span className="font-cyber-data">{npcPairs.length}</span>) &amp; Objectives (
+                  <span className="font-cyber-data">{objectivePairs.length}</span>)
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                  {showNpcsObjectives ? "▲ Hide" : "▼ Expand"}
+                </span>
+              </button>
+              {showNpcsObjectives && (
+                <div className="grid grid-cols-1 gap-3 border-t border-[var(--hud-line-soft)] pt-2.5 sm:grid-cols-2">
+                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        <Users className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Starting NPCs (
+                        <span className="font-cyber-data">{npcPairs.length}</span>)
+                      </span>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        onClick={() => setNpcPairs((p) => [...p, { key: "", val: "" }])}
+                      >
+                        <Plus className="h-3 w-3 text-[var(--hud-accent)]" /> Add
+                      </HudButton>
+                    </div>
+                    {npcPairs.map((item, idx) => (
+                      <div key={idx} className="space-y-1.5 border border-[var(--hud-line-soft)] bg-black/45 p-1.5">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={item.key}
+                              onChange={(e) =>
+                                setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                              }
+                              placeholder="NPC Name / Role"
+                              className="w-32 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <FieldAiActions
+                              label={`NPC ${idx + 1} Name`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("npcs", idx, "key")}
+                              onImprove={() => void handleAiCampaign("expand", "npcs", idx, "key")}
+                              onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "key")}
+                            />
+                          </div>
+                          <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                            <input
+                              type="text"
+                              value={item.val}
+                              onChange={(e) =>
+                                setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                              }
+                              placeholder="Motive / tie to crew"
+                              className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <FieldAiActions
+                              label={`NPC ${idx + 1} Motive`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("npcs", idx, "val")}
+                              onImprove={() => void handleAiCampaign("expand", "npcs", idx, "val")}
+                              onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "val")}
+                            />
+                          </div>
+                          <HudButton
+                            variant="tactical"
+                            size="xs"
+                            active={Boolean(item.showIdentity)}
+                            onClick={() =>
+                              setNpcPairs((p) =>
+                                p.map((x, i) => (i === idx ? { ...x, showIdentity: !x.showIdentity } : x)),
+                              )
+                            }
+                            title="Edit NPC hidden legal name, personality & speech style"
+                            className="px-1.5"
+                          >
+                            ID
+                          </HudButton>
+                          <HudButton
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
+                            aria-label={`Remove NPC ${idx + 1}`}
+                            className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </HudButton>
+                        </div>
+                        {item.showIdentity && (
+                          <div className="grid grid-cols-1 gap-1.5 border-t border-[var(--hud-line-soft)] pt-1.5 sm:grid-cols-2">
+                            <input
+                              type="text"
+                              value={item.realName ?? ""}
+                              onChange={(e) =>
+                                setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, realName: e.target.value } : x)))
+                              }
+                              placeholder="Real legal name"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <label className="inline-flex items-center gap-1.5 font-cyber-ui text-[10px] text-[var(--hud-text)]">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.realNameHidden)}
+                                onChange={(e) =>
+                                  setNpcPairs((p) =>
+                                    p.map((x, i) => (i === idx ? { ...x, realNameHidden: e.target.checked } : x)),
+                                  )
+                                }
+                                className="h-3 w-3 accent-amber-400"
+                              />
+                              <span>Hide legal name (GM Secret)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={item.personality ?? ""}
+                              onChange={(e) =>
+                                setNpcPairs((p) =>
+                                  p.map((x, i) => (i === idx ? { ...x, personality: e.target.value } : x)),
+                                )
+                              }
+                              placeholder="Personality (e.g. Paranoid, sharp)"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <input
+                              type="text"
+                              value={item.speechStyle ?? ""}
+                              onChange={(e) =>
+                                setNpcPairs((p) =>
+                                  p.map((x, i) => (i === idx ? { ...x, speechStyle: e.target.value } : x)),
+                                )
+                              }
+                              placeholder="Speech style (e.g. Clipped corp-speak)"
+                              className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        <Target className="h-3.5 w-3.5 text-[var(--hud-ok)]" /> Starting Objectives (
+                        <span className="font-cyber-data">{objectivePairs.length}</span>)
+                      </span>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        onClick={() => setObjectivePairs((p) => [...p, { key: "", val: "" }])}
+                      >
+                        <Plus className="h-3 w-3 text-[var(--hud-ok)]" /> Add
+                      </HudButton>
+                    </div>
+                    {objectivePairs.map((item, idx) => (
+                      <div key={idx} className="flex flex-wrap items-center gap-1">
                         <div className="flex items-center gap-1">
                           <input
                             type="text"
                             value={item.key}
                             onChange={(e) =>
-                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                              setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
                             }
-                            placeholder="NPC Name / Role"
-                            className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            placeholder="Objective"
+                            className="w-32 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                           />
                           <FieldAiActions
-                            label={`NPC ${idx + 1} Name`}
+                            label={`Objective ${idx + 1} Title`}
                             compact
                             disabled={aiBusy}
-                            busyAction={busyFor("npcs", idx, "key")}
-                            onImprove={() => void handleAiCampaign("expand", "npcs", idx, "key")}
-                            onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "key")}
+                            busyAction={busyFor("objectives", idx, "key")}
+                            onImprove={() => void handleAiCampaign("expand", "objectives", idx, "key")}
+                            onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "key")}
                           />
                         </div>
                         <div className="flex min-w-[140px] flex-1 items-center gap-1">
@@ -1734,943 +1897,890 @@ export function CampaignCreatorModal({
                             type="text"
                             value={item.val}
                             onChange={(e) =>
-                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                              setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
                             }
-                            placeholder="Motive / tie to crew"
-                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            placeholder="Details"
+                            className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                           />
                           <FieldAiActions
-                            label={`NPC ${idx + 1} Motive`}
+                            label={`Objective ${idx + 1} Details`}
                             compact
                             disabled={aiBusy}
-                            busyAction={busyFor("npcs", idx, "val")}
-                            onImprove={() => void handleAiCampaign("expand", "npcs", idx, "val")}
-                            onRegen={() => void handleAiCampaign("scratch", "npcs", idx, "val")}
+                            busyAction={busyFor("objectives", idx, "val")}
+                            onImprove={() => void handleAiCampaign("expand", "objectives", idx, "val")}
+                            onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "val")}
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, showIdentity: !x.showIdentity } : x)))
-                          }
-                          title="Edit NPC hidden legal name, personality & speech style"
-                          className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-cyan-300 hover:border-cyan-400"
-                        >
-                          ID
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNpcPairs((p) => p.filter((_, i) => i !== idx))}
-                          className="text-slate-500 hover:text-rose-400"
+                        <HudButton
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => setObjectivePairs((p) => p.filter((_, i) => i !== idx))}
+                          aria-label={`Remove Objective ${idx + 1}`}
+                          className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        </HudButton>
                       </div>
-                      {item.showIdentity && (
-                        <div className="grid grid-cols-1 gap-1.5 border-t border-slate-800/70 pt-1.5 sm:grid-cols-2">
-                          <input
-                            type="text"
-                            value={item.realName ?? ""}
-                            onChange={(e) =>
-                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, realName: e.target.value } : x)))
-                            }
-                            placeholder="Real legal name"
-                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
-                          />
-                          <label className="inline-flex items-center gap-1.5 text-[10px] text-slate-300">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(item.realNameHidden)}
-                              onChange={(e) =>
-                                setNpcPairs((p) =>
-                                  p.map((x, i) => (i === idx ? { ...x, realNameHidden: e.target.checked } : x)),
-                                )
-                              }
-                              className="h-3 w-3 accent-amber-400"
-                            />
-                            <span>Hide legal name (GM Secret)</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={item.personality ?? ""}
-                            onChange={(e) =>
-                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, personality: e.target.value } : x)))
-                            }
-                            placeholder="Personality (e.g. Paranoid, sharp)"
-                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
-                          />
-                          <input
-                            type="text"
-                            value={item.speechStyle ?? ""}
-                            onChange={(e) =>
-                              setNpcPairs((p) => p.map((x, i) => (i === idx ? { ...x, speechStyle: e.target.value } : x)))
-                            }
-                            placeholder="Speech style (e.g. Clipped corp-speak)"
-                            className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                      <Target className="h-3.5 w-3.5 text-emerald-400" /> Starting Objectives ({objectivePairs.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setObjectivePairs((p) => [...p, { key: "", val: "" }])}
-                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-emerald-300"
-                    >
-                      <Plus className="h-3 w-3" /> Add
-                    </button>
+                    ))}
                   </div>
-                  {objectivePairs.map((item, idx) => (
-                    <div key={idx} className="flex flex-wrap items-center gap-1">
+                </div>
+              )}
+            </div>
+
+            {/* World Entities: Locations, Starting Gig & Discoveries */}
+            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWorldEntities((v) => !v)}
+                  className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  <span>
+                    World Builder Extras: Locations (<span className="font-cyber-data">{locations.length}</span>), Starting Gig &amp; Clues (
+                    <span className="font-cyber-data">{discoveryPairs.length}</span>)
+                  </span>
+                  <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                    {showWorldEntities ? "▲ Hide" : "▼ Expand"}
+                  </span>
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
+                    onClick={() => {
+                      setShowWorldEntities(true);
+                      setLocations((p) => [...p, { name: "", district, security: "", notes: "" }]);
+                    }}
+                  >
+                    <Plus className="h-3 w-3 text-[var(--hud-accent)]" /> Location
+                  </HudButton>
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
+                    onClick={() => {
+                      setShowWorldEntities(true);
+                      setDiscoveryPairs((p) => [...p, { key: "", val: "" }]);
+                    }}
+                  >
+                    <Plus className="h-3 w-3 text-[var(--hud-ok)]" /> Clue / Discovery
+                  </HudButton>
+                </div>
+              </div>
+              {showWorldEntities && (
+                <div className="space-y-3 border-t border-[var(--hud-line-soft)] pt-2.5">
+                  {/* Starting Gig / Contract */}
+                  <div className="space-y-1.5">
+                    <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                      Starting Gig / Contract (Seeded to Library)
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div className="flex items-center gap-1">
                         <input
                           type="text"
-                          value={item.key}
-                          onChange={(e) =>
-                            setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
-                          }
-                          placeholder="Objective"
-                          className="w-32 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          value={gig.title}
+                          onChange={(e) => setGig((g) => ({ ...g, title: e.target.value }))}
+                          placeholder="Gig Title (e.g. Kabuki Cold Drop)"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                         <FieldAiActions
-                          label={`Objective ${idx + 1} Title`}
+                          label="Gig Title"
                           compact
                           disabled={aiBusy}
-                          busyAction={busyFor("objectives", idx, "key")}
-                          onImprove={() => void handleAiCampaign("expand", "objectives", idx, "key")}
-                          onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "key")}
+                          busyAction={busyFor("gig_title")}
+                          onImprove={() => void handleAiCampaign("expand", "gig_title")}
+                          onRegen={() => void handleAiCampaign("scratch", "gig_title")}
                         />
                       </div>
-                      <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                      <div className="flex items-center gap-1">
                         <input
                           type="text"
-                          value={item.val}
-                          onChange={(e) =>
-                            setObjectivePairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
-                          }
-                          placeholder="Details"
-                          className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          value={gig.client}
+                          onChange={(e) => setGig((g) => ({ ...g, client: e.target.value }))}
+                          placeholder="Client / Fixer"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                         />
                         <FieldAiActions
-                          label={`Objective ${idx + 1} Details`}
+                          label="Gig Client"
                           compact
                           disabled={aiBusy}
-                          busyAction={busyFor("objectives", idx, "val")}
-                          onImprove={() => void handleAiCampaign("expand", "objectives", idx, "val")}
-                          onRegen={() => void handleAiCampaign("scratch", "objectives", idx, "val")}
+                          busyAction={busyFor("gig_client")}
+                          onImprove={() => void handleAiCampaign("expand", "gig_client")}
+                          onRegen={() => void handleAiCampaign("scratch", "gig_client")}
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setObjectivePairs((p) => p.filter((_, i) => i !== idx))}
-                        className="text-slate-500 hover:text-rose-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* World Entities: Locations, Starting Gig & Discoveries */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => setShowWorldEntities((v) => !v)}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-200 hover:text-cyan-200"
-              >
-                <MapPin className="h-3.5 w-3.5 text-cyan-400" />
-                <span>
-                  World Builder Extras: Locations ({locations.length}), Starting Gig &amp; Clues ({discoveryPairs.length})
-                </span>
-                <span className="font-mono text-[10px] text-cyan-400">{showWorldEntities ? "▲ Hide" : "▼ Expand"}</span>
-              </button>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowWorldEntities(true);
-                    setLocations((p) => [...p, { name: "", district, security: "", notes: "" }]);
-                  }}
-                  className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-cyan-300"
-                >
-                  <Plus className="h-3 w-3" /> Location
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowWorldEntities(true);
-                    setDiscoveryPairs((p) => [...p, { key: "", val: "" }]);
-                  }}
-                  className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-emerald-300"
-                >
-                  <Plus className="h-3 w-3" /> Clue / Discovery
-                </button>
-              </div>
-            </div>
-            {showWorldEntities && (
-              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
-                {/* Starting Gig / Contract */}
-                <div className="space-y-1.5">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    Starting Gig / Contract (Seeded to Library)
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={gig.title}
-                        onChange={(e) => setGig((g) => ({ ...g, title: e.target.value }))}
-                        placeholder="Gig Title (e.g. Kabuki Cold Drop)"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Gig Title"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("gig_title")}
-                        onImprove={() => void handleAiCampaign("expand", "gig_title")}
-                        onRegen={() => void handleAiCampaign("scratch", "gig_title")}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={gig.client}
-                        onChange={(e) => setGig((g) => ({ ...g, client: e.target.value }))}
-                        placeholder="Client / Fixer"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Gig Client"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("gig_client")}
-                        onImprove={() => void handleAiCampaign("expand", "gig_client")}
-                        onRegen={() => void handleAiCampaign("scratch", "gig_client")}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={gig.target}
-                        onChange={(e) => setGig((g) => ({ ...g, target: e.target.value }))}
-                        placeholder="Target / Asset"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Gig Target"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("gig_target")}
-                        onImprove={() => void handleAiCampaign("expand", "gig_target")}
-                        onRegen={() => void handleAiCampaign("scratch", "gig_target")}
-                      />
-                    </div>
-                    <input
-                      type="number"
-                      min={0}
-                      value={gig.payoutEb}
-                      onChange={(e) => setGig((g) => ({ ...g, payoutEb: e.target.value }))}
-                      placeholder="Payout (eb)"
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={gig.deadline}
-                        onChange={(e) => setGig((g) => ({ ...g, deadline: e.target.value }))}
-                        placeholder="Deadline (e.g. 48 hours)"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Gig Deadline"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("gig_deadline")}
-                        onImprove={() => void handleAiCampaign("expand", "gig_deadline")}
-                        onRegen={() => void handleAiCampaign("scratch", "gig_deadline")}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={gig.notes}
-                        onChange={(e) => setGig((g) => ({ ...g, notes: e.target.value }))}
-                        placeholder="Contract terms / twist"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Gig Notes"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("gig_notes")}
-                        onImprove={() => void handleAiCampaign("expand", "gig_notes")}
-                        onRegen={() => void handleAiCampaign("scratch", "gig_notes")}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {/* Locations */}
-                {locations.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      Key Locations / Venues
-                    </div>
-                    {locations.map((loc, idx) => (
-                      <div key={idx} className="grid grid-cols-1 gap-1.5 sm:grid-cols-4">
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={loc.name}
-                            onChange={(e) =>
-                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
-                            }
-                            placeholder="Venue / Block Name"
-                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
-                          <FieldAiActions
-                            label={`Location ${idx + 1} Name`}
-                            compact
-                            disabled={aiBusy}
-                            busyAction={busyFor("locations", idx, "name")}
-                            onImprove={() => void handleAiCampaign("expand", "locations", idx, "name")}
-                            onRegen={() => void handleAiCampaign("scratch", "locations", idx, "name")}
-                          />
-                        </div>
+                      <div className="flex items-center gap-1">
                         <input
                           type="text"
-                          value={loc.district}
-                          onChange={(e) =>
-                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, district: e.target.value } : x)))
-                          }
-                          placeholder="District"
-                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          value={gig.target}
+                          onChange={(e) => setGig((g) => ({ ...g, target: e.target.value }))}
+                          placeholder="Target / Asset"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                         />
+                        <FieldAiActions
+                          label="Gig Target"
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("gig_target")}
+                          onImprove={() => void handleAiCampaign("expand", "gig_target")}
+                          onRegen={() => void handleAiCampaign("scratch", "gig_target")}
+                        />
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        value={gig.payoutEb}
+                        onChange={(e) => setGig((g) => ({ ...g, payoutEb: e.target.value }))}
+                        placeholder="Payout (eb)"
+                        className="border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                      />
+                      <div className="flex items-center gap-1">
                         <input
                           type="text"
-                          value={loc.security}
-                          onChange={(e) =>
-                            setLocations((p) => p.map((x, i) => (i === idx ? { ...x, security: e.target.value } : x)))
-                          }
-                          placeholder="Security / Threat"
-                          className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                          value={gig.deadline}
+                          onChange={(e) => setGig((g) => ({ ...g, deadline: e.target.value }))}
+                          placeholder="Deadline (e.g. 48 hours)"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                         />
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={loc.notes}
-                            onChange={(e) =>
-                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, notes: e.target.value } : x)))
-                            }
-                            placeholder="Vibe / access notes"
-                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                          />
-                          <FieldAiActions
-                            label={`Location ${idx + 1} Notes`}
-                            compact
-                            disabled={aiBusy}
-                            busyAction={busyFor("locations", idx, "notes")}
-                            onImprove={() => void handleAiCampaign("expand", "locations", idx, "notes")}
-                            onRegen={() => void handleAiCampaign("scratch", "locations", idx, "notes")}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setLocations((p) => p.filter((_, i) => i !== idx))}
-                            className="text-slate-500 hover:text-rose-400"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
+                        <FieldAiActions
+                          label="Gig Deadline"
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("gig_deadline")}
+                          onImprove={() => void handleAiCampaign("expand", "gig_deadline")}
+                          onRegen={() => void handleAiCampaign("scratch", "gig_deadline")}
+                        />
                       </div>
-                    ))}
-                  </div>
-                )}
-                {/* Starting Discoveries */}
-                {discoveryPairs.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      Starting Discoveries / Clues Known to PCs
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={gig.notes}
+                          onChange={(e) => setGig((g) => ({ ...g, notes: e.target.value }))}
+                          placeholder="Contract terms / twist"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                        />
+                        <FieldAiActions
+                          label="Gig Notes"
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("gig_notes")}
+                          onImprove={() => void handleAiCampaign("expand", "gig_notes")}
+                          onRegen={() => void handleAiCampaign("scratch", "gig_notes")}
+                        />
+                      </div>
                     </div>
-                    {discoveryPairs.map((dp, idx) => (
-                      <div key={idx} className="flex flex-wrap items-center gap-1.5">
-                        <div className="flex items-center gap-1">
+                  </div>
+                  {/* Locations */}
+                  {locations.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Key Locations / Venues
+                      </div>
+                      {locations.map((loc, idx) => (
+                        <div key={idx} className="grid grid-cols-1 gap-1.5 sm:grid-cols-4">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={loc.name}
+                              onChange={(e) =>
+                                setLocations((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                              }
+                              placeholder="Venue / Block Name"
+                              className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <FieldAiActions
+                              label={`Location ${idx + 1} Name`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("locations", idx, "name")}
+                              onImprove={() => void handleAiCampaign("expand", "locations", idx, "name")}
+                              onRegen={() => void handleAiCampaign("scratch", "locations", idx, "name")}
+                            />
+                          </div>
                           <input
                             type="text"
-                            value={dp.key}
+                            value={loc.district}
                             onChange={(e) =>
-                              setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, district: e.target.value } : x)))
                             }
-                            placeholder="Clue / Intel"
-                            className="w-36 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            placeholder="District"
+                            className="border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                           />
-                          <FieldAiActions
-                            label={`Discovery ${idx + 1} Title`}
-                            compact
-                            disabled={aiBusy}
-                            busyAction={busyFor("discoveries", idx, "key")}
-                            onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "key")}
-                            onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "key")}
-                          />
-                        </div>
-                        <div className="flex min-w-[160px] flex-1 items-center gap-1">
                           <input
                             type="text"
-                            value={dp.val}
+                            value={loc.security}
                             onChange={(e) =>
-                              setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                              setLocations((p) => p.map((x, i) => (i === idx ? { ...x, security: e.target.value } : x)))
                             }
-                            placeholder="What the crew already knows at Session 1"
-                            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                            placeholder="Security / Threat"
+                            className="border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                           />
-                          <FieldAiActions
-                            label={`Discovery ${idx + 1} Details`}
-                            compact
-                            disabled={aiBusy}
-                            busyAction={busyFor("discoveries", idx, "val")}
-                            onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "val")}
-                            onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "val")}
-                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={loc.notes}
+                              onChange={(e) =>
+                                setLocations((p) => p.map((x, i) => (i === idx ? { ...x, notes: e.target.value } : x)))
+                              }
+                              placeholder="Vibe / access notes"
+                              className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <FieldAiActions
+                              label={`Location ${idx + 1} Notes`}
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("locations", idx, "notes")}
+                              onImprove={() => void handleAiCampaign("expand", "locations", idx, "notes")}
+                              onRegen={() => void handleAiCampaign("scratch", "locations", idx, "notes")}
+                            />
+                            <HudButton
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => setLocations((p) => p.filter((_, i) => i !== idx))}
+                              aria-label={`Remove Location ${idx + 1}`}
+                              className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </HudButton>
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setDiscoveryPairs((p) => p.filter((_, i) => i !== idx))}
-                          className="text-slate-500 hover:text-rose-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Starting Discoveries */}
+                  {discoveryPairs.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Starting Discoveries / Clues Known to PCs
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* GM Secrets (Spoiler-Shielded) + Opening World Clocks (Collapsible) */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-2.5">
-            <button
-              type="button"
-              onClick={() => setShowSecretsClocks((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Clock className="h-3.5 w-3.5 text-rose-400" />
-                GM Secrets &amp; Opening Clocks
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showSecretsClocks ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showSecretsClocks && (
-              <div className="grid grid-cols-1 gap-3 border-t border-slate-800/80 pt-2.5 sm:grid-cols-2">
-                <div className="rounded-lg border border-amber-500/30 bg-amber-950/10 p-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="flex items-center gap-1.5 text-xs font-semibold text-amber-200">
-                      {revealGmSecrets ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                      <span>Hidden GM Secrets</span>
-                    </label>
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-amber-500/40 bg-slate-950/90 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:border-amber-400">
-                      <input
-                        type="checkbox"
-                        checked={revealGmSecrets}
-                        onChange={(e) => setRevealGmSecrets(e.target.checked)}
-                        aria-label="Unspoil GM Secrets"
-                        className="h-3 w-3 accent-amber-400"
-                      />
-                      <span>Unspoil</span>
-                    </label>
-                  </div>
-                  {revealGmSecrets ? (
-                    <div className="space-y-2">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-300/80">
-                            Core GM Truths
-                          </span>
-                          <FieldAiActions
-                            label="GM Secrets"
-                            compact
-                            disabled={aiBusy}
-                            busyAction={busyFor("gm_secrets")}
-                            onImprove={() => void handleAiCampaign("expand", "gm_secrets")}
-                            onRegen={() => void handleAiCampaign("scratch", "gm_secrets")}
-                          />
-                        </div>
-                        <textarea
-                          rows={2}
-                          value={gmSecrets}
-                          onChange={(e) => setGmSecrets(e.target.value)}
-                          placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
-                          className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                        />
-                      </div>
-                      {secretPairs.map((sp, idx) => (
+                      {discoveryPairs.map((dp, idx) => (
                         <div key={idx} className="flex flex-wrap items-center gap-1.5">
                           <div className="flex items-center gap-1">
                             <input
                               type="text"
-                              value={sp.key}
+                              value={dp.key}
                               onChange={(e) =>
-                                setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                                setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
                               }
-                              placeholder="Secret Key"
-                              className="w-28 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              placeholder="Clue / Intel"
+                              className="w-36 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
-                              label={`Secret ${idx + 1} Key`}
+                              label={`Discovery ${idx + 1} Title`}
                               compact
                               disabled={aiBusy}
-                              busyAction={busyFor("gm_secrets", idx, "key")}
-                              onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "key")}
-                              onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "key")}
+                              busyAction={busyFor("discoveries", idx, "key")}
+                              onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "key")}
+                              onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "key")}
                             />
                           </div>
-                          <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                          <div className="flex min-w-[160px] flex-1 items-center gap-1">
                             <input
                               type="text"
-                              value={sp.val}
+                              value={dp.val}
                               onChange={(e) =>
-                                setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                                setDiscoveryPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
                               }
-                              placeholder="Hidden truth…"
-                              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                              placeholder="What the crew already knows at Session 1"
+                              className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                             />
                             <FieldAiActions
-                              label={`Secret ${idx + 1} Truth`}
+                              label={`Discovery ${idx + 1} Details`}
                               compact
                               disabled={aiBusy}
-                              busyAction={busyFor("gm_secrets", idx, "val")}
-                              onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "val")}
-                              onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "val")}
+                              busyAction={busyFor("discoveries", idx, "val")}
+                              onImprove={() => void handleAiCampaign("expand", "discoveries", idx, "val")}
+                              onRegen={() => void handleAiCampaign("scratch", "discoveries", idx, "val")}
                             />
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setSecretPairs((p) => p.filter((_, i) => i !== idx))}
-                            className="text-slate-500 hover:text-rose-400"
+                          <HudButton
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setDiscoveryPairs((p) => p.filter((_, i) => i !== idx))}
+                            aria-label={`Remove Discovery ${idx + 1}`}
+                            className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          </HudButton>
                         </div>
                       ))}
-                      <button
-                        type="button"
-                        onClick={() => setSecretPairs((p) => [...p, { key: "", val: "" }])}
-                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-slate-950 px-2 py-0.5 text-[10px] text-amber-200"
-                      >
-                        <Plus className="h-3 w-3" /> Add Secret Entry
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center rounded border border-amber-500/30 bg-slate-950/90 px-3 py-4 text-center">
-                      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300/90">
-                        CLASSIFIED // SPOILER SHIELDED
-                      </span>
-                      <span className="mt-1 text-[11px] text-slate-400">
-                        {gmSecrets.trim() || secretPairs.length > 0
-                          ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
-                          : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
-                      </span>
                     </div>
                   )}
                 </div>
+              )}
+            </div>
 
-                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-                      <Clock className="h-3.5 w-3.5 text-rose-400" /> Opening World / Heat Clock
+            {/* GM Secrets (Spoiler-Shielded) + Opening World Clocks (Collapsible) */}
+            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowSecretsClocks((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" />
+                  GM Secrets &amp; Opening Clocks
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                  {showSecretsClocks ? "▲ Hide" : "▼ Expand"}
+                </span>
+              </button>
+              {showSecretsClocks && (
+                <div className="grid grid-cols-1 gap-3 border-t border-[var(--hud-line-soft)] pt-2.5 sm:grid-cols-2">
+                  <div className="space-y-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-panel)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 font-cyber-ui text-xs font-semibold text-[var(--hud-warn)]">
+                        {revealGmSecrets ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        <span>Hidden GM Secrets</span>
+                      </span>
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-warn)]">
+                        <span>Unspoil</span>
+                        <HudToggle
+                          as="checkbox"
+                          checked={revealGmSecrets}
+                          onCheckedChange={setRevealGmSecrets}
+                          aria-label="Unspoil GM Secrets"
+                          className="min-w-12 py-0.5 text-[10px]"
+                        />
+                      </label>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExtraClocks((p) => [
-                          ...p,
-                          { name: "", segments: 4, filled: 0, category: "deadline", visibility: "public", note: "" },
-                        ])
-                      }
-                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-rose-300"
-                    >
-                      <Plus className="h-3 w-3" /> Clock
-                    </button>
+                    {revealGmSecrets ? (
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
+                              Core GM Truths
+                            </span>
+                            <FieldAiActions
+                              label="GM Secrets"
+                              compact
+                              disabled={aiBusy}
+                              busyAction={busyFor("gm_secrets")}
+                              onImprove={() => void handleAiCampaign("expand", "gm_secrets")}
+                              onRegen={() => void handleAiCampaign("scratch", "gm_secrets")}
+                            />
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={gmSecrets}
+                            onChange={(e) => setGmSecrets(e.target.value)}
+                            placeholder="Secret corporate betrayals, hidden employers, or traps kept out of player view…"
+                            className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                          />
+                        </div>
+                        {secretPairs.map((sp, idx) => (
+                          <div key={idx} className="flex flex-wrap items-center gap-1.5">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={sp.key}
+                                onChange={(e) =>
+                                  setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, key: e.target.value } : x)))
+                                }
+                                placeholder="Secret Key"
+                                className="w-28 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                              />
+                              <FieldAiActions
+                                label={`Secret ${idx + 1} Key`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("gm_secrets", idx, "key")}
+                                onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "key")}
+                                onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "key")}
+                              />
+                            </div>
+                            <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                              <input
+                                type="text"
+                                value={sp.val}
+                                onChange={(e) =>
+                                  setSecretPairs((p) => p.map((x, i) => (i === idx ? { ...x, val: e.target.value } : x)))
+                                }
+                                placeholder="Hidden truth…"
+                                className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                              />
+                              <FieldAiActions
+                                label={`Secret ${idx + 1} Truth`}
+                                compact
+                                disabled={aiBusy}
+                                busyAction={busyFor("gm_secrets", idx, "val")}
+                                onImprove={() => void handleAiCampaign("expand", "gm_secrets", idx, "val")}
+                                onRegen={() => void handleAiCampaign("scratch", "gm_secrets", idx, "val")}
+                              />
+                            </div>
+                            <HudButton
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => setSecretPairs((p) => p.filter((_, i) => i !== idx))}
+                              aria-label={`Remove Secret ${idx + 1}`}
+                              className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </HudButton>
+                          </div>
+                        ))}
+                        <HudButton
+                          variant="tactical"
+                          size="xs"
+                          onClick={() => setSecretPairs((p) => [...p, { key: "", val: "" }])}
+                          className="border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
+                        >
+                          <Plus className="h-3 w-3" /> Add Secret Entry
+                        </HudButton>
+                      </div>
+                    ) : (
+                      <div className="cyber-hazard-thin flex flex-col items-center justify-center border border-[var(--hud-warn)]/60 bg-black/60 px-3 py-4 text-center">
+                        <HazardBadge tone="warn">
+                          CLASSIFIED // SPOILER SHIELDED
+                        </HazardBadge>
+                        <span className="mt-1.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                          {gmSecrets.trim() || secretPairs.length > 0
+                            ? "GM secrets are stored privately. Check Unspoil to reveal or edit."
+                            : "Empty — AI can generate hidden twists. Check Unspoil to write or view."}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <div className="flex min-w-[140px] flex-1 items-center gap-1">
+
+                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                        <Clock className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" /> Opening World / Heat Clock
+                      </div>
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        onClick={() =>
+                          setExtraClocks((p) => [
+                            ...p,
+                            { name: "", segments: 4, filled: 0, category: "deadline", visibility: "public", note: "" },
+                          ])
+                        }
+                      >
+                        <Plus className="h-3 w-3 text-[var(--hud-primary-bright)]" /> Clock
+                      </HudButton>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                        <input
+                          type="text"
+                          value={clockName}
+                          onChange={(e) => setClockName(e.target.value)}
+                          placeholder="Clock name (e.g. Corp Trace)"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                        />
+                        <FieldAiActions
+                          label="Clock Name"
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("clock_name")}
+                          onImprove={() => void handleAiCampaign("expand", "clock_name")}
+                          onRegen={() => void handleAiCampaign("scratch", "clock_name")}
+                        />
+                      </div>
                       <input
-                        type="text"
-                        value={clockName}
-                        onChange={(e) => setClockName(e.target.value)}
-                        placeholder="Clock name (e.g. Corp Trace)"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                        type="number"
+                        min={2}
+                        max={12}
+                        aria-label="Primary clock segments"
+                        value={clockSegments}
+                        onChange={(e) => {
+                          const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
+                          setClockSegments(seg);
+                          setClockFilled((f) => Math.min(f, seg));
+                        }}
+                        className="w-14 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
-                      <FieldAiActions
-                        label="Clock Name"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("clock_name")}
-                        onImprove={() => void handleAiCampaign("expand", "clock_name")}
-                        onRegen={() => void handleAiCampaign("scratch", "clock_name")}
-                      />
-                    </div>
-                    <input
-                      type="number"
-                      min={2}
-                      max={12}
-                      aria-label="Primary clock segments"
-                      value={clockSegments}
-                      onChange={(e) => {
-                        const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
-                        setClockSegments(seg);
-                        setClockFilled((f) => Math.min(f, seg));
-                      }}
-                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
-                    />
-                    <input
-                      type="number"
-                      min={0}
-                      max={clockSegments}
-                      aria-label="Primary clock filled"
-                      title="Initial filled segments"
-                      value={clockFilled}
-                      onChange={(e) => setClockFilled(Math.max(0, Math.min(clockSegments, parseInt(e.target.value, 10) || 0)))}
-                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <select
-                      aria-label="Primary clock category"
-                      value={clockCategory}
-                      onChange={(e) => setClockCategory(e.target.value as ExtraClockDraft["category"])}
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                    >
-                      {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label="Primary clock visibility"
-                      value={clockVisibility}
-                      onChange={(e) => setClockVisibility(e.target.value as "public" | "secret")}
-                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-200"
-                    >
-                      <option value="public">Public</option>
-                      <option value="secret">GM Secret</option>
-                    </select>
-                    <div className="flex min-w-[140px] flex-1 items-center gap-1">
                       <input
-                        type="text"
-                        value={clockNote}
-                        onChange={(e) => setClockNote(e.target.value)}
-                        placeholder="What happens when the clock fills…"
-                        className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                      />
-                      <FieldAiActions
-                        label="Clock Trigger Note"
-                        compact
-                        disabled={aiBusy}
-                        busyAction={busyFor("clock_note")}
-                        onImprove={() => void handleAiCampaign("expand", "clock_note")}
-                        onRegen={() => void handleAiCampaign("scratch", "clock_note")}
+                        type="number"
+                        min={0}
+                        max={clockSegments}
+                        aria-label="Primary clock filled"
+                        title="Initial filled segments"
+                        value={clockFilled}
+                        onChange={(e) =>
+                          setClockFilled(Math.max(0, Math.min(clockSegments, parseInt(e.target.value, 10) || 0)))
+                        }
+                        className="w-14 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       />
                     </div>
-                  </div>
-              {extraClocks.map((ec, idx) => (
-                <div key={idx} className="space-y-1 border-t border-slate-800/80 pt-2">
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      value={ec.name}
-                      onChange={(e) =>
-                        setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
-                      }
-                      placeholder="Additional clock name"
-                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    />
-                    <input
-                      type="number"
-                      min={2}
-                      max={12}
-                      value={ec.segments}
-                      onChange={(e) => {
-                        const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
-                        setExtraClocks((p) =>
-                          p.map((x, i) => (i === idx ? { ...x, segments: seg, filled: Math.min(x.filled, seg) } : x)),
-                        );
-                      }}
-                      className="w-14 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-100"
-                    />
-                    <select
-                      value={ec.visibility}
-                      onChange={(e) =>
-                        setExtraClocks((p) =>
-                          p.map((x, i) => (i === idx ? { ...x, visibility: e.target.value as "public" | "secret" } : x)),
-                        )
-                      }
-                      className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-[10px] text-slate-200"
-                    >
-                      <option value="public">Public</option>
-                      <option value="secret">Secret</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setExtraClocks((p) => p.filter((_, i) => i !== idx))}
-                      className="text-slate-500 hover:text-rose-400"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <select
-                      value={ec.category}
-                      onChange={(e) =>
-                        setExtraClocks((p) =>
-                          p.map((x, i) =>
-                            i === idx ? { ...x, category: e.target.value as ExtraClockDraft["category"] } : x,
-                          ),
-                        )
-                      }
-                      className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200"
-                    >
-                      {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={ec.note}
-                      onChange={(e) =>
-                        setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))
-                      }
-                      placeholder="Trigger note…"
-                      className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-100"
-                    />
+                    <div className="space-y-1 border border-[var(--hud-line-soft)] bg-black/45 px-2.5 py-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                          {clockName.trim() || "Clock Preview"}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {clockVisibility === "secret" && <HazardBadge tone="warn">SECRET</HazardBadge>}
+                          <span className="font-cyber-data text-[11px] text-[var(--hud-warn)]">
+                            {clockFilled}/{clockSegments}
+                          </span>
+                        </div>
+                      </div>
+                      <SegmentedBar
+                        value={clockFilled}
+                        max={clockSegments}
+                        segments={clockSegments}
+                        tone={clockFilled >= clockSegments ? "primary" : "warn"}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <select
+                        aria-label="Primary clock category"
+                        value={clockCategory}
+                        onChange={(e) => setClockCategory(e.target.value as ExtraClockDraft["category"])}
+                        className="border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="Primary clock visibility"
+                        value={clockVisibility}
+                        onChange={(e) => setClockVisibility(e.target.value as "public" | "secret")}
+                        className="border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="public">Public</option>
+                        <option value="secret">GM Secret</option>
+                      </select>
+                      <div className="flex min-w-[140px] flex-1 items-center gap-1">
+                        <input
+                          type="text"
+                          value={clockNote}
+                          onChange={(e) => setClockNote(e.target.value)}
+                          placeholder="What happens when the clock fills…"
+                          className="min-w-0 flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                        />
+                        <FieldAiActions
+                          label="Clock Trigger Note"
+                          compact
+                          disabled={aiBusy}
+                          busyAction={busyFor("clock_note")}
+                          onImprove={() => void handleAiCampaign("expand", "clock_note")}
+                          onRegen={() => void handleAiCampaign("scratch", "clock_note")}
+                        />
+                      </div>
+                    </div>
+                    {extraClocks.map((ec, idx) => (
+                      <div key={idx} className="space-y-1.5 border-t border-[var(--hud-line-soft)] pt-2">
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={ec.name}
+                            onChange={(e) =>
+                              setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                            }
+                            placeholder="Additional clock name"
+                            className="flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                          />
+                          <input
+                            type="number"
+                            min={2}
+                            max={12}
+                            value={ec.segments}
+                            onChange={(e) => {
+                              const seg = Math.max(2, Math.min(12, parseInt(e.target.value, 10) || 4));
+                              setExtraClocks((p) =>
+                                p.map((x, i) => (i === idx ? { ...x, segments: seg, filled: Math.min(x.filled, seg) } : x)),
+                              );
+                            }}
+                            className="w-14 border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          />
+                          <select
+                            value={ec.visibility}
+                            onChange={(e) =>
+                              setExtraClocks((p) =>
+                                p.map((x, i) =>
+                                  i === idx ? { ...x, visibility: e.target.value as "public" | "secret" } : x,
+                                ),
+                              )
+                            }
+                            className="border border-[var(--hud-line)] bg-black/60 px-1.5 py-1 font-cyber-ui text-[10px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          >
+                            <option value="public">Public</option>
+                            <option value="secret">Secret</option>
+                          </select>
+                          <HudButton
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setExtraClocks((p) => p.filter((_, i) => i !== idx))}
+                            aria-label={`Remove Extra Clock ${idx + 1}`}
+                            className="px-1 text-[var(--hud-muted)] hover:text-[var(--hud-primary-bright)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </HudButton>
+                        </div>
+                        <SegmentedBar
+                          value={ec.filled}
+                          max={ec.segments}
+                          segments={ec.segments}
+                          tone={ec.filled >= ec.segments ? "primary" : "warn"}
+                        />
+                        <div className="flex gap-1.5">
+                          <select
+                            value={ec.category}
+                            onChange={(e) =>
+                              setExtraClocks((p) =>
+                                p.map((x, i) =>
+                                  i === idx ? { ...x, category: e.target.value as ExtraClockDraft["category"] } : x,
+                                ),
+                              )
+                            }
+                            className="border border-[var(--hud-line)] bg-black/60 px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          >
+                            {["heat", "obligation", "deadline", "faction", "recovery"].map((c) => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={ec.note}
+                            onChange={(e) =>
+                              setExtraClocks((p) => p.map((x, i) => (i === idx ? { ...x, note: e.target.value } : x)))
+                            }
+                            placeholder="Trigger note…"
+                            className="flex-1 border border-[var(--hud-line)] bg-black/60 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
+            </div>
+
+            {/* Session Zero & Table Dials + Starting Party */}
+            <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowSessionZero((v) => !v)}
+                className="flex w-full items-center justify-between font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)] hover:text-[var(--hud-accent)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  Session Zero Dials, Starting Time &amp; Table Boundaries
+                </span>
+                <span className="font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                  {showSessionZero ? "▲ Hide" : "▼ Expand"}
+                </span>
+              </button>
+              {showSessionZero && (
+                <div className="space-y-3 border-t border-[var(--hud-line-soft)] pt-2.5">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        GM Tone Override
+                      </label>
+                      <select
+                        aria-label="Session Zero GM Style"
+                        value={szGmStyle}
+                        onChange={(e) => setSzGmStyle(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="inherit">Inherit Server Default</option>
+                        <option value="grounded">Grounded Street</option>
+                        <option value="cinematic">Cinematic</option>
+                        <option value="grit_dark">Grit &amp; Dark</option>
+                        <option value="spy_thriller">Spy Thriller</option>
+                        <option value="full_action">Full Action</option>
+                        <option value="lethal">Lethal Combat Zone</option>
+                        <option value="noir_mystery">Noir Mystery</option>
+                        <option value="sandbox">Open Sandbox</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Reply Length
+                      </label>
+                      <select
+                        aria-label="Session Zero Reply Length"
+                        value={szNarratorLength}
+                        onChange={(e) => setSzNarratorLength(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="inherit">Inherit Server Default</option>
+                        <option value="auto">Auto</option>
+                        <option value="concise">Concise</option>
+                        <option value="standard">Standard</option>
+                        <option value="detailed">Detailed</option>
+                        <option value="novel">Novelistic</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Pacing
+                      </label>
+                      <select
+                        aria-label="Session Zero Pacing"
+                        value={szNarratorPacing}
+                        onChange={(e) => setSzNarratorPacing(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="inherit">Inherit Server Default</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="reactive">Reactive / Fast</option>
+                        <option value="tactical">Tactical Crunch</option>
+                        <option value="roleplay">Roleplay Heavy</option>
+                        <option value="slow_burn">Slow Burn</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Lethality Dial
+                      </label>
+                      <select
+                        aria-label="Lethality Dial"
+                        value={szLethality}
+                        onChange={(e) => setSzLethality(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="Standard RED">Standard RED</option>
+                        <option value="Gritty / High Lethality">Gritty / High Lethality</option>
+                        <option value="Cinematic Action">Cinematic Action</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Economy Dial
+                      </label>
+                      <select
+                        aria-label="Economy Dial"
+                        value={szEconomy}
+                        onChange={(e) => setSzEconomy(e.target.value)}
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      >
+                        <option value="Raw Scarcity">Raw Scarcity (Time of the Red)</option>
+                        <option value="Standard RED">Standard RED (500–2,000 eb gigs)</option>
+                        <option value="High-Roller">High-Roller Contracts</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                        Campaign Scope &amp; Time
+                      </label>
+                      <div className="flex gap-1.5">
+                        <select
+                          aria-label="Campaign Scope"
+                          value={szScope}
+                          onChange={(e) => setSzScope(e.target.value)}
+                          className="w-1/2 border border-[var(--hud-line)] bg-black/60 px-1.5 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        >
+                          <option value="One-Shot">One-Shot</option>
+                          <option value="Mini-Arc">Mini-Arc</option>
+                          <option value="Open Sandbox">Open Sandbox</option>
+                        </select>
+                        <select
+                          aria-label="Starting Night City Time"
+                          disabled={Boolean(editCampaign)}
+                          title={editCampaign ? "Starting clock time is only set on campaign creation" : "Starting Night City time"}
+                          value={szStartMinutes}
+                          onChange={(e) => setSzStartMinutes(parseInt(e.target.value, 10) || 0)}
+                          className="w-1/2 border border-[var(--hud-line)] bg-black/60 px-1.5 py-1 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none disabled:opacity-50"
+                        >
+                          <option value={0}>00:00 Midnight</option>
+                          <option value={360}>06:00 Red Dawn</option>
+                          <option value={720}>12:00 High Noon</option>
+                          <option value={1140}>19:00 Dusk</option>
+                          <option value={1320}>22:00 Night</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <input
+                      type="text"
+                      value={szCrewConcept}
+                      onChange={(e) => setSzCrewConcept(e.target.value)}
+                      placeholder="Crew Concept / Shared HQ or Patron (e.g. Heywood ripperdoc clinic crew)"
+                      className="border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={szLinesVeils}
+                      onChange={(e) => setSzLinesVeils(e.target.value)}
+                      placeholder="Lines & Veils / Safety Boundaries (topics off-limits for GM)"
+                      className="border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                  </div>
+                  {!editCampaign && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hud-line-soft)] pt-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        {unattachedChars.length > 0 && (
+                          <>
+                            <span className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
+                              Attach Starting PCs:
+                            </span>
+                            {unattachedChars.map((ch) => {
+                              const checked = attachCharIds.includes(ch.id);
+                              return (
+                                <label
+                                  key={ch.id}
+                                  className={`inline-flex cursor-pointer items-center gap-1 border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
+                                    checked
+                                      ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                      : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-text)]"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() =>
+                                      setAttachCharIds((prev) =>
+                                        prev.includes(ch.id) ? prev.filter((x) => x !== ch.id) : [...prev, ch.id],
+                                      )
+                                    }
+                                    className="h-3 w-3 accent-cyan-400"
+                                  />
+                                  <span>{ch.name}</span>
+                                </label>
+                              );
+                            })}
+                          </>
+                        )}
+                      </div>
+                      <label className="inline-flex cursor-pointer items-center gap-2 font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                        <HudToggle
+                          as="checkbox"
+                          checked={launchIntroOnCreate}
+                          onCheckedChange={setLaunchIntroOnCreate}
+                          className="min-w-12 py-0.5 text-[10px]"
+                        />
+                        <span>Launch Opening GM Intro on Create</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
-            )}
-          </div>
 
-          {/* Session Zero & Table Dials + Starting Party */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 space-y-2.5">
-            <button
-              type="button"
-              onClick={() => setShowSessionZero((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-slate-200 hover:text-cyan-200"
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <ShieldAlert className="h-3.5 w-3.5 text-cyan-400" />
-                Session Zero Dials, Starting Time &amp; Table Boundaries
-              </span>
-              <span className="font-mono text-[10px] text-cyan-400">{showSessionZero ? "▲ Hide" : "▼ Expand"}</span>
-            </button>
-            {showSessionZero && (
-              <div className="space-y-3 border-t border-slate-800/80 pt-2.5">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">GM Tone Override</label>
-                    <select
-                      aria-label="Session Zero GM Style"
-                      value={szGmStyle}
-                      onChange={(e) => setSzGmStyle(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    >
-                      <option value="inherit">Inherit Server Default</option>
-                      <option value="grounded">Grounded Street</option>
-                      <option value="cinematic">Cinematic</option>
-                      <option value="grit_dark">Grit &amp; Dark</option>
-                      <option value="spy_thriller">Spy Thriller</option>
-                      <option value="full_action">Full Action</option>
-                      <option value="lethal">Lethal Combat Zone</option>
-                      <option value="noir_mystery">Noir Mystery</option>
-                      <option value="sandbox">Open Sandbox</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Reply Length</label>
-                    <select
-                      aria-label="Session Zero Reply Length"
-                      value={szNarratorLength}
-                      onChange={(e) => setSzNarratorLength(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    >
-                      <option value="inherit">Inherit Server Default</option>
-                      <option value="auto">Auto</option>
-                      <option value="concise">Concise</option>
-                      <option value="standard">Standard</option>
-                      <option value="detailed">Detailed</option>
-                      <option value="novel">Novelistic</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Pacing</label>
-                    <select
-                      aria-label="Session Zero Pacing"
-                      value={szNarratorPacing}
-                      onChange={(e) => setSzNarratorPacing(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    >
-                      <option value="inherit">Inherit Server Default</option>
-                      <option value="balanced">Balanced</option>
-                      <option value="reactive">Reactive / Fast</option>
-                      <option value="tactical">Tactical Crunch</option>
-                      <option value="roleplay">Roleplay Heavy</option>
-                      <option value="slow_burn">Slow Burn</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Lethality Dial</label>
-                    <select
-                      aria-label="Lethality Dial"
-                      value={szLethality}
-                      onChange={(e) => setSzLethality(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    >
-                      <option value="Standard RED">Standard RED</option>
-                      <option value="Gritty / High Lethality">Gritty / High Lethality</option>
-                      <option value="Cinematic Action">Cinematic Action</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Economy Dial</label>
-                    <select
-                      aria-label="Economy Dial"
-                      value={szEconomy}
-                      onChange={(e) => setSzEconomy(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-                    >
-                      <option value="Raw Scarcity">Raw Scarcity (Time of the Red)</option>
-                      <option value="Standard RED">Standard RED (500–2,000 eb gigs)</option>
-                      <option value="High-Roller">High-Roller Contracts</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase text-slate-400">Campaign Scope &amp; Time</label>
-                    <div className="flex gap-1.5">
-                      <select
-                        aria-label="Campaign Scope"
-                        value={szScope}
-                        onChange={(e) => setSzScope(e.target.value)}
-                        className="w-1/2 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100"
-                      >
-                        <option value="One-Shot">One-Shot</option>
-                        <option value="Mini-Arc">Mini-Arc</option>
-                        <option value="Open Sandbox">Open Sandbox</option>
-                      </select>
-                      <select
-                        aria-label="Starting Night City Time"
-                        disabled={Boolean(editCampaign)}
-                        title={editCampaign ? "Starting clock time is only set on campaign creation" : "Starting Night City time"}
-                        value={szStartMinutes}
-                        onChange={(e) => setSzStartMinutes(parseInt(e.target.value, 10) || 0)}
-                        className="w-1/2 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 disabled:opacity-50"
-                      >
-                        <option value={0}>00:00 Midnight</option>
-                        <option value={360}>06:00 Red Dawn</option>
-                        <option value={720}>12:00 High Noon</option>
-                        <option value={1140}>19:00 Dusk</option>
-                        <option value={1320}>22:00 Night</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    type="text"
-                    value={szCrewConcept}
-                    onChange={(e) => setSzCrewConcept(e.target.value)}
-                    placeholder="Crew Concept / Shared HQ or Patron (e.g. Heywood ripperdoc clinic crew)"
-                    className="rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                  <input
-                    type="text"
-                    value={szLinesVeils}
-                    onChange={(e) => setSzLinesVeils(e.target.value)}
-                    placeholder="Lines & Veils / Safety Boundaries (topics off-limits for GM)"
-                    className="rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100"
-                  />
-                </div>
-                {!editCampaign && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-2">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      {unattachedChars.length > 0 && (
-                        <>
-                          <span className="text-[11px] font-semibold text-slate-300">Attach Starting PCs:</span>
-                          {unattachedChars.map((ch) => {
-                            const checked = attachCharIds.includes(ch.id);
-                            return (
-                              <label key={ch.id} className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-200">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() =>
-                                    setAttachCharIds((prev) =>
-                                      prev.includes(ch.id) ? prev.filter((x) => x !== ch.id) : [...prev, ch.id],
-                                    )
-                                  }
-                                  className="h-3 w-3 accent-cyan-400"
-                                />
-                                <span>{ch.name}</span>
-                              </label>
-                            );
-                          })}
-                        </>
-                      )}
-                    </div>
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-cyan-200">
-                      <input
-                        type="checkbox"
-                        checked={launchIntroOnCreate}
-                        onChange={(e) => setLaunchIntroOnCreate(e.target.checked)}
-                        className="h-3.5 w-3.5 accent-cyan-400"
-                      />
-                      <span>Launch Opening GM Intro on Create</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
+          {/* Footer */}
+          <div className="flex items-center justify-between border-t border-[var(--hud-line)] bg-[#5a0b1c]/25 px-5 py-3">
+            <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+              Closing preserves your draft automatically until saved or reset.
+            </span>
+            <div className="flex items-center gap-2">
+              <HudButton variant="ghost" size="md" onClick={onClose}>
+                Cancel
+              </HudButton>
+              <HudButton
+                type="submit"
+                variant="cta"
+                size="md"
+                disabled={busy || !name.trim()}
+              >
+                {busy
+                  ? editCampaign
+                    ? "Updating…"
+                    : "Creating…"
+                  : editCampaign
+                    ? "Apply Architect Updates"
+                    : "Create Campaign"}
+              </HudButton>
+            </div>
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-slate-800 bg-[#0e1424] px-5 py-3">
-          <span className="text-[11px] text-slate-400">
-            Closing preserves your draft automatically until saved or reset.
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:text-white"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !name.trim()}
-              className="rounded-md bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
-            >
-              {busy
-                ? editCampaign
-                  ? "Updating…"
-                  : "Creating…"
-                : editCampaign
-                  ? "Apply Architect Updates"
-                  : "Create Campaign"}
-            </button>
-          </div>
-        </div>
-      </form>
+        </form>
+      </CyberFrame>
     </div>
   );
 }

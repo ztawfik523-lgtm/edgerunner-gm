@@ -17,6 +17,7 @@ import {
   setStoredRoomPin,
 } from "../api";
 import type { ActiveTurnInfo, CharacterRecord, CoopPlayer, NetworkInfo } from "../types";
+import { CyberFrame, HazardBadge, HudButton, HudToggle } from "./cyber";
 
 interface CoopModalProps {
   open: boolean;
@@ -119,58 +120,74 @@ export function CoopModal({
       aria-label="Party & LAN Multiplayer"
       onClick={onClose}
     >
-      <div
-        className="cyber-cut flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden border border-slate-700 bg-[#0d111a] shadow-2xl"
+      <CyberFrame
+        variant="modal"
+        className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-[var(--hud-line)] bg-[#5a0b1c]/55 px-4 py-3 sm:px-5">
           <div className="flex items-center gap-2.5">
-            <Users className="h-4 w-4 text-cyan-400" />
+            <Users className="h-4 w-4 shrink-0 text-[var(--hud-accent)]" />
             <div>
-              <h2 className="text-sm font-bold text-slate-100">Party &amp; LAN Table</h2>
-              <p className="text-[11px] text-slate-400">
+              <h2
+                data-text="Party & LAN Table"
+                className="cp-glitch font-cyber-display text-sm font-semibold uppercase tracking-wider text-[var(--hud-text)]"
+              >
+                Party &amp; LAN Table
+              </h2>
+              <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                 {campaignName ? `Campaign: ${campaignName}` : "No campaign selected"}
               </p>
             </div>
           </div>
-          <button
-            type="button"
+          <HudButton
+            variant="tactical"
+            size="xs"
             onClick={onClose}
             aria-label="Close party settings"
-            className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+            className="px-2 py-1"
           >
             <X className="h-4 w-4" />
-          </button>
+          </HudButton>
         </div>
 
-        <div className="flex-1 space-y-5 overflow-y-auto p-5 text-xs">
+        <div className="flex-1 space-y-4 overflow-y-auto p-5 font-cyber-ui text-xs">
           {/* Your Seat / Identity */}
-          <form onSubmit={handleSaveIdentity} className="space-y-3 rounded-lg border border-slate-800 bg-[#101624] p-3.5">
+          <form
+            onSubmit={handleSaveIdentity}
+            className="space-y-3 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5"
+          >
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-slate-200">Your Seat & Character</span>
-              <span className="font-mono text-[10px] text-slate-500">
+              <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                Your Seat &amp; Character
+              </span>
+              <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
                 ID {selfClientId.slice(0, 8)}
               </span>
             </div>
 
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-[11px] text-slate-400">Player Name</label>
+                <label className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                  Player Name
+                </label>
                 <input
                   type="text"
                   value={nameDraft}
                   onChange={(e) => setNameDraft(e.target.value)}
                   placeholder="Your handle..."
-                  className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] text-slate-400">Claimed Character</label>
+                <label className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                  Claimed Character
+                </label>
                 <select
                   value={claimedCharId}
                   onChange={(e) => onChangeClaimedChar(e.target.value)}
-                  className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+                  className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                 >
                   {isAdmin && <option value="">Any / Narrator (GM)</option>}
                   {!isAdmin && <option value="">Unassigned / Select Your Character</option>}
@@ -187,28 +204,25 @@ export function CoopModal({
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <label className="inline-flex cursor-pointer items-center gap-2 text-slate-300">
-                <input
-                  type="checkbox"
+              <label className="inline-flex cursor-pointer items-center gap-2 font-cyber-ui text-xs text-[var(--hud-text)]">
+                <HudToggle
+                  as="checkbox"
                   checked={protectOthers}
-                  onChange={(e) => onChangeProtectOthers(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-900 accent-cyan-500"
+                  onCheckedChange={onChangeProtectOthers}
+                  className="min-w-12 py-0.5 text-[10px]"
                 />
-                <Shield className="h-3.5 w-3.5 text-cyan-400" />
-                Protect other players&apos; sheets in HUD
+                <Shield className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                <span>Protect other players&apos; sheets in HUD</span>
               </label>
 
-              <button
-                type="submit"
-                className="rounded bg-cyan-600 px-3 py-1 font-semibold text-white hover:bg-cyan-500"
-              >
+              <HudButton type="submit" variant="cta" size="sm">
                 Save Seat
-              </button>
+              </HudButton>
             </div>
 
             {(netInfo?.pin_required || pinDraft) && (
               <div className="pt-1">
-                <label className="mb-1 flex items-center gap-1.5 text-[11px] text-amber-300">
+                <label className="mb-1 flex items-center gap-1.5 font-cyber-ui text-[11px] text-[var(--hud-warn)]">
                   <KeyRound className="h-3 w-3" />
                   Room Passcode (PIN)
                 </label>
@@ -217,28 +231,28 @@ export function CoopModal({
                   value={pinDraft}
                   onChange={(e) => setPinDraft(e.target.value)}
                   placeholder="Enter host PIN if required..."
-                  className="w-full rounded border border-amber-500/40 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-amber-400 focus:outline-none"
+                  className="w-full border border-[var(--hud-warn)]/60 bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-warn)] focus:outline-none"
                 />
               </div>
             )}
           </form>
 
           {/* Online Crew */}
-          <div className="space-y-2 rounded-lg border border-slate-800 bg-[#101624] p-3.5">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-slate-200">
-                <Radio className="h-3.5 w-3.5 text-emerald-400" />
-                Live Crew ({roster.length})
+          <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                <Radio className="h-3.5 w-3.5 text-[var(--hud-ok)]" />
+                Live Crew (<span className="font-cyber-data">{roster.length}</span>)
               </span>
               {activeTurn && (
-                <span className="rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] text-amber-300">
+                <HazardBadge tone="warn" className="text-[10px]">
                   Turn: {activeTurn.player_name}
-                </span>
+                </HazardBadge>
               )}
             </div>
 
             {roster.length === 0 ? (
-              <p className="text-slate-400">
+              <p className="font-cyber-ui text-[var(--hud-muted)]">
                 Only you are tuned in right now. Friends who open this campaign appear here automatically with live updates.
               </p>
             ) : (
@@ -249,16 +263,16 @@ export function CoopModal({
                   return (
                     <div
                       key={p.client_id}
-                      className="flex items-center justify-between rounded border border-slate-800 bg-slate-950/70 px-2.5 py-1.5"
+                      className="flex items-center justify-between border border-[var(--hud-line-soft)] bg-black/50 px-2.5 py-1.5"
                     >
                       <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                        <span className="font-medium text-slate-100">
+                        <span className="h-2 w-2 bg-[var(--hud-ok)]" />
+                        <span className="font-cyber-ui font-medium text-[var(--hud-text)]">
                           {p.player_name}
                           {isYou ? " (You)" : ""}
                         </span>
                       </div>
-                      <span className="font-mono text-[11px] text-cyan-300">
+                      <span className="font-cyber-ui text-[11px] font-medium text-[var(--hud-accent)]">
                         {charName ?? "Observer / Party"}
                       </span>
                     </div>
@@ -269,70 +283,75 @@ export function CoopModal({
           </div>
 
           {/* LAN Hosting Info */}
-          <div className="space-y-2.5 rounded-lg border border-slate-800 bg-[#101624] p-3.5">
+          <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3.5">
             <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-slate-200">
+              <span className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                 {netInfo?.lan_enabled ? (
-                  <Globe className="h-3.5 w-3.5 text-emerald-400" />
+                  <Globe className="h-3.5 w-3.5 text-[var(--hud-ok)]" />
                 ) : (
-                  <Lock className="h-3.5 w-3.5 text-slate-400" />
+                  <Lock className="h-3.5 w-3.5 text-[var(--hud-muted)]" />
                 )}
                 Network Hosting
               </span>
-              <span
-                className={`rounded px-2 py-0.5 font-mono text-[10px] ${
-                  netInfo?.lan_enabled
-                    ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                    : "border border-slate-700 bg-slate-900 text-slate-400"
-                }`}
-              >
-                {netInfo?.lan_enabled ? "LAN OPEN" : "LOCAL ONLY"}
-              </span>
+              {netInfo?.lan_enabled ? (
+                <HazardBadge tone="accent" className="text-[10px]">
+                  LAN OPEN
+                </HazardBadge>
+              ) : (
+                <span className="border border-[var(--hud-line-soft)] bg-black/50 px-2 py-0.5 font-cyber-data text-[10px] uppercase tracking-wider text-[var(--hud-muted)]">
+                  LOCAL ONLY
+                </span>
+              )}
             </div>
 
             {netInfo?.lan_enabled ? (
               <div className="space-y-1.5">
-                <p className="text-slate-400">
+                <p className="font-cyber-ui text-[var(--hud-muted)]">
                   Friends on the same Wi-Fi / LAN can join straight in their browser:
                 </p>
                 {netInfo.join_urls.map((url) => (
                   <div
                     key={url}
-                    className="flex items-center justify-between gap-2 rounded border border-cyan-500/30 bg-slate-950 px-2.5 py-1.5 font-mono text-[11px] text-cyan-300"
+                    className="flex items-center justify-between gap-2 border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2.5 py-1.5 font-cyber-data text-[11px] text-[var(--hud-accent)]"
                   >
                     <span className="truncate">{url}</span>
-                    <button
-                      type="button"
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
                       onClick={() => void copyText(url, url, "join link")}
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-slate-200 hover:bg-slate-700"
+                      className="shrink-0"
                     >
-                      {copiedKey === url ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                      {copiedKey === url ? <Check className="h-3 w-3 text-[var(--hud-ok)]" /> : <Copy className="h-3 w-3" />}
                       Copy
-                    </button>
+                    </HudButton>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="space-y-2 text-slate-400">
+              <div className="space-y-2 font-cyber-ui text-[var(--hud-muted)]">
                 <p>
-                  Right now the server only accepts connections from this computer (<code className="text-slate-300">127.0.0.1</code>). Start the server with <code className="text-cyan-300">--lan</code> (plus optional <code className="text-cyan-300">--pin 4242</code>) so friends on your Wi-Fi can join:
+                  Right now the server only accepts connections from this computer (
+                  <code className="font-cyber-data text-[var(--hud-text)]">127.0.0.1</code>). Start the server with{" "}
+                  <code className="font-cyber-data text-[var(--hud-accent)]">--lan</code> (plus optional{" "}
+                  <code className="font-cyber-data text-[var(--hud-accent)]">--pin 4242</code>) so friends on your Wi-Fi can join:
                 </p>
-                <div className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 font-mono text-[11px] text-slate-200">
+                <div className="flex items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-[11px] text-[var(--hud-text)]">
                   <span className="truncate">{lanCmd}</span>
-                  <button
-                    type="button"
+                  <HudButton
+                    variant="tactical"
+                    size="xs"
                     onClick={() => void copyText("lan-cmd", lanCmd, "LAN launch command")}
-                    className="inline-flex shrink-0 items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-slate-200 hover:bg-slate-700"
+                    className="shrink-0"
                   >
-                    {copiedKey === "lan-cmd" ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    {copiedKey === "lan-cmd" ? <Check className="h-3 w-3 text-[var(--hud-ok)]" /> : <Copy className="h-3 w-3" />}
                     Copy
-                  </button>
+                  </HudButton>
                 </div>
               </div>
             )}
           </div>
         </div>
-      </div>
+      </CyberFrame>
     </div>
   );
 }
