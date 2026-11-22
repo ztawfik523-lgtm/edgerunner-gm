@@ -834,15 +834,9 @@ export function CampaignCreatorModal({
           : mode;
     setAiBusyField(busyKey);
     try {
-      const npcsMap = Object.fromEntries(
-        npcPairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `NPC #${i + 1}`, p.val.trim()]),
-      );
-      const objMap = Object.fromEntries(
-        objectivePairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `Objective #${i + 1}`, p.val.trim()]),
-      );
-      const discMap = Object.fromEntries(
-        discoveryPairs.filter((p) => p.key.trim() || p.val.trim()).map((p, i) => [p.key.trim() || `Clue #${i + 1}`, p.val.trim()]),
-      );
+      const npcsOrdered = npcPairs.map((p) => ({ key: p.key.trim(), val: p.val.trim() }));
+      const objOrdered = objectivePairs.map((p) => ({ key: p.key.trim(), val: p.val.trim() }));
+      const discOrdered = discoveryPairs.map((p) => ({ key: p.key.trim(), val: p.val.trim() }));
       const res = await assistCharacterCreation({
         target: "campaign",
         mode,
@@ -875,9 +869,9 @@ export function CampaignCreatorModal({
             climax: beatClimax,
             resolution: beatRes,
           },
-          npcs: npcsMap,
-          objectives: objMap,
-          discoveries: discMap,
+          npcs: npcsOrdered as unknown as Record<string, string>,
+          objectives: objOrdered as unknown as Record<string, string>,
+          discoveries: discOrdered as unknown as Record<string, string>,
           locations,
           gig: {
             title: gig.title,

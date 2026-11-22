@@ -1650,21 +1650,27 @@ export function CharacterCreatorModal({
                     : "backstory & history";
         onNotify(assistMode === "scratch" ? `AI generated ${label}.` : `AI improved your ${label}.`);
       } else {
-        if (entryIndex !== undefined && subField && res.value !== undefined) {
-          const val = res.value;
-          if (field === "friends") {
-            setFriends((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
-          } else if (field === "enemies") {
-            setEnemies((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
-          } else if (field === "tragic_love_affairs") {
-            setLoveAffairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+        if (entryIndex !== undefined && subField) {
+          const val = res.value?.trim();
+          if (val) {
+            if (field === "friends") {
+              setFriends((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+            } else if (field === "enemies") {
+              setEnemies((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+            } else if (field === "tragic_love_affairs") {
+              setLoveAffairs((p) => p.map((x, i) => (i === entryIndex ? { ...x, [subField]: val } : x)));
+            }
+            onNotify(assistMode === "scratch" ? `AI regenerated ${subField.replace(/_/g, " ")}.` : `AI improved ${subField.replace(/_/g, " ")}.`);
+          } else {
+            onNotify(`AI returned an empty value for ${subField.replace(/_/g, " ")}; existing text kept.`);
           }
-          onNotify(assistMode === "scratch" ? `AI regenerated ${subField.replace(/_/g, " ")}.` : `AI improved ${subField.replace(/_/g, " ")}.`);
         } else {
-          if ((!field || field === "friends") && res.friends?.length) setFriends(res.friends);
-          if ((!field || field === "enemies") && res.enemies?.length) {
+          const validFriends = (res.friends ?? []).filter((f) => f.name?.trim());
+          if ((!field || field === "friends") && validFriends.length > 0) setFriends(validFriends);
+          const validEnemies = (res.enemies ?? []).filter((e) => e.name?.trim() || e.who?.trim());
+          if ((!field || field === "enemies") && validEnemies.length > 0) {
             setEnemies(
-              res.enemies.map((e) => ({
+              validEnemies.map((e) => ({
                 who: e.who,
                 name: e.name,
                 wronged: e.wronged === "I wronged them" ? "I wronged them" : "They wronged me",
@@ -1674,8 +1680,9 @@ export function CharacterCreatorModal({
               })),
             );
           }
-          if ((!field || field === "tragic_love_affairs") && res.tragic_love_affairs?.length) {
-            setLoveAffairs(res.tragic_love_affairs);
+          const validLoves = (res.tragic_love_affairs ?? []).filter((l) => l.name?.trim());
+          if ((!field || field === "tragic_love_affairs") && validLoves.length > 0) {
+            setLoveAffairs(validLoves);
           }
           onNotify(
             assistMode === "scratch"

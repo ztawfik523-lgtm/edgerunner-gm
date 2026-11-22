@@ -1,6 +1,8 @@
 """Corebook Armory, Exotic Weapons, Quality Brands, Armor Pieces, Hardware, and AI Assist."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import random
 import re
@@ -906,7 +908,7 @@ def _to_library_row(
         "description": desc,
         "stats": stats,
         "tags": tags,
-        "pdf_page": pg,
+        "pdf_page": entry.get("pdf_page"),
         "printed_page": pg,
         "section_id": None,
         "source_sha256": digest,
@@ -933,12 +935,12 @@ def build_library_corebook_entries(digest: str) -> list[dict[str, Any]]:
 
     # 4. Curated Vehicles
     for item in build_corebook_vehicles():
-        raw_rows.append(_to_library_row(item, digest, category_override="gear", extra_tags=["vehicle", "nomad", "moto"]))
+        raw_rows.append(_to_library_row(item, digest, extra_tags=["vehicle", "nomad", "moto"]))
 
     # 5. Curated Drugs
     for item in build_corebook_drugs():
         sub = str((item.get("stats") or {}).get("subtype") or "").lower().replace(" ", "-")
-        raw_rows.append(_to_library_row(item, digest, category_override="gear", extra_tags=["drug", sub or "substance"]))
+        raw_rows.append(_to_library_row(item, digest, extra_tags=["drug", sub or "substance"]))
 
     # 6. General Gear (Airhypo, Vials of Poison/Biotoxin, Agent, Frames, Cryo)
     for item in build_corebook_gear():
@@ -973,16 +975,125 @@ def build_library_corebook_entries(digest: str) -> list[dict[str, Any]]:
     return deduped
 
 
+_THINK_XML_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.S | re.I)
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.I)
+_LOCALE_STOPWORDS = frozenset({"the", "of", "and", "in", "at", "a", "an", "for", "on", "to"})
+
+
+def _extract_balanced_json(text: str) -> str | None:
+    """Scan `text` using `JSONDecoder.raw_decode` and return the last valid JSON object substring."""
+    decoder = json.JSONDecoder()
+    last_slice: str | None = None
+    pos = 0
+    while pos < len(text):
+        brace = text.find("{", pos)
+        if brace == -1:
+            break
+        try:
+            obj, end_pos = decoder.raw_decode(text, brace)
+        except json.JSONDecodeError:
+            pos = brace + 1
+            continue
+        if isinstance(obj, dict):
+            last_slice = text[brace:end_pos]
+        pos = max(end_pos, brace + 1)
+    return last_slice
+
+
 def _strip_json_fences(raw: str) -> str:
-    text = raw.strip()
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
-    if m:
-        return m.group(1).strip()
+    """Strip `<think>` reasoning blocks and extract balanced JSON from fenced or raw LLM replies."""
+    text = _THINK_XML_RE.sub("", raw or "")
+    text = re.sub(r"<think\b.*$", "", text, flags=re.S | re.I).strip()
+    if not text:
+        return ""
+    fences = list(_FENCED_JSON_RE.finditer(text))
+    for match in reversed(fences):
+        inner = match.group(1).strip()
+        extracted = _extract_balanced_json(inner)
+        if extracted is not None:
+            return extracted
+    if fences:
+        return fences[-1].group(1).strip()
+    extracted = _extract_balanced_json(text)
+    if extracted is not None:
+        return extracted
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         return text[start : end + 1]
     return text
+
+
+def _supports_enable_thinking(fn: Any) -> bool:
+    """Return True if `fn` accepts an `enable_thinking` keyword argument."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    return "enable_thinking" in sig.parameters or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+
+
+def _normalize_kv_entry(entry: Any) -> dict[str, Any]:
+    """Normalize `{key, val}`, `{name, description}`, or `{handle, summary}` entry shapes."""
+    if not isinstance(entry, dict):
+        return {"key": "", "val": str(entry or "")}
+    out = dict(entry)
+    if "key" in entry or "val" in entry:
+        out["key"] = str(entry.get("key") or "")
+        out["val"] = str(entry.get("val") or "")
+        return out
+    if "name" in entry or "description" in entry:
+        out["key"] = str(entry.get("name") or "")
+        out["val"] = str(entry.get("description") or "")
+        return out
+    if "handle" in entry or "summary" in entry:
+        out["key"] = str(entry.get("handle") or "")
+        out["val"] = str(entry.get("summary") or "")
+        return out
+    for k, v in entry.items():
+        out["key"] = str(k)
+        out["val"] = str(v or "")
+        return out
+    return {"key": "", "val": ""}
+
+
+def _gather_creation_lore(
+    rules_path: Path,
+    query_terms: list[str],
+    query_seed: str,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Run synchronous library & page searches off the event loop."""
+    from library import search_library
+    from redkb import search_pages
+
+    lore_snippets: list[str] = []
+    citations: list[dict[str, Any]] = []
+    for q_term in query_terms:
+        term = q_term.strip()
+        if not term:
+            continue
+        try:
+            hits = search_library(rules_path, q=term, limit=2)
+            for h in hits:
+                lore_snippets.append(f"[Library: {h['name']}] {h.get('summary') or h.get('description', '')[:220]}")
+        except Exception:
+            pass
+    if query_seed:
+        try:
+            pages = search_pages(rules_path, query_seed, limit=2)
+            for pg in pages:
+                excerpt = str(pg.get("excerpt") or "").strip()
+                if excerpt:
+                    lore_snippets.append(f"[Corebook p.{pg.get('printed_page') or pg.get('pdf_page')}] {excerpt[:280]}")
+                    citations.append({
+                        "printed_page": pg.get("printed_page"),
+                        "pdf_page": pg.get("pdf_page"),
+                    })
+        except Exception:
+            pass
+    return lore_snippets, citations
 
 
 _RNG = random.SystemRandom()
@@ -1170,8 +1281,15 @@ async def generate_creation_ai_assist(
     role_name = str(char.get("role") or "Edgerunner").strip()
     char_handle = str(char.get("handle") or "").strip()
     char_real_name = str(char.get("real_name") or "").strip()
-    real_name_hidden = bool(char.get("real_name_hidden", True if (char_handle and char_real_name) else False))
-    char_name = str(char.get("name") or char_handle or char_real_name or "Unnamed Edgerunner").strip()
+    char_detail = char.get("detail") if isinstance(char.get("detail"), dict) else {}
+    real_name_hidden = bool(
+        char.get(
+            "real_name_hidden",
+            char_detail.get("real_name_hidden", True if (char_handle and char_real_name) else False),
+        )
+    )
+    visible_real_name = "" if real_name_hidden else char_real_name
+    char_name = str(char.get("name") or char_handle or visible_real_name or "Unnamed Edgerunner").strip()
     stats = char.get("stats") if isinstance(char.get("stats"), dict) else {}
     skills = char.get("skills") if isinstance(char.get("skills"), dict) else {}
     lifepath = char.get("lifepath") if isinstance(char.get("lifepath"), dict) else {}
@@ -1192,18 +1310,29 @@ async def generate_creation_ai_assist(
     lore_snippets: list[str] = []
     citations: list[dict[str, Any]] = []
     p = Path(rules_path).expanduser() if rules_path else None
+    camp_meta_for_lore = camp.get("campaign_meta") if isinstance(camp.get("campaign_meta"), dict) else {}
+    camp_district = str(camp.get("district") or camp_meta_for_lore.get("district") or "").strip()
+    camp_factions = camp.get("factions") or camp_meta_for_lore.get("factions") or []
+    camp_caper_style = str(camp.get("caper_style") or camp_meta_for_lore.get("caper_style") or "").strip()
     if p and p.is_file():
-        from library import search_library
-        from redkb import search_pages
-
-        locale_hint = (scratch_seed or {}).get("suggested_locale", "").split()[0] if scratch_seed else ""
+        if camp_district:
+            locale_hint = camp_district
+        elif scratch_seed and scratch_seed.get("suggested_locale"):
+            raw_locale = str(scratch_seed.get("suggested_locale") or "").strip()
+            locale_terms = [
+                t for t in re.split(r"\s+", raw_locale)
+                if t and t.lower() not in _LOCALE_STOPWORDS
+            ]
+            locale_hint = " ".join(locale_terms[:3]) if locale_terms else raw_locale
+        else:
+            locale_hint = ""
         use_camp_seed_for_lore = target == "campaign" and (mode != "scratch" or lock_choices or field is not None)
         query_terms = (
             (
                 [
-                    str(camp.get("district") or ""),
-                    *(str(f) for f in (camp.get("factions") or [])[:2]),
-                    str(camp.get("caper_style") or ""),
+                    camp_district,
+                    *(str(f) for f in camp_factions[:2]),
+                    camp_caper_style,
                     locale_hint or "Night City",
                 ]
                 if use_camp_seed_for_lore
@@ -1212,47 +1341,29 @@ async def generate_creation_ai_assist(
             if target == "campaign"
             else [role_name, locale_hint or "Night City", str(lifepath.get("cultural_origin") or "")]
         )
-        for q_term in query_terms:
-            term = q_term.strip()
-            if not term:
-                continue
-            try:
-                hits = search_library(p, q=term, limit=2)
-                for h in hits:
-                    lore_snippets.append(f"[Library: {h['name']}] {h.get('summary') or h.get('description', '')[:220]}")
-            except Exception:
-                pass
         query_seed = (
-            " ".join([str(camp.get("district") or ""), str(camp.get("caper_style") or ""), guidance[:120]]).strip()
+            " ".join([camp_district, camp_caper_style, guidance[:120]]).strip()
             if target == "campaign"
             else " ".join([role_name, guidance[:120] or locale_hint]).strip()
         )
-        if query_seed:
-            try:
-                pages = search_pages(p, query_seed, limit=2)
-                for pg in pages:
-                    excerpt = str(pg.get("excerpt") or "").strip()
-                    if excerpt:
-                        lore_snippets.append(f"[Corebook p.{pg.get('printed_page') or pg.get('pdf_page')}] {excerpt[:280]}")
-                        citations.append({
-                            "printed_page": pg.get("printed_page"),
-                            "pdf_page": pg.get("pdf_page"),
-                        })
-            except Exception:
-                pass
+        lore_snippets, citations = await asyncio.to_thread(
+            _gather_creation_lore, p, query_terms, query_seed
+        )
 
     sheet_brief = {
         "name": char_name,
         **({"handle": char_handle} if char_handle else {}),
-        **({"real_name": char_real_name} if char_real_name else {}),
+        **({"real_name": char_real_name} if char_real_name and not real_name_hidden else {}),
         "real_name_hidden": real_name_hidden,
         "identity_rule": (
-            f"Known on The Street strictly by Handle '{char_handle}'; real name '{char_real_name}' is hidden/secret from the public."
+            f"Known on The Street strictly by Handle '{char_handle}'; real name is hidden/secret from the public."
             if (char_handle and char_real_name and real_name_hidden)
             else f"Goes exclusively by Street Handle '{char_handle}' (no public legal name)."
             if (char_handle and not char_real_name)
             else f"Known as '{char_handle}' (real name '{char_real_name}' is known)."
             if (char_handle and char_real_name)
+            else "Identity is hidden/secret from the public."
+            if real_name_hidden
             else f"Known as '{char_name}'."
         ),
         "gender": char.get("gender") or "",
@@ -1453,6 +1564,7 @@ async def generate_creation_ai_assist(
             "gm_secrets": "Hidden truth behind the patron, double-cross, or corporate agenda for the AI GM only",
             "opening_clock": {"name": "Countdown name (e.g. Corp Response / Gang Heat)", "segments": 4, "note": "What happens when the clock fills"},
         }
+        camp_meta = camp_brief.get("campaign_meta") if isinstance(camp_brief.get("campaign_meta"), dict) else {}
         current_draft = {
             "name": camp_brief.get("name") or current.get("name") or "",
             "summary": current.get("summary") or "",
@@ -1460,9 +1572,9 @@ async def generate_creation_ai_assist(
             "gm_secrets": current.get("gm_secrets") or "",
             "secret_entries": current.get("secret_entries") or [],
             "beats": current.get("beats") or {},
-            "npcs": current.get("npcs") or {},
-            "objectives": current.get("objectives") or {},
-            "discoveries": current.get("discoveries") or {},
+            "npcs": current.get("npcs") or camp_brief.get("npcs") or {},
+            "objectives": current.get("objectives") or camp_brief.get("objectives") or {},
+            "discoveries": current.get("discoveries") or camp_brief.get("discoveries") or {},
             "locations": current.get("locations") or [],
             "gig": current.get("gig") or {},
             "opening_clock": current.get("opening_clock") or {},
@@ -1491,7 +1603,8 @@ async def generate_creation_ai_assist(
                     prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
                 elif field == "gm_secrets":
                     sec_list = current_draft.get("secret_entries") if isinstance(current_draft.get("secret_entries"), list) else []
-                    targeted_camp_entry = sec_list[entry_index] if 0 <= entry_index < len(sec_list) else {}
+                    raw_entry = sec_list[entry_index] if 0 <= entry_index < len(sec_list) else None
+                    targeted_camp_entry = _normalize_kv_entry(raw_entry) if raw_entry is not None else {}
                     prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
                 else:
                     raw_map = current_draft.get(field)
@@ -1499,7 +1612,8 @@ async def generate_creation_ai_assist(
                         items = [{"key": k, "val": v} for k, v in raw_map.items()]
                         targeted_camp_entry = items[entry_index] if 0 <= entry_index < len(items) else {}
                     elif isinstance(raw_map, list):
-                        targeted_camp_entry = raw_map[entry_index] if 0 <= entry_index < len(raw_map) else {}
+                        raw_entry = raw_map[entry_index] if 0 <= entry_index < len(raw_map) else None
+                        targeted_camp_entry = _normalize_kv_entry(raw_entry) if raw_entry is not None else {}
                     prev_field_val = targeted_camp_entry.get(sub_field, "") if isinstance(targeted_camp_entry, dict) else ""
                 requested_schema = {"value": f"Concise updated text for '{field}[{entry_index}].{sub_field}'"}
                 target_label = f"{field}[{entry_index}].{sub_field}"
@@ -1551,14 +1665,15 @@ async def generate_creation_ai_assist(
                 "lock_choices": lock_choices,
                 **(
                     {
-                        "district": camp_brief.get("district") or "",
-                        "caper_style": camp_brief.get("caper_style") or "",
-                        "factions": camp_brief.get("factions") or [],
+                        "district": camp_brief.get("district") or camp_meta.get("district") or "",
+                        "caper_style": camp_brief.get("caper_style") or camp_meta.get("caper_style") or "",
+                        "factions": camp_brief.get("factions") or camp_meta.get("factions") or [],
+                        **({"campaign_meta": camp_meta} if camp_meta else {}),
                         **({"target_npc_count": npc_count} if npc_count is not None else {}),
                         **({"target_objective_count": obj_count} if obj_count is not None else {}),
                     }
                     if (lock_choices or mode != "scratch" or field is not None)
-                    else {"screamsheet_hook": camp_brief.get("screamsheet_hook") or ""}
+                    else {"screamsheet_hook": camp_brief.get("screamsheet_hook") or camp_meta.get("screamsheet_hook") or ""}
                 ),
             }
         )
@@ -1608,9 +1723,40 @@ async def generate_creation_ai_assist(
     ]
     base_temp = float(llm_cfg.get("creation_temperature", 0.85))
     effective_temp = min(1.5, base_temp + 0.1) if mode == "scratch" else max(0.0, base_temp - 0.15)
-    raw_reply = await llm.complete(messages, json_mode=True, temperature=effective_temp)
+    thinking_kwargs = (
+        {"enable_thinking": False}
+        if llm_cfg.get("gm_thinking_mode", "quality") == "balanced" and _supports_enable_thinking(llm.complete)
+        else {}
+    )
+    raw_reply = await llm.complete(
+        messages,
+        json_mode=True,
+        temperature=effective_temp,
+        **thinking_kwargs,
+    )
     cleaned = _strip_json_fences(raw_reply)
-    parsed = json.loads(cleaned)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as first_err:
+        repair_messages = [
+            *messages,
+            {"role": "assistant", "content": str(raw_reply)[:4000]},
+            {
+                "role": "user",
+                "content": (
+                    f"Your previous reply was not valid JSON ({first_err}). "
+                    "Return ONLY a single valid JSON object matching required_json_schema, with no markdown fences, commentary, or <think> tags."
+                ),
+            },
+        ]
+        raw_reply = await llm.complete(
+            repair_messages,
+            json_mode=True,
+            temperature=0.0,
+            **thinking_kwargs,
+        )
+        cleaned = _strip_json_fences(raw_reply)
+        parsed = json.loads(cleaned)
     if not isinstance(parsed, dict):
         raise ValueError("Model returned non-object JSON for creation AI assist")
 

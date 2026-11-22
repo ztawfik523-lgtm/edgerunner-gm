@@ -356,10 +356,20 @@ export function CampaignPanel({
     if (!campaign || !isAdmin || aiBusy || busy) return;
     setAiBusyMode(assistMode === "scratch" ? "regen" : "improve");
     try {
+      const meta = context?.campaign_meta;
       const res = await assistCharacterCreation({
         target: "campaign",
         mode: assistMode,
-        campaign: { name: campaign.name },
+        campaign: {
+          name: campaign.name,
+          lock_choices: true,
+          ...(meta?.district ? { district: meta.district } : {}),
+          ...(meta?.threat_rating ? { threat_rating: meta.threat_rating } : {}),
+          ...(meta?.caper_style ? { caper_style: meta.caper_style } : {}),
+          ...(meta?.factions?.length ? { factions: meta.factions } : {}),
+          ...(meta?.screamsheet_hook ? { screamsheet_hook: meta.screamsheet_hook } : {}),
+          ...(meta ? { campaign_meta: meta } : {}),
+        } as Parameters<typeof assistCharacterCreation>[0]["campaign"],
         current: {
           summary: summary.trim() || undefined,
           opening_scene: scene.trim() || undefined,

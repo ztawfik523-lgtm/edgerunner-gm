@@ -1,7 +1,6 @@
 """Character, party-grouping, NPC identity, clock-label, and campaign-state normalization helpers."""
 from __future__ import annotations
 
-import difflib
 import json
 import re
 from typing import Any
@@ -27,6 +26,9 @@ _CANONICAL_ROLE_CHECKS: dict[str, tuple[str, str]] = {
     "medicine": ("Medicine", "TECH"),
     "surgery": ("Surgery", "TECH"),
     "medical tech": ("Medical Tech", "TECH"),
+    "medical technology": ("Medical Tech", "TECH"),
+    "pharmaceuticals": ("Pharmaceuticals", "TECH"),
+    "cryosystem operation": ("Cryosystem Operation", "TECH"),
 }
 
 
@@ -69,25 +71,94 @@ def _parse_clock_minutes(raw: Any) -> int | None:
     return hour * 60 + minute
 
 
-def _resolve_character(actor: str | None, characters: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _collect_npc_needles(
+    known_npcs: dict[str, Any] | list[str] | set[str] | tuple[str, ...] | None,
+) -> tuple[set[str], set[str]]:
+    """Return (exact_npc_names, npc_first_tokens) in casefolded form."""
+    exact: set[str] = set()
+    tokens: set[str] = set()
+    if not known_npcs:
+        return exact, tokens
+    items: list[str] = []
+    if isinstance(known_npcs, dict):
+        for k, v in known_npcs.items():
+            if isinstance(k, str) and k.strip():
+                items.append(k.strip())
+            if isinstance(v, dict):
+                for subk in ("handle", "name"):
+                    sv = v.get(subk)
+                    if isinstance(sv, str) and sv.strip():
+                        items.append(sv.strip())
+    elif isinstance(known_npcs, (list, set, tuple)):
+        for entry in known_npcs:
+            if isinstance(entry, str) and entry.strip():
+                items.append(entry.strip())
+    for raw in items:
+        base = raw.split("(", 1)[0].strip().casefold()
+        full = raw.casefold()
+        if full:
+            exact.add(full)
+        if base:
+            exact.add(base)
+            parts = base.split()
+            if parts and len(parts[0]) >= 2:
+                tokens.add(parts[0])
+    return exact, tokens
+
+
+def _resolve_character(
+    actor: str | None,
+    characters: list[dict[str, Any]],
+    *,
+    known_npcs: dict[str, Any] | list[str] | set[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
     if not characters:
         return None
     if not isinstance(actor, str) or not actor.strip():
         return characters[0] if len(characters) == 1 else None
-    needle = actor.strip().casefold()
+    raw_actor = actor.strip()
+    needle = raw_actor.casefold()
+
+    # 1. Exact match by ID, name, or street handle (case-insensitive for name/handle).
     for char in characters:
-        if char["name"].strip().casefold() == needle or char["id"] == actor.strip():
+        d = char.get("detail") or {}
+        handle = str(d.get("handle") or "").strip()
+        cname = str(char.get("name") or "").strip()
+        if char.get("id") == raw_actor or cname.casefold() == needle or (handle and handle.casefold() == needle):
             return char
+
+    # 2. Reject known NPC names/handles so NPC checks never fuzzy-match onto a PC.
+    npc_exact, npc_tokens = _collect_npc_needles(known_npcs)
+    if needle in npc_exact:
+        return None
+
+    # 3. Unambiguous first-token match against street handle or non-hidden name.
+    token_matches: list[dict[str, Any]] = []
     for char in characters:
-        cname = char["name"].strip().casefold()
-        if cname.startswith(needle) or needle in cname:
-            return char
-    names = {c["name"].strip().casefold(): c for c in characters}
-    close = difflib.get_close_matches(needle, list(names), n=1, cutoff=0.6)
-    return names[close[0]] if close else None
+        d = char.get("detail") or {}
+        handle = str(d.get("handle") or "").strip()
+        cname = str(char.get("name") or "").strip()
+        hidden = bool(d.get("real_name_hidden", False))
+        candidates: list[str] = []
+        if handle:
+            candidates.append(handle)
+        if cname and (not hidden or not handle):
+            candidates.append(cname)
+        matched_this = False
+        for cand in candidates:
+            parts = cand.split()
+            if parts and parts[0].casefold() == needle and needle not in npc_tokens:
+                matched_this = True
+                break
+        if matched_this:
+            token_matches.append(char)
+
+    if len(token_matches) == 1:
+        return token_matches[0]
+    return None
 
 
-def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
+def _summarize_character(char: dict[str, Any], *, include_hidden: bool = True) -> dict[str, Any]:
     """Render canonical snapshot of character state for rules planning and narration."""
     max_h = int(char.get("max_hp") or 0)
     body_stat = int((char.get("stats") or {}).get("BODY", 0))
@@ -98,17 +169,25 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
     handle = str(d.get("handle") or char.get("name") or "").strip()
     real_name = str(d.get("real_name") or "").strip()
     real_name_hidden = bool(d.get("real_name_hidden", True if (handle and real_name) else False))
+    expose_real = bool(real_name) and (include_hidden or not real_name_hidden)
     if handle and real_name and real_name_hidden:
-        identity_note = f"Street Handle: '{handle}' | Real Name: '{real_name}' (HIDDEN/SECRET — NPCs and the world DO NOT know their real name unless revealed in play)"
+        if include_hidden:
+            identity_note = f"Street Handle: '{handle}' | Real Name: '{real_name}' (HIDDEN/SECRET — NPCs and the world DO NOT know their real name unless revealed in play)"
+        else:
+            identity_note = f"Street Handle: '{handle}' (Real identity hidden)"
     elif handle and real_name:
         identity_note = f"Street Handle: '{handle}' | Real Name: '{real_name}' (Publicly known)"
     else:
         identity_note = f"Street Handle: '{handle}' (Goes by handle only)"
+    detail_out = dict(d)
+    if not include_hidden and real_name_hidden:
+        detail_out.pop("real_name", None)
+    display_name = handle if (not include_hidden and real_name_hidden and handle) else char["name"]
     return {
         "id": char["id"],
-        "name": char["name"],
+        "name": display_name,
         "handle": handle,
-        **({"real_name": real_name} if real_name else {}),
+        **({"real_name": real_name} if expose_real else {}),
         "real_name_hidden": real_name_hidden,
         "identity_note": identity_note,
         **({"gender": str(d["gender"]).strip()} if isinstance(d.get("gender"), str) and str(d["gender"]).strip() else {}),
@@ -130,7 +209,7 @@ def _summarize_character(char: dict[str, Any]) -> dict[str, Any]:
         **({"equipped_weapon": d["equipped_weapon"]} if isinstance(d.get("equipped_weapon"), str) and d["equipped_weapon"].strip() else {}),
         **({"equipped_armor": d["equipped_armor"]} if isinstance(d.get("equipped_armor"), dict) and d["equipped_armor"].get("name") else {}),
         **({"equipped_head_armor": d["equipped_head_armor"]} if isinstance(d.get("equipped_head_armor"), dict) and d["equipped_head_armor"].get("name") else {}),
-        "detail": char.get("detail") or {},
+        "detail": detail_out,
     }
 
 
@@ -602,6 +681,15 @@ def _visible_state_for_prompt(state: dict[str, Any]) -> dict[str, Any]:
     disc = dict(cleaned.get("discoveries") or {})
     cleaned["discoveries"] = {k: v for k, v in disc.items() if not str(k).startswith("__")}
     return cleaned
+
+
+def _visible_gm_secrets_for_prompt(gm_secrets: dict[str, Any] | None) -> dict[str, Any]:
+    """Strip internal __npc_real:* storage keys from prompt gm_secrets (surfaced via npc_profiles)."""
+    return {
+        k: v
+        for k, v in (gm_secrets or {}).items()
+        if not str(k).startswith("__npc_real:")
+    }
 
 
 def _normalize_campaign_changes(

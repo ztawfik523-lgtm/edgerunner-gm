@@ -3331,6 +3331,172 @@ describe("Cyberpunk RED GM UI", () => {
     expect(detail?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
     expect(detail?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
   });
+
+  it("supports /think toggle, slash command, validation, auto-reset, and THINK message badges", async () => {
+    const campaign = {
+      id: "camp-think",
+      name: "Think Test",
+      revision: 1,
+      session_number: 1,
+      character_ids: ["char-think"],
+      state: { scene: "Afterlife Booth", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const char = {
+      id: "char-think",
+      name: "Vee Mercer",
+      stats: { INT: 7, REF: 6, DEX: 6, TECH: 6, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Perception: 6 },
+      hp: 40,
+      max_hp: 40,
+      humanity: 60,
+      luck_remaining: 6,
+      money: 200,
+      inventory: {},
+      revision: 1,
+      detail: { handle: "Vee Mercer" },
+    };
+    const turnBodies: Array<Record<string, unknown>> = [];
+    let branchState: {
+      campaign_id: string;
+      nodes: unknown[];
+      active_branch: unknown[];
+      active_leaf_id: string | null;
+      current_revisions: { campaign_revision: number; solo_revision: number };
+      revision_mismatch: boolean;
+    } = {
+      campaign_id: campaign.id,
+      nodes: [],
+      active_branch: [],
+      active_leaf_id: null,
+      current_revisions: { campaign_revision: 1, solo_revision: 0 },
+      revision_mismatch: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) return jsonResponse(branchState);
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [char],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      if (url === "/v1/chat/turn") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        turnBodies.push(body);
+        const idx = turnBodies.length;
+        const userMsg = {
+          id: `u-think-${idx}`,
+          campaign_id: campaign.id,
+          parent_id: branchState.active_leaf_id,
+          role: "user",
+          content: String(body.user_text ?? ""),
+          raw_content: String(body.user_text ?? ""),
+          model: "",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: { speaker_name: "Vee Mercer", turn_intent: body.turn_intent ?? "action" },
+          is_active: true,
+          created_at: "2026-11-22T00:00:00Z",
+        };
+        const asstMsg = {
+          id: `a-think-${idx}`,
+          campaign_id: campaign.id,
+          parent_id: userMsg.id,
+          role: "assistant",
+          content: "You notice a scarred Militech datashard under his cuff.",
+          raw_content: "You notice a scarred Militech datashard under his cuff.",
+          model: "llama3",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: { turn_intent: body.turn_intent ?? "action" },
+          is_active: true,
+          created_at: "2026-11-22T00:00:01Z",
+        };
+        branchState = {
+          ...branchState,
+          nodes: [...branchState.nodes, userMsg, asstMsg],
+          active_branch: [...branchState.active_branch, userMsg, asstMsg],
+          active_leaf_id: asstMsg.id,
+        };
+        return sseResponse([
+          { event: "text_delta", data: { delta: asstMsg.content } },
+          {
+            event: "turn_done",
+            data: {
+              turn_id: `t-think-${idx}`,
+              user_message: userMsg,
+              assistant_message: asstMsg,
+              citations: [],
+              rolls: [],
+              state_patches: [],
+              library_added: [],
+              warnings: [],
+              compression_recommended: false,
+            },
+          },
+        ]);
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    const thinkBtn = await screen.findByRole("button", { name: /^Think$/i });
+    expect(thinkBtn).toHaveAttribute("aria-pressed", "false");
+
+    // 1. Toggle Think on -> placeholder updates; submitting empty shows validation warning
+    fireEvent.click(thinkBtn);
+    expect(thinkBtn).toHaveAttribute("aria-pressed", "true");
+    const thinkBox = screen.getByPlaceholderText(/Ask the GM what you notice, recall, or deduce \(0 time\)/i);
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    expect(await screen.findByText(/Enter a thought or observation question after \/think\./i)).toBeInTheDocument();
+    expect(turnBodies.length).toBe(0);
+
+    // 2. Submit question with Think toggled on -> sends turn_intent: "think", resets toggle, renders THINK badges
+    fireEvent.change(thinkBox, { target: { value: "What is tucked in his sleeve?" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+
+    await waitFor(() => expect(turnBodies.length).toBe(1));
+    expect(turnBodies[0].turn_intent).toBe("think");
+    expect(turnBodies[0].user_text).toBe("What is tucked in his sleeve?");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Think$/i })).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.getAllByText(/^THINK$/i).length).toBeGreaterThanOrEqual(2);
+
+    // 3. Typing /think with nothing after it blocks send with validation warning
+    const actionBox = screen.getByPlaceholderText(/Describe your action/i);
+    fireEvent.change(actionBox, { target: { value: "/think   " } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    expect(turnBodies.length).toBe(1);
+
+    // 4. Typing /think <question> strips prefix and sends turn_intent: "think"
+    fireEvent.change(actionBox, { target: { value: "/think Are there cameras above the door?" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    await waitFor(() => expect(turnBodies.length).toBe(2));
+    expect(turnBodies[1].turn_intent).toBe("think");
+    expect(turnBodies[1].user_text).toBe("Are there cameras above the door?");
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

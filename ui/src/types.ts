@@ -446,8 +446,11 @@ export interface GenerationStats {
   estimated?: boolean;
 }
 
+export type TurnIntent = "action" | "think";
+
 export interface ChatMessageMetadata {
   turn_id?: string;
+  turn_intent?: TurnIntent;
   mode?: string;
   is_intro?: boolean;
   generation_stats?: GenerationStats;

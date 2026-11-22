@@ -12,6 +12,7 @@ import uuid
 
 from gameplay import GameplayService
 from library import CampaignLibrary, normalize_category, search_library
+from mechanics import roll_dice as _roll_dice
 import sourcecatalog
 from turn_engine.chat_tree import BranchPrivateStateStore, ChatTreeStore
 from turn_engine.executor import PlanExecutor
@@ -26,6 +27,8 @@ from turn_engine.prompts import (
     build_intro_messages,
     build_narrator_messages,
     build_planner_messages,
+    build_think_narrator_messages,
+    build_think_planner_messages,
     format_player_message,
     format_roll_ledger,
 )
@@ -46,12 +49,14 @@ from turn_engine.settings import (
 from turn_engine.state_normalization import (
     _format_clock_label,
     _normalize_campaign_changes,
+    _visible_gm_secrets_for_prompt,
     build_npc_profiles,
     compute_party_grouping,
     parse_session_zero,
 )
 
 _LIB_REF_RE = re.compile(r"\[([a-zA-Z]+)\s*:\s*([^\]\n]+)\]")
+_THINK_CMD_RE = re.compile(r"^/think(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 
 
 class TurnEngine:
@@ -74,6 +79,10 @@ class TurnEngine:
         self.tree = tree or ChatTreeStore(gameplay)
         self.settings_path = settings_path
         base_turn = load_llm_settings(settings_path) if settings_path is not None else _default_llm_dict()
+        if settings_path is None and (not isinstance(turn_settings, dict) or "mode" not in turn_settings):
+            llm_mode = getattr(getattr(self.llm, "config", None), "mode", None)
+            if llm_mode in {"two_pass", "single_pass_tagged"}:
+                base_turn["mode"] = llm_mode
         if isinstance(turn_settings, dict):
             base_turn = _validate_llm_settings(turn_settings, base_turn)
         self.turn_settings = base_turn
@@ -241,9 +250,17 @@ class TurnEngine:
     def _solo_summary(self, ctx: dict[str, Any]) -> dict[str, Any]:
         runtime = (ctx.get("solo") or {}).get("runtime") or {}
         enc = runtime.get("encounter")
-        chars_by_id = {c["id"]: c["name"] for c in ctx.get("characters") or []}
+        chars_by_id = {
+            c["id"]: str((c.get("detail") or {}).get("handle") or c["name"])
+            for c in ctx.get("characters") or []
+        }
         enc_view = None
         if isinstance(enc, dict) and enc.get("active"):
+            enc_npcs = enc.get("npcs")
+            if isinstance(enc_npcs, dict):
+                for nid, npc in enc_npcs.items():
+                    if isinstance(npc, dict):
+                        chars_by_id[str(npc.get("id") or nid)] = str((npc.get("detail") or {}).get("handle") or npc.get("name") or nid)
             q = enc.get("queue") or []
             idx = enc.get("turn_index", 0)
             cur_id = q[idx] if isinstance(idx, int) and 0 <= idx < len(q) else None
@@ -344,8 +361,24 @@ class TurnEngine:
         op: dict[str, Any],
         default_actor: str | None,
         operation_id: str,
-    ) -> tuple[list[dict[str, Any]], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
         return self.executor.execute_solo_op(campaign_id, op, default_actor, operation_id)
+
+    @staticmethod
+    def _trailing_deferred_user_messages(branch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Collect contiguous trailing deferred user turns (skipping system dividers) in chronological order."""
+        trailing: list[dict[str, Any]] = []
+        for msg in reversed(branch or []):
+            role = msg.get("role")
+            meta = msg.get("metadata") or {}
+            if role == "system":
+                continue
+            if role == "user" and meta.get("gm_deferred"):
+                trailing.append(msg)
+            else:
+                break
+        trailing.reverse()
+        return trailing
 
     def preprocess(
         self,
@@ -382,18 +415,22 @@ class TurnEngine:
 
         branch_secrets, branch_clocks = self._load_branch_private_state(campaign_id, branch_parent)
 
-        d10_pool = self.gameplay.execute(
-            "roll_dice",
-            {"count": 3, "sides": 10, "operation_id": f"{op_base}:pool:d10", "reason": "Turn server d10 entropy pool"},
-            campaign_id=campaign_id,
-        )["result"]
-        d6_pool = self.gameplay.execute(
-            "roll_dice",
-            {"count": 4, "sides": 6, "operation_id": f"{op_base}:pool:d6", "reason": "Turn server d6 entropy pool"},
-            campaign_id=campaign_id,
-        )["result"]
+        dice_pool = {"d10": _roll_dice(3, 10), "d6": _roll_dice(4, 6)}
 
-        citations = self._collect_citations(campaign_id, user_text, context["campaign"]["state"])
+        deferred_tail = self._trailing_deferred_user_messages(branch)
+        deferred_user_ids = [m["id"] for m in deferred_tail if m.get("id")]
+        deferred_user_texts = [
+            self._format_player_message(str(m.get("content") or ""), (m.get("metadata") or {}).get("speaker_name"))
+            for m in deferred_tail
+            if str(m.get("content") or "").strip()
+        ]
+        citation_query = "\n".join(
+            [
+                *(str(m.get("content") or "") for m in deferred_tail if not (m.get("metadata") or {}).get("manual_roll")),
+                user_text,
+            ]
+        ).strip()
+        citations = self._collect_citations(campaign_id, citation_query or user_text, context["campaign"]["state"])
         compressed_count = self._get_compressed_count(campaign_id)
         turns_since_compress = max(0, len(branch) - compressed_count)
         threshold = max(4, int(self.turn_settings.get("compression_threshold", _COMPRESSION_MESSAGE_THRESHOLD)))
@@ -406,11 +443,13 @@ class TurnEngine:
             "parent_id": branch_parent,
             "branch": branch,
             "main_tail": main_tail,
+            "deferred_user_ids": deferred_user_ids,
+            "deferred_user_texts": deferred_user_texts,
             "gm_secrets": branch_secrets,
             "clocks": branch_clocks,
             "party_grouping": party_grouping,
             "npc_profiles": npc_profiles,
-            "dice_pool": {"d10": d10_pool["dice"], "d6": d6_pool["dice"]},
+            "dice_pool": dice_pool,
             "citations": citations,
             "compression_recommended": bool(self.turn_settings.get("auto_compress_prompt", True)) and turns_since_compress >= threshold,
         }
@@ -435,6 +474,31 @@ class TurnEngine:
     ) -> list[dict[str, str]]:
         ctx = prep["context"]
         return build_planner_messages(
+            prep,
+            user_text,
+            overclock=overclock,
+            luck_spend=luck_spend,
+            speaker=speaker,
+            guidance=guidance,
+            turn_settings=self.turn_settings,
+            prompt_settings=self.prompt_settings,
+            effective_turn_settings=self._effective_turn_settings(ctx["campaign"]["state"]),
+            solo_summary=self._solo_summary(ctx),
+            player_message_formatter=self._format_player_message,
+        )
+
+    def _build_think_planner_messages(
+        self,
+        prep: dict[str, Any],
+        user_text: str,
+        *,
+        overclock: bool,
+        luck_spend: int = 0,
+        speaker: dict[str, str] | None = None,
+        guidance: str | None = None,
+    ) -> list[dict[str, str]]:
+        ctx = prep["context"]
+        return build_think_planner_messages(
             prep,
             user_text,
             overclock=overclock,
@@ -474,6 +538,8 @@ class TurnEngine:
         executed: dict[str, Any],
         *,
         tagged_single_pass: bool = False,
+        overclock: bool = False,
+        luck_spend: int = 0,
         speaker: dict[str, str] | None = None,
         guidance: str | None = None,
     ) -> list[dict[str, str]]:
@@ -483,6 +549,8 @@ class TurnEngine:
             user_text,
             executed,
             tagged_single_pass=tagged_single_pass,
+            overclock=overclock,
+            luck_spend=luck_spend,
             speaker=speaker,
             guidance=guidance,
             campaign_context=ctx,
@@ -495,6 +563,75 @@ class TurnEngine:
             roll_ledger_formatter=self._format_roll_ledger,
         )
 
+    def _build_think_narrator_messages(
+        self,
+        prep: dict[str, Any],
+        user_text: str,
+        executed: dict[str, Any],
+        *,
+        tagged_single_pass: bool = False,
+        overclock: bool = False,
+        luck_spend: int = 0,
+        speaker: dict[str, str] | None = None,
+        guidance: str | None = None,
+    ) -> list[dict[str, str]]:
+        ctx = self.gameplay.campaign_context(prep["context"]["campaign"]["id"])
+        return build_think_narrator_messages(
+            prep,
+            user_text,
+            executed,
+            tagged_single_pass=tagged_single_pass,
+            overclock=overclock,
+            luck_spend=luck_spend,
+            speaker=speaker,
+            guidance=guidance,
+            campaign_context=ctx,
+            turn_settings=self.turn_settings,
+            prompt_settings=self.prompt_settings,
+            effective_turn_settings=self._effective_turn_settings(ctx["campaign"]["state"]),
+            solo_summary=self._solo_summary(ctx),
+            saved_npcs=self._saved_campaign_npcs(ctx["campaign"]["id"]),
+            player_message_formatter=self._format_player_message,
+            roll_ledger_formatter=self._format_roll_ledger,
+        )
+
+    @staticmethod
+    def _sanitize_think_pass1_plan(plan: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Restrict Pass 1 /think execution strictly to checks and optional new_homebrew (zero world mutations/time)."""
+        if not isinstance(plan, dict):
+            return plan
+        sanitized: dict[str, Any] = {}
+        if "checks" in plan:
+            sanitized["checks"] = plan["checks"]
+        if "new_homebrew" in plan:
+            sanitized["new_homebrew"] = plan["new_homebrew"]
+        if "gm_notes" in plan:
+            sanitized["gm_notes"] = plan["gm_notes"]
+        return sanitized
+
+    @staticmethod
+    def _sanitize_think_chronicler_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
+        """Restrict Post-Turn Chronicler after a successful /think check strictly to discoveries-only."""
+        if not isinstance(plan, dict):
+            return {}
+        filtered_ops: list[dict[str, Any]] = []
+        for op in plan.get("state_ops") or []:
+            if not isinstance(op, dict) or op.get("type") != "update_campaign":
+                continue
+            raw_changes = op.get("changes")
+            if not isinstance(raw_changes, dict):
+                continue
+            disc = raw_changes.get("discoveries")
+            if isinstance(disc, dict) and disc:
+                filtered_ops.append(
+                    {
+                        "type": "update_campaign",
+                        "changes": {"discoveries": disc},
+                        "reason": str(op.get("reason") or "Observation discovery"),
+                    }
+                )
+        return {"state_ops": filtered_ops}
+
     def _build_chronicler_messages(
         self,
         prep: dict[str, Any],
@@ -503,6 +640,7 @@ class TurnEngine:
         executed: dict[str, Any],
         *,
         speaker: dict[str, str] | None = None,
+        deferred_turns: list[str] | None = None,
     ) -> list[dict[str, str]]:
         ctx = prep["context"]
         return build_chronicler_messages(
@@ -511,6 +649,7 @@ class TurnEngine:
             narrated_text,
             executed,
             speaker=speaker,
+            deferred_turns=deferred_turns,
             turn_settings=self.turn_settings,
             prompt_settings=self.prompt_settings,
             solo_summary=self._solo_summary(ctx),
@@ -521,7 +660,7 @@ class TurnEngine:
     def _execute_plan(
         self,
         campaign_id: str,
-        plan: dict[str, Any],
+        plan: dict[str, Any] | None,
         prep: dict[str, Any],
         *,
         overclock: bool = False,
@@ -530,6 +669,7 @@ class TurnEngine:
         op_prefix: str | None = None,
         allow_checks: bool = True,
         allow_solo: bool = True,
+        allow_character_updates: bool = True,
     ) -> dict[str, Any]:
         return self.executor.execute_plan(
             campaign_id,
@@ -541,6 +681,7 @@ class TurnEngine:
             op_prefix=op_prefix,
             allow_checks=allow_checks,
             allow_solo=allow_solo,
+            allow_character_updates=allow_character_updates,
         )
 
     async def _stream_turn_from_user_msg(
@@ -555,24 +696,35 @@ class TurnEngine:
         speaker: dict[str, str] | None = None,
         guidance: str | None = None,
         is_intro: bool = False,
+        turn_intent: str = "action",
     ) -> AsyncIterator[dict[str, Any]]:
         turn_started_at = time.perf_counter()
         total_completion_tokens = 0
         usage_observed = False
         stream_elapsed_s = 0.0
 
-        def _collect_usage() -> None:
+        def _collect_usage() -> dict[str, Any]:
             nonlocal total_completion_tokens, usage_observed
-            u = getattr(self.llm, "last_usage", None)
+            pop_fn = getattr(self.llm, "pop_call_meta", None)
+            if callable(pop_fn):
+                meta = pop_fn() or {}
+                u = meta.get("usage")
+                finish_reason = meta.get("finish_reason")
+                truncated = bool(meta.get("truncated", False) or finish_reason == "length")
+            else:
+                u = getattr(self.llm, "last_usage", None)
+                finish_reason = getattr(self.llm, "last_finish_reason", None)
+                truncated = bool(getattr(self.llm, "last_truncated", False) or finish_reason == "length")
             if isinstance(u, dict) and isinstance(u.get("completion_tokens"), (int, float)):
                 total_completion_tokens += int(u["completion_tokens"])
                 usage_observed = True
+            return {"usage": u, "finish_reason": finish_reason, "truncated": truncated}
 
         user_text = user_msg["content"]
+        is_think = not is_intro and str(turn_intent or "action").strip().lower() == "think"
         default_actor = speaker.get("id") or speaker.get("name") if speaker else None
         yield {"event": "rule_citation", "data": {"entries": prep["citations"], "dice_pool": prep["dice_pool"]}}
 
-        raw_chunks: list[str] = []
         if is_intro:
             executed: dict[str, Any] = {
                 "rolls": [],
@@ -584,30 +736,46 @@ class TurnEngine:
                 "outcomes": {},
             }
             primer_block = f"{_STATIC_INTRO_PRIMER}\n\n---\n\n### CAMPAIGN TABLE WELCOME\n"
-            raw_chunks.append(primer_block)
             yield {"event": "text_delta", "data": {"delta": primer_block}}
             intro_msgs = self._build_intro_messages(prep, user_text, speaker=speaker, guidance=guidance)
             intro_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
             intro_max_tokens = max(256, int(self.turn_settings.get("intro_max_tokens") or 4096))
             if self._supports_kwarg(self.llm.stream, "max_tokens"):
                 intro_kwargs["max_tokens"] = intro_max_tokens
+            intro_sanitizer = StreamSanitizer()
             stream_t0 = time.perf_counter()
+            intro_failed = False
             try:
                 async for delta in self.llm.stream(intro_msgs, **intro_kwargs):
-                    raw_chunks.append(delta)
-                    yield {"event": "text_delta", "data": {"delta": delta}}
+                    new_piece = intro_sanitizer.feed(delta)
+                    if new_piece:
+                        yield {"event": "text_delta", "data": {"delta": new_piece}}
+                trailing, stream_raw = intro_sanitizer.finalize()
+                if trailing:
+                    yield {"event": "text_delta", "data": {"delta": trailing}}
             except Exception as exc:
+                intro_failed = True
                 fallback = "Open the **Character** tab to build or claim your Edgerunner, or click **Screamsheet & Briefing** at the top to review the campaign situation."
-                raw_chunks.append(fallback)
+                stream_raw = fallback
                 yield {"event": "text_delta", "data": {"delta": fallback}}
                 executed["warnings"].append(f"Campaign welcome generation skipped ({exc}); static rules primer delivered.")
                 yield {"event": "warning", "data": {"message": executed["warnings"][-1]}}
             stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
-            _collect_usage()
-            raw_text = "".join(raw_chunks)
-            clean_text = strip_gm_tags(raw_text)
+            intro_meta = _collect_usage()
+            raw_text = primer_block + stream_raw
+            stripped_welcome = strip_gm_tags(stream_raw)
+            if not intro_failed and not stripped_welcome:
+                warn_msg = "Campaign welcome generation returned empty output; static rules primer delivered."
+                executed["warnings"].append(warn_msg)
+                yield {"event": "warning", "data": {"message": warn_msg}}
+            if intro_meta["truncated"]:
+                warn_msg = "Campaign welcome response reached max_tokens (finish_reason=length) and may be truncated."
+                executed["warnings"].append(warn_msg)
+                yield {"event": "warning", "data": {"message": warn_msg}}
+            clean_text = f"{primer_block}{stripped_welcome}"
         elif active_mode == "two_pass":
-            planner_msgs = self._build_planner_messages(
+            planner_builder = self._build_think_planner_messages if is_think else self._build_planner_messages
+            planner_msgs = planner_builder(
                 prep,
                 user_text,
                 overclock=overclock,
@@ -616,18 +784,24 @@ class TurnEngine:
                 guidance=guidance,
             )
             planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
-            raw_plan = await self.llm.complete(planner_msgs, temperature=planner_temp, json_mode=True)
-            _collect_usage()
+            planner_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=False)
+            raw_plan = await self.llm.complete(planner_msgs, temperature=planner_temp, json_mode=True, **planner_kwargs)
+            plan_meta = _collect_usage()
             plan = extract_gm_plan(raw_plan)
+            exec_plan = self._sanitize_think_pass1_plan(plan) if is_think else plan
             executed = self._execute_plan(
                 campaign_id,
-                plan,
+                exec_plan,
                 prep,
                 overclock=overclock,
                 luck_spend=luck_spend,
                 default_actor=default_actor,
+                allow_solo=not is_think,
+                allow_character_updates=not is_think,
             )
-            if not plan and (not isinstance(raw_plan, str) or raw_plan.strip() != "{}"):
+            if plan_meta["truncated"]:
+                executed["warnings"].append("Planner pass reached max_tokens (finish_reason=length) and may be truncated.")
+            if plan is None:
                 executed["warnings"].append("Planner pass returned empty or unparseable output; pre-turn operations were skipped.")
 
             for r in executed["rolls"]:
@@ -639,44 +813,80 @@ class TurnEngine:
             for w in executed["warnings"]:
                 yield {"event": "warning", "data": {"message": w}}
 
-            narrator_msgs = self._build_narrator_messages(
+            narrator_builder = self._build_think_narrator_messages if is_think else self._build_narrator_messages
+            narrator_msgs = narrator_builder(
                 prep, user_text, executed, tagged_single_pass=False, speaker=speaker, guidance=guidance
             )
             narrator_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
-            stream_t0 = time.perf_counter()
-            async for delta in self.llm.stream(narrator_msgs, **narrator_kwargs):
-                raw_chunks.append(delta)
-                yield {"event": "text_delta", "data": {"delta": delta}}
-            stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
-            _collect_usage()
-            raw_text = "".join(raw_chunks)
-            clean_text = strip_gm_tags(raw_text)
-        else:
-            empty_exec = {"rolls": [], "patches": [], "library_added": [], "warnings": [], "outcomes": {}}
-            msgs = self._build_narrator_messages(
-                prep, user_text, empty_exec, tagged_single_pass=True, speaker=speaker, guidance=guidance
-            )
             sanitizer = StreamSanitizer()
             stream_t0 = time.perf_counter()
-            async for delta in self.llm.stream(msgs):
+            async for delta in self.llm.stream(narrator_msgs, **narrator_kwargs):
                 new_piece = sanitizer.feed(delta)
                 if new_piece:
                     yield {"event": "text_delta", "data": {"delta": new_piece}}
             stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
-            _collect_usage()
+            narr_meta = _collect_usage()
             trailing, raw_text = sanitizer.finalize()
+            if trailing:
+                yield {"event": "text_delta", "data": {"delta": trailing}}
+            if narr_meta["truncated"]:
+                warn_msg = "Narrative response reached max_tokens (finish_reason=length) and was truncated."
+                executed["warnings"].append(warn_msg)
+                yield {"event": "warning", "data": {"message": warn_msg}}
+            clean_text = strip_gm_tags(raw_text)
+            if not clean_text.strip():
+                warn_msg = "Model returned an empty narrative response."
+                executed["warnings"].append(warn_msg)
+                yield {"event": "warning", "data": {"message": warn_msg}}
+                clean_text = "[GM response was empty — please retry or regenerate.]"
+                yield {"event": "text_delta", "data": {"delta": clean_text}}
+        else:
+            empty_exec = {"rolls": [], "patches": [], "library_added": [], "warnings": [], "outcomes": {}}
+            sp_builder = self._build_think_narrator_messages if is_think else self._build_narrator_messages
+            msgs = sp_builder(
+                prep,
+                user_text,
+                empty_exec,
+                tagged_single_pass=True,
+                overclock=overclock,
+                luck_spend=luck_spend,
+                speaker=speaker,
+                guidance=guidance,
+            )
+            narrator_kwargs = self._thinking_kwargs_for_pass(self.llm.stream, disable_in_balanced=True)
+            sanitizer = StreamSanitizer()
+            stream_t0 = time.perf_counter()
+            async for delta in self.llm.stream(msgs, **narrator_kwargs):
+                new_piece = sanitizer.feed(delta)
+                if new_piece:
+                    yield {"event": "text_delta", "data": {"delta": new_piece}}
+            stream_elapsed_s = max(0.01, time.perf_counter() - stream_t0)
+            sp_meta = _collect_usage()
+            trailing, raw_text = sanitizer.finalize()
+            if trailing:
+                yield {"event": "text_delta", "data": {"delta": trailing}}
             plan = extract_gm_plan(raw_text)
+            exec_plan = self._sanitize_think_pass1_plan(plan) if is_think else plan
             executed = self._execute_plan(
                 campaign_id,
-                plan,
+                exec_plan,
                 prep,
                 overclock=overclock,
                 luck_spend=luck_spend,
                 default_actor=default_actor,
+                allow_solo=not is_think,
+                allow_character_updates=not is_think,
             )
+            if sp_meta["truncated"]:
+                executed["warnings"].append("Single-pass response reached max_tokens (finish_reason=length) and was truncated.")
+            if plan is None and ("<gm_ops" in raw_text.lower() or "[[gm_state" in raw_text.lower()):
+                executed["warnings"].append("Single-pass <gm_ops> block was unparseable; operations were skipped.")
             clean_text = strip_gm_tags(raw_text)
-            if trailing:
-                yield {"event": "text_delta", "data": {"delta": trailing}}
+            if not clean_text.strip():
+                warn_msg = "Model returned an empty narrative response."
+                executed["warnings"].append(warn_msg)
+                clean_text = "[GM response was empty — please retry or regenerate.]"
+                yield {"event": "text_delta", "data": {"delta": clean_text}}
             for r in executed["rolls"]:
                 yield {"event": "dice_roll", "data": r}
             for p in executed["patches"]:
@@ -687,12 +897,15 @@ class TurnEngine:
                 yield {"event": "warning", "data": {"message": w}}
 
         # Optional 3rd pass (Post-Turn Chronicler) when enabled and using OpenAI-compatible or opted-in multi-call adapters.
+        # On /think turns, skip Chronicler unless at least one observation check succeeded, and restrict to discoveries-only.
         chronicler_allowed = bool(self.turn_settings.get("enable_chronicler", True))
+        has_successful_think_roll = any(r.get("success") is True for r in (executed.get("rolls") or []))
         use_chronicler = (
             not is_intro
             and chronicler_allowed
             and bool(getattr(self.llm, "enable_multi_call", isinstance(self.llm, OpenAICompatibleLLM)))
             and bool(clean_text.strip())
+            and (not is_think or has_successful_think_roll)
         )
         if use_chronicler:
             try:
@@ -703,23 +916,40 @@ class TurnEngine:
                     "gm_secrets": executed["gm_secrets"],
                     "clocks": executed["clocks"],
                 }
-                chron_msgs = self._build_chronicler_messages(chron_prep, user_text, clean_text, executed, speaker=speaker)
+                chron_msgs = self._build_chronicler_messages(
+                    chron_prep,
+                    user_text,
+                    clean_text,
+                    executed,
+                    speaker=speaker,
+                    deferred_turns=None if is_think else (prep.get("deferred_user_texts") or None),
+                )
                 chron_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=True)
                 planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
                 raw_chron = await self.llm.complete(chron_msgs, temperature=planner_temp, json_mode=True, **chron_kwargs)
-                _collect_usage()
+                chron_meta = _collect_usage()
                 chron_plan = extract_gm_plan(raw_chron)
-                if not chron_plan and (not isinstance(raw_chron, str) or raw_chron.strip() != "{}"):
+                if chron_meta["truncated"]:
+                    warn_msg = "Post-turn chronicler reached max_tokens (finish_reason=length) and may be truncated."
+                    executed["warnings"].append(warn_msg)
+                    yield {"event": "warning", "data": {"message": warn_msg}}
+                if chron_plan is None:
                     warn_msg = "Post-turn chronicler returned empty or unparseable output; post-turn sync was skipped."
                     executed["warnings"].append(warn_msg)
                     yield {"event": "warning", "data": {"message": warn_msg}}
-                if chron_plan:
-                    already_timed = any(
-                        p.get("target") == "solo" and isinstance(p.get("after"), dict) and "time" in p["after"]
-                        for p in executed["patches"]
-                    )
-                    if already_timed:
-                        chron_plan.pop("time_elapsed_minutes", None)
+                elif chron_plan:
+                    if is_think:
+                        chron_plan = self._sanitize_think_chronicler_plan(chron_plan)
+                    else:
+                        already_timed = any(
+                            p.get("target") == "solo"
+                            and p.get("kind") != "start_time"
+                            and isinstance(p.get("after"), dict)
+                            and "time" in p["after"]
+                            for p in executed["patches"]
+                        )
+                        if already_timed:
+                            chron_plan.pop("time_elapsed_minutes", None)
                     chron_exec = self._execute_plan(
                         campaign_id,
                         chron_plan,
@@ -728,6 +958,7 @@ class TurnEngine:
                         op_prefix=f"{prep['turn_id']}:chron",
                         allow_checks=False,
                         allow_solo=False,
+                        allow_character_updates=False,
                     )
                     for p in chron_exec["patches"]:
                         executed["patches"].append(p)
@@ -744,6 +975,33 @@ class TurnEngine:
                 warn_msg = f"Post-turn chronicler skipped: {exc}"
                 executed["warnings"].append(warn_msg)
                 yield {"event": "warning", "data": {"message": warn_msg}}
+
+        # Apply default_time_step_minutes once after Chronicler if neither Pass 1 nor Chronicler advanced non-start_time world time.
+        fallback_step = int(self.turn_settings.get("default_time_step_minutes") or 0)
+        if not is_intro and not is_think and fallback_step > 0:
+            already_timed = any(
+                p.get("target") == "solo"
+                and p.get("kind") != "start_time"
+                and isinstance(p.get("after"), dict)
+                and "time" in p["after"]
+                for p in executed["patches"]
+            )
+            if not already_timed:
+                mins = min(43200, fallback_step)
+                t_patches, t_warns, _, t_outcomes = self._execute_solo_op(
+                    campaign_id,
+                    {"action": "advance_time", "elapsed_minutes": mins, "reason": f"Scene time elapsed (+{mins}m)"},
+                    default_actor,
+                    operation_id=f"{prep['turn_id']}:default_time",
+                )
+                for p in t_patches:
+                    executed["patches"].append(p)
+                    yield {"event": "state_patch", "data": p}
+                for w in t_warns:
+                    executed["warnings"].append(w)
+                    yield {"event": "warning", "data": {"message": w}}
+                if t_outcomes:
+                    executed.setdefault("outcomes", {}).setdefault("solo_results", []).extend(t_outcomes)
 
         if prep["compression_recommended"]:
             msg = "Long conversation branch; update or compress the campaign summary when convenient."
@@ -784,14 +1042,22 @@ class TurnEngine:
             "estimated": tokens_estimated,
         }
 
-        if executed["rolls"] or user_msg.get("metadata", {}).get("gm_deferred"):
+        if not is_think:
+            for def_id in prep.get("deferred_user_ids") or []:
+                if def_id != user_msg["id"]:
+                    self.tree.update_message_metadata(
+                        campaign_id,
+                        def_id,
+                        {"gm_deferred": None, "defer_reason": None},
+                    )
+
+        if executed["rolls"] or (not is_think and user_msg.get("metadata", {}).get("gm_deferred")):
             updated_user = self.tree.update_message_metadata(
                 campaign_id,
                 user_msg["id"],
                 {
                     **({"rolls": executed["rolls"]} if executed["rolls"] else {}),
-                    "gm_deferred": None,
-                    "defer_reason": None,
+                    **({"gm_deferred": None, "defer_reason": None} if not is_think else {}),
                 },
             )
             if updated_user is not None:
@@ -813,6 +1079,7 @@ class TurnEngine:
                 "channel_id": chan,
                 "mode": "intro" if is_intro else active_mode,
                 **({"is_intro": True} if is_intro else {}),
+                **({"turn_intent": "think"} if is_think else {}),
                 "generation_stats": generation_stats,
                 "rolls": executed["rolls"],
                 "patches": executed["patches"],
@@ -901,10 +1168,11 @@ class TurnEngine:
             f"{core_block}"
             f"Current Campaign State: {json.dumps(ctx['campaign']['state'])}\n"
             f"Existing Campaign Library Entries: {json.dumps(existing_lib)}\n"
-            f"Current Private GM Secrets: {json.dumps(secrets)}\n"
+            f"Current Private GM Secrets: {json.dumps(_visible_gm_secrets_for_prompt(secrets))}\n"
             f"Current Clocks: {json.dumps(clocks)}"
         )
         planner_temp = float(self.turn_settings.get("planner_temperature", 0.1))
+        comp_kwargs = self._thinking_kwargs_for_pass(self.llm.complete, disable_in_balanced=True)
         raw = await self.llm.complete(
             [
                 {"role": "system", "content": comp_prompt},
@@ -912,6 +1180,7 @@ class TurnEngine:
             ],
             temperature=planner_temp,
             json_mode=True,
+            **comp_kwargs,
         )
         parsed = extract_gm_plan(raw)
         if not parsed:
@@ -993,6 +1262,7 @@ class TurnEngine:
         coop_player_count: int = 1,
         overclock: bool = False,
         luck_spend: int = 0,
+        turn_intent: str = "action",
     ) -> tuple[bool, str]:
         """Decide if the AI GM should respond immediately or let party members reply first."""
         return _router_should_gm_intervene(
@@ -1004,6 +1274,7 @@ class TurnEngine:
             coop_player_count=coop_player_count,
             overclock=overclock,
             luck_spend=luck_spend,
+            turn_intent=turn_intent,
         )
 
     async def run_turn(
@@ -1022,13 +1293,27 @@ class TurnEngine:
         gm_mode: str = "auto",
         coop_player_count: int = 1,
         channel_id: str = "main",
+        turn_intent: str = "action",
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one complete AI GM turn and stream typed events for the frontend UI."""
-        if not isinstance(user_text, str) or not user_text.strip():
+        if not isinstance(user_text, str):
+            raise ValueError("user_text must be a nonempty string")
+        clean_turn_intent = str(turn_intent or "action").strip().lower()
+        if clean_turn_intent not in {"action", "think"}:
+            raise ValueError("turn_intent must be 'action' or 'think'")
+        clean_user_text = user_text.strip()
+        if clean_turn_intent != "think":
+            think_match = _THINK_CMD_RE.match(clean_user_text)
+            if think_match:
+                clean_turn_intent = "think"
+                clean_user_text = (think_match.group(1) or "").strip()
+        if clean_turn_intent == "think" and not clean_user_text:
+            raise ValueError("Enter a thought or observation question after /think.")
+        if not clean_user_text:
             raise ValueError("user_text must be a nonempty string")
         if isinstance(luck_spend, bool) or not isinstance(luck_spend, int) or luck_spend < 0:
             raise ValueError("luck_spend must be a nonnegative integer")
-        active_mode = mode or getattr(getattr(self.llm, "config", None), "mode", "two_pass")
+        active_mode = mode or self.turn_settings.get("mode") or getattr(getattr(self.llm, "config", None), "mode", "two_pass")
         if active_mode not in {"two_pass", "single_pass_tagged"}:
             raise ValueError(f"Unsupported turn mode: {active_mode!r}")
 
@@ -1036,7 +1321,7 @@ class TurnEngine:
         prep = await asyncio.to_thread(
             lambda: self.preprocess(
                 campaign_id,
-                user_text.strip(),
+                clean_user_text,
                 parent_id=parent_id,
                 branch_from_root=branch_from_root,
                 channel_id=chan,
@@ -1047,6 +1332,8 @@ class TurnEngine:
         meta: dict[str, Any] = {"overclock": overclock, "luck_spend": luck_spend, "channel_id": chan}
         if is_intro:
             meta["is_intro"] = True
+        elif clean_turn_intent == "think":
+            meta["turn_intent"] = "think"
         if speaker.get("id"):
             meta["speaker_character_id"] = speaker["id"]
         if speaker.get("name"):
@@ -1059,7 +1346,7 @@ class TurnEngine:
         clean_gm_mode = (gm_mode or "auto").strip().lower()
         should_run_gm = True
         defer_reason = ""
-        if not is_intro:
+        if not is_intro and clean_turn_intent != "think":
             if clean_gm_mode == "hold_gm":
                 should_run_gm = False
                 defer_reason = "Action/dialogue posted to table — waiting for party or 'Resolve GM Turn'"
@@ -1074,7 +1361,7 @@ class TurnEngine:
                     else pre_ctx["characters"]
                 )
                 should_run_gm, defer_reason = self.should_gm_intervene(
-                    user_text.strip(),
+                    clean_user_text,
                     branch=prep["branch"],
                     characters=channel_chars,
                     npcs=(pre_ctx["campaign"].get("state") or {}).get("npcs") or {},
@@ -1082,6 +1369,7 @@ class TurnEngine:
                     coop_player_count=coop_player_count,
                     overclock=overclock,
                     luck_spend=luck_spend,
+                    turn_intent=clean_turn_intent,
                 )
 
         if not should_run_gm:
@@ -1092,7 +1380,7 @@ class TurnEngine:
                 campaign_id,
                 parent_id=prep["parent_id"],
                 role="user",
-                content=user_text.strip(),
+                content=clean_user_text,
                 campaign_revision=revs["campaign_revision"],
                 solo_revision=revs["solo_revision"],
                 channel_id=chan,
@@ -1122,7 +1410,7 @@ class TurnEngine:
             campaign_id,
             parent_id=prep["parent_id"],
             role="user",
-            content=user_text.strip(),
+            content=clean_user_text,
             campaign_revision=pre_ctx["campaign"]["revision"],
             solo_revision=pre_ctx["solo"]["revision"],
             channel_id=chan,
@@ -1140,6 +1428,7 @@ class TurnEngine:
                 active_mode=active_mode,
                 speaker=speaker,
                 is_intro=is_intro,
+                turn_intent=clean_turn_intent,
             ):
                 if ev.get("event") == "turn_done":
                     turn_completed = True
@@ -1182,7 +1471,7 @@ class TurnEngine:
         guidance: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Regenerate an assistant reply as a sibling branch without duplicating the user message."""
-        active_mode = mode or getattr(getattr(self.llm, "config", None), "mode", "two_pass")
+        active_mode = mode or self.turn_settings.get("mode") or getattr(getattr(self.llm, "config", None), "mode", "two_pass")
         if active_mode not in {"two_pass", "single_pass_tagged"}:
             raise ValueError(f"Unsupported turn mode: {active_mode!r}")
         target = self.tree.get_message(campaign_id, message_id)
@@ -1219,6 +1508,9 @@ class TurnEngine:
             user_msg["metadata"].get("speaker_character_id"),
             user_msg["metadata"].get("speaker_name"),
         )
+        inherited_intent = str((user_msg.get("metadata") or {}).get("turn_intent") or "action").strip().lower()
+        if inherited_intent not in {"action", "think"}:
+            inherited_intent = "action"
         async for ev in self._stream_turn_from_user_msg(
             campaign_id,
             user_msg,
@@ -1229,5 +1521,6 @@ class TurnEngine:
             speaker=speaker,
             guidance=guidance,
             is_intro=bool(user_msg["metadata"].get("is_intro", False)),
+            turn_intent=inherited_intent,
         ):
             yield ev

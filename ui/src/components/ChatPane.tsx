@@ -14,6 +14,7 @@ import {
   Copy,
   Dices,
   Edit3,
+  Eye,
   EyeOff,
   Layers,
   Lock,
@@ -51,6 +52,7 @@ import type {
   LibraryEntry,
   PartyGroupingState,
   StatePatchEvent,
+  TurnIntent,
 } from "../types";
 
 export { CHARACTER_COLOR_THEMES };
@@ -141,10 +143,10 @@ function ColorAwareLink({ href, children, className, node: _node, ...rest }: Com
 
 const STREAMDOWN_COMPONENTS = { a: ColorAwareLink };
 
-function FormattedUserText({ content }: { content: string }) {
+function FormattedUserText({ content, italic = false }: { content: string; italic?: boolean }) {
   const parts = content.split(/(\[\[[a-zA-Z]+:[^\]\n]+\]\])/g);
   return (
-    <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">
+    <p className={`whitespace-pre-wrap text-sm leading-relaxed ${italic ? "italic text-violet-100/95" : "text-slate-100"}`}>
       {parts.map((part, idx) => {
         const m = /^\[\[([a-zA-Z]+):([^\]\n]+)\]\]$/.exec(part);
         if (m) {
@@ -176,6 +178,7 @@ export interface StreamingTurnState {
   libraryAdded: LibraryEntry[];
   warnings: string[];
   overclock: boolean;
+  turnIntent?: TurnIntent;
   truncateFromId?: string;
   startedAt?: number;
 }
@@ -208,6 +211,7 @@ interface ChatPaneProps {
       speakerCharacterId?: string;
       speakerName?: string;
       gmMode?: "auto" | "force_gm" | "hold_gm";
+      turnIntent?: TurnIntent;
     },
   ) => Promise<void>;
   onEditUserMessage: (msg: ChatMessageNode, newText: string, overclock: boolean, luckSpend?: number) => Promise<void>;
@@ -420,6 +424,7 @@ export function ChatPane({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [diceOpen, setDiceOpen] = useState(false);
   const [colorBarOpen, setColorBarOpen] = useState(false);
+  const [thinkMode, setThinkMode] = useState(false);
   const [lastQuickRoll, setLastQuickRoll] = useState<string | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [streamElapsedSec, setStreamElapsedSec] = useState<number>(0);
@@ -503,6 +508,7 @@ export function ChatPane({
   useEffect(() => {
     stickToBottomRef.current = true;
     setShowJumpToLatest(false);
+    setThinkMode(false);
     clearInlinePopovers();
     setEditText("");
     setGuidanceText("");
@@ -608,7 +614,7 @@ export function ChatPane({
   const handleSubmit = async (e?: React.FormEvent, overrideGmMode?: "auto" | "force_gm" | "hold_gm") => {
     e?.preventDefault();
     const trimmed = input.trim();
-    if (!trimmed || !campaignId || busy || lockedByPeer || blockedByNoCharacter) return;
+    if (!campaignId || busy || lockedByPeer || blockedByNoCharacter) return;
 
     // /roll NdS slash command
     const rollMatch = /^\/roll\s+(\d{1,2})d(\d{1,3})(?:\s+(.*))?$/i.exec(trimmed);
@@ -628,7 +634,22 @@ export function ChatPane({
       return;
     }
 
+    // /think slash command or Think toggle
+    let outboundText = trimmed;
+    let turnIntent: TurnIntent | undefined = thinkMode ? "think" : undefined;
+    const thinkMatch = /^\/think(?:\s+(.*))?$/is.exec(trimmed);
+    if (thinkMatch) {
+      turnIntent = "think";
+      outboundText = (thinkMatch[1] ?? "").trim();
+    }
+    if (turnIntent === "think" && !outboundText) {
+      onNotify("Enter a thought or observation question after /think.");
+      return;
+    }
+    if (!outboundText) return;
+
     setInput("");
+    setThinkMode(false);
     const useOverclock = overclock;
     const useLuck = Math.min(luckSpend, maxLuck);
     onClearOverclock?.();
@@ -641,12 +662,13 @@ export function ChatPane({
         ? charDetail.handle.trim()
         : speakerChar?.name;
 
-    await onSend(trimmed, {
+    await onSend(outboundText, {
       overclock: useOverclock,
       luckSpend: useLuck,
       speakerCharacterId: speakerChar?.id,
       speakerName: speakerDisplay,
       gmMode: overrideGmMode ?? gmMode,
+      ...(turnIntent ? { turnIntent } : {}),
     });
   };
 
@@ -890,6 +912,7 @@ export function ChatPane({
               const warnings = msg.metadata?.warnings ?? [];
               const gmOpsCount = citations.length + patches.length + warnings.length;
               const gmOpsOpen = Boolean(gmOpsOpenIds[msg.id]);
+              const isThink = msg.metadata?.turn_intent === "think";
 
               return (
                 <div
@@ -899,10 +922,14 @@ export function ChatPane({
                   <div
                     className={`rounded-xl px-3 py-2.5 transition sm:px-4 sm:py-3 ${
                       isUser
-                        ? `max-w-[92%] sm:max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
-                        : "w-full border border-slate-800/90 bg-[#0e1422] text-slate-100"
+                        ? isThink
+                          ? "max-w-[92%] sm:max-w-[90%] border border-violet-500/55 bg-violet-950/25 text-slate-100"
+                          : `max-w-[92%] sm:max-w-[90%] border ${speakerTheme.cardBorderClass} text-slate-100`
+                        : isThink
+                          ? "w-full border border-violet-500/45 bg-violet-950/15 text-slate-100"
+                          : "w-full border border-slate-800/90 bg-[#0e1422] text-slate-100"
                     }`}
-                    style={isUser ? speakerTheme.cardBorderStyle : undefined}
+                    style={isUser && !isThink ? speakerTheme.cardBorderStyle : undefined}
                   >
                     {/* Message Header */}
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
@@ -970,6 +997,12 @@ export function ChatPane({
                               {msg.metadata.generation_stats.elapsed_seconds.toFixed(1)}s ·{" "}
                               {msg.metadata.generation_stats.tokens_per_second.toFixed(1)} tok/s
                             </span>
+                          </span>
+                        )}
+                        {isThink && (
+                          <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                            <Eye className="h-3 w-3" />
+                            THINK
                           </span>
                         )}
                         {msg.metadata?.overclock && (
@@ -1195,7 +1228,7 @@ export function ChatPane({
                       </div>
                     ) : isUser ? (
                       <div className="space-y-2.5">
-                        <FormattedUserText content={msg.content} />
+                        <FormattedUserText content={msg.content} italic={isThink} />
                         {/* Inline Dice Rolls right next to the player action that rolled them */}
                         {actionRolls.length > 0 && (
                           <div className="space-y-1.5 border-t border-slate-800/70 pt-2">
@@ -1291,7 +1324,7 @@ export function ChatPane({
                           </div>
                         )}
 
-                        <div className="prose prose-invert prose-sm max-w-none leading-relaxed">
+                        <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${isThink ? "italic text-violet-100/95" : ""}`}>
                           <Streamdown
                             key={`${msg.id}:${msg.content}`}
                             mode="static"
@@ -1343,13 +1376,18 @@ export function ChatPane({
 
             {streaming && (() => {
               const streamTheme = resolveCharacterColor(streaming.speakerColor || activeSpeakerColor);
+              const streamIsThink = streaming.turnIntent === "think";
               return (
               <div className="space-y-3">
                 {streaming.userText && !isPeerStreaming && (
                   <div className="flex justify-end">
                     <div
-                      className={`max-w-[90%] rounded-xl border px-4 py-3 text-slate-100 ${streamTheme.cardBorderClass}`}
-                      style={streamTheme.cardBorderStyle}
+                      className={`max-w-[90%] rounded-xl border px-4 py-3 text-slate-100 ${
+                        streamIsThink
+                          ? "border-violet-500/55 bg-violet-950/25"
+                          : streamTheme.cardBorderClass
+                      }`}
+                      style={!streamIsThink ? streamTheme.cardBorderStyle : undefined}
                     >
                       <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
                         <span
@@ -1358,13 +1396,21 @@ export function ChatPane({
                         >
                           {streaming.speakerName || "You"}
                         </span>
+                        {streamIsThink && (
+                          <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                            <Eye className="h-3 w-3" />
+                            THINK
+                          </span>
+                        )}
                         {streaming.overclock && (
                           <span className="inline-flex items-center gap-1 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] text-rose-300">
                             <Zap className="h-3 w-3" /> OVERCLOCK
                           </span>
                         )}
                       </div>
-                      <p className="whitespace-pre-wrap text-sm leading-relaxed">{streaming.userText}</p>
+                      <p className={`whitespace-pre-wrap text-sm leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
+                        {streaming.userText}
+                      </p>
                       {streaming.rolls.length > 0 && (
                         <div className="mt-2 space-y-1.5 border-t border-slate-800/70 pt-2">
                           {streaming.rolls.map((r, i) => (
@@ -1376,8 +1422,14 @@ export function ChatPane({
                   </div>
                 )}
 
-                <div className="rounded-xl border border-rose-500/35 bg-[#101624] px-4 py-3 text-slate-100 shadow-[0_0_24px_rgba(244,63,94,0.08)]">
-                  <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-rose-300">
+                <div
+                  className={`rounded-xl border px-4 py-3 text-slate-100 ${
+                    streamIsThink
+                      ? "border-violet-500/45 bg-violet-950/20 shadow-[0_0_24px_rgba(139,92,246,0.1)]"
+                      : "border-rose-500/35 bg-[#101624] shadow-[0_0_24px_rgba(244,63,94,0.08)]"
+                  }`}
+                >
+                  <div className={`mb-2 flex items-center justify-between gap-2 text-[11px] ${streamIsThink ? "text-violet-300" : "text-rose-300"}`}>
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-end gap-0.5" aria-hidden="true">
                         <span className="cyber-eq-bar" style={{ animationDelay: "0ms" }} />
@@ -1385,8 +1437,14 @@ export function ChatPane({
                         <span className="cyber-eq-bar" style={{ animationDelay: "360ms" }} />
                       </span>
                       <span className="font-mono font-semibold uppercase tracking-wider">
-                        GM Streaming...
+                        {streamIsThink ? "GM Thinking..." : "GM Streaming..."}
                       </span>
+                      {streamIsThink && (
+                        <span className="inline-flex items-center gap-1 rounded border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                          <Eye className="h-3 w-3" />
+                          THINK
+                        </span>
+                      )}
                     </div>
                     {isAdmin && streaming.startedAt && (
                       <span className="font-mono text-[10px] text-cyan-300">
@@ -1410,7 +1468,7 @@ export function ChatPane({
                         </div>
                       ))}
 
-                    <div className="prose prose-invert prose-sm max-w-none leading-relaxed">
+                    <div className={`prose prose-invert prose-sm max-w-none leading-relaxed ${streamIsThink ? "italic text-violet-100/95" : ""}`}>
                       {streaming.text ? (
                         <Streamdown components={STREAMDOWN_COMPONENTS}>
                           {formatColorMarkdown(streaming.text)}
@@ -1647,6 +1705,21 @@ export function ChatPane({
                 Color
               </button>
 
+              <button
+                type="button"
+                aria-pressed={thinkMode}
+                onClick={() => setThinkMode((v) => !v)}
+                title="Think / Observation mode (/think): ask what your character notices, recalls, or deduces with 0 world time elapsed and no NPC reactions"
+                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[11px] transition sm:px-2 sm:text-xs ${
+                  thinkMode
+                    ? "border-violet-500/70 bg-violet-500/20 text-violet-200"
+                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Think
+              </button>
+
               {overclock && (
                 <span
                   title="Overclock armed in Character tab (-2 Humanity / +2 Check on next roll)"
@@ -1659,7 +1732,7 @@ export function ChatPane({
             </div>
 
             <span className="hidden text-[11px] text-slate-500 sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:inline sm:justify-self-end">
-              Enter to send · Shift+Enter for new line · <code className="text-slate-400">/roll 3d6</code>
+              Enter to send · Shift+Enter for new line · <code className="text-slate-400">/roll 3d6</code> · <code className="text-violet-300">/think</code>
             </span>
 
             <textarea
@@ -1675,13 +1748,19 @@ export function ChatPane({
               placeholder={
                 blockedByNoCharacter
                   ? "Create or claim your character to speak in chat..."
-                  : gmMode === "hold_gm"
-                    ? "Talk to the party or queue your action (GM will wait)..."
-                    : "Describe your action..."
+                  : thinkMode
+                    ? "Ask the GM what you notice, recall, or deduce (0 time)..."
+                    : gmMode === "hold_gm"
+                      ? "Talk to the party or queue your action (GM will wait)..."
+                      : "Describe your action..."
               }
               rows={2}
               disabled={busy || lockedByPeer || blockedByNoCharacter}
-              className="col-start-1 row-start-2 min-h-[40px] w-full min-w-0 resize-none rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-60 max-sm:h-10 sm:px-3 sm:py-2"
+              className={`col-start-1 row-start-2 min-h-[40px] w-full min-w-0 resize-none rounded-lg border bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none disabled:opacity-60 max-sm:h-10 sm:px-3 sm:py-2 ${
+                thinkMode
+                  ? "border-violet-500/70 focus:border-violet-400"
+                  : "border-slate-700 focus:border-cyan-400"
+              }`}
             />
 
             <button
@@ -1706,15 +1785,17 @@ export function ChatPane({
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim() || lockedByPeer || blockedByNoCharacter}
+                disabled={(!input.trim() && !thinkMode) || lockedByPeer || blockedByNoCharacter}
                 className={`col-start-2 row-start-2 inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded-lg px-3 text-xs font-semibold text-white disabled:opacity-40 sm:col-start-3 sm:px-4 ${
-                  gmMode === "hold_gm"
-                    ? "bg-amber-600 hover:bg-amber-500"
-                    : "bg-cyan-600 hover:bg-cyan-500"
+                  thinkMode
+                    ? "bg-violet-600 hover:bg-violet-500"
+                    : gmMode === "hold_gm"
+                      ? "bg-amber-600 hover:bg-amber-500"
+                      : "bg-cyan-600 hover:bg-cyan-500"
                 }`}
               >
                 <Send className="h-3.5 w-3.5" />
-                {gmMode === "hold_gm" ? "Post" : "Send"}
+                {!thinkMode && gmMode === "hold_gm" ? "Post" : "Send"}
               </button>
             )}
           </div>

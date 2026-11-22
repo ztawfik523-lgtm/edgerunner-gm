@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -12,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from server.redaction import redact_chat_tree, redact_sse_event
 from server.security import ServerContext
+
+_THINK_CMD_RE = re.compile(r"^/think(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 
 
 def _parse_luck_spend(raw: Any) -> int:
@@ -45,6 +48,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         overclock: bool = False,
         truncate_from_id: str | None = None,
         is_gm: bool = True,
+        turn_intent: str = "action",
     ):
         async def _wrapped():
             delta_buf: list[str] = []
@@ -58,6 +62,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 **({"speaker_portrait_url": speaker_portrait_url} if speaker_portrait_url else {}),
                 "user_text": user_text,
                 "overclock": overclock,
+                **({"turn_intent": "think"} if turn_intent == "think" else {}),
                 **({"truncate_from_id": truncate_from_id} if truncate_from_id else {}),
             }
 
@@ -352,8 +357,26 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("user_text"), str):
                 raise ValueError("campaign_id and user_text must be strings")
             campaign_id = body["campaign_id"]
-            user_text = body["user_text"]
-            if not user_text.strip():
+            raw_intent = body.get("turn_intent")
+            if raw_intent is None:
+                turn_intent = "action"
+            elif isinstance(raw_intent, str) and raw_intent.strip().lower() in {"action", "think"}:
+                turn_intent = raw_intent.strip().lower()
+            else:
+                raise ValueError("turn_intent must be 'action' or 'think'")
+            stripped_user = body["user_text"].strip()
+            think_match = _THINK_CMD_RE.match(stripped_user)
+            if think_match:
+                turn_intent = "think"
+                user_text = (think_match.group(1) or "").strip()
+            else:
+                user_text = stripped_user
+            if turn_intent == "think" and not user_text:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Enter a thought or observation question after /think.", "request_id": request_id},
+                )
+            if not user_text:
                 raise ValueError("user_text must be nonempty")
             channel_id = ChatTreeStore._norm_channel(body.get("channel_id"))
             luck_spend = _parse_luck_spend(body.get("luck_spend"))
@@ -371,7 +394,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
 
             active_llm = ctx.resolve_active_llm(body.get("llm_config"), eff_role=eff_role)
             engine = TurnEngine(ctx.gameplay_service(), active_llm, settings_path=ctx.resolved_settings_path())
-            ctx_camp = engine.gameplay.campaign_context(campaign_id)
+            ctx_camp = await asyncio.to_thread(engine.gameplay.campaign_context, campaign_id)
             chars = ctx_camp.get("characters") or []
             speaker_char_id = body.get("speaker_character_id")
             speaker_info = engine._resolve_speaker(chars, speaker_char_id, body.get("speaker_name"))
@@ -390,8 +413,9 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 return denied
 
             if body.get("parent_id") is not None:
-                engine.tree.get_branch_to(campaign_id, body["parent_id"])
-            if gm_mode != "hold_gm":
+                await asyncio.to_thread(engine.tree.get_branch_to, campaign_id, body["parent_id"])
+            acquire_lock = gm_mode != "hold_gm" or turn_intent == "think"
+            if acquire_lock:
                 busy_turn = ctx.coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name, channel_id=channel_id)
                 if busy_turn is not None:
                     return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
@@ -401,7 +425,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         coop_count = max(1, len(ctx.coop.roster(campaign_id)))
 
         def finish_turn():
-            if gm_mode != "hold_gm":
+            if acquire_lock:
                 ctx.coop.release_turn(campaign_id, client_id, channel_id=channel_id)
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id})
 
@@ -420,6 +444,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 gm_mode=gm_mode,
                 coop_player_count=coop_count,
                 channel_id=channel_id,
+                turn_intent=turn_intent,
             ),
             campaign_id=campaign_id,
             channel_id=channel_id,
@@ -431,6 +456,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             overclock=bool(body.get("overclock", False)),
             truncate_from_id=str(body["replace_message_id"]).strip() if body.get("replace_message_id") else None,
             is_gm=is_gm,
+            turn_intent=turn_intent,
         )
         return ctx.sse_response(
             relayed,
@@ -588,8 +614,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             player_name = str(body.get("player_name") or "Player")
             active_llm = ctx.resolve_active_llm(body.get("llm_config"), eff_role=eff_role)
             engine = TurnEngine(ctx.gameplay_service(), active_llm, settings_path=ctx.resolved_settings_path())
-            engine.gameplay.campaign_context(campaign_id)
-            target = engine.tree.get_message(campaign_id, message_id)
+            await asyncio.to_thread(engine.gameplay.campaign_context, campaign_id)
+            target = await asyncio.to_thread(engine.tree.get_message, campaign_id, message_id)
             if target is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
             target_channel = ChatTreeStore._norm_channel(target.get("channel_id"))
@@ -626,6 +652,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             user_text=str(target.get("content") or ""),
             truncate_from_id=message_id if target.get("role") == "assistant" else None,
             is_gm=is_gm,
+            turn_intent=str((target.get("metadata") or {}).get("turn_intent") or "action"),
         )
         return ctx.sse_response(
             relayed_regen,

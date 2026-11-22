@@ -24,6 +24,7 @@ import type {
   PublicSettingsResponse,
   RuntimeServerInfo,
   ServerSettings,
+  TurnIntent,
   TurnStreamCallbacks,
   WorldClock,
 } from "./types";
@@ -936,6 +937,7 @@ export interface PeerStreamEventPayload {
   speaker_portrait_url?: string;
   user_text?: string;
   overclock?: boolean;
+  turn_intent?: TurnIntent;
   truncate_from_id?: string;
   event: string;
   data: Record<string, unknown>;
@@ -1177,6 +1179,7 @@ export async function streamChatTurn(
     speaker_name?: string;
     is_intro?: boolean;
     gm_mode?: "auto" | "force_gm" | "hold_gm";
+    turn_intent?: TurnIntent;
   },
   callbacks: TurnStreamCallbacks,
   signal?: AbortSignal,
