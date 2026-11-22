@@ -30,7 +30,7 @@ def _die(randbelow):
 
 
 def initiative(ref, bonus=0, randbelow=secrets.randbelow):
-    _int("ref", ref); _int("bonus", bonus)
+    _int("ref", ref); _int("bonus", bonus, low=-100)
     dice = [_die(randbelow)]
     return {"dice": dice, "total": ref + bonus + dice[0], "source": "Cyberpunk RED Core Rulebook, p. 168"}
 
@@ -38,7 +38,7 @@ def initiative(ref, bonus=0, randbelow=secrets.randbelow):
 def wound_state(hp, max_hp, move):
     _int("max_hp", max_hp, 1); _int("hp", hp, -1_000_000); _int("move", move)
     if hp < 1:
-        name, penalty, movement = "mortal", -4, max(1, move - 6)
+        name, penalty, movement = "mortal", -4, (0 if move == 0 else max(1, move - 6))
     elif hp < (max_hp + 1) // 2:
         name, penalty, movement = "serious", -2, move
     elif hp < max_hp:
@@ -80,17 +80,15 @@ def damage_and_armor(dice: list, armor: list, location="body", melee=False, mart
     sp = selected["sp"] if selected else 0
     raw = sum(dice)
     if autofire_margin is not None: raw *= min(autofire_margin, autofire_cap)
-    effective = sp if brawling else (sp // 2 if melee or martial_arts else sp)
+    effective = sp if brawling else ((sp + 1) // 2 if melee or martial_arts else sp)
     penetration = max(0, raw - effective)
     multiplier = (3 if cracked_skull else 2) if location == "head" else 1
     hp_damage = penetration * multiplier + (5 if sum(d == 6 for d in dice) >= 2 else 0)
-    # Only the armor piece that provided protection (highest SP) loses SP from ablation
-    armor_after = []
-    for piece in armor:
-        if piece is selected and penetration > 0:
-            armor_after.append(dict(piece, sp=max(0, piece["sp"] - ablation)))
-        else:
-            armor_after.append(dict(piece))
+    # Corebook p. 184: highest SP protects, but all worn armor layers in the hit location ablate together.
+    armor_after = [
+        dict(piece, sp=max(0, piece["sp"] - ablation) if penetration > 0 else piece["sp"])
+        for piece in armor
+    ]
     return {"raw": raw, "effective_sp": effective, "penetration": penetration, "hp_damage": hp_damage,
             "critical_trigger": sum(d == 6 for d in dice) >= 2, "armor_after": armor_after, "source": "Cyberpunk RED Core Rulebook, pp. 174, 176–177, 186–188"}
 

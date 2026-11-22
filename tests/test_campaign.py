@@ -156,8 +156,10 @@ def test_delete_character_and_equip_loadout(tmp_path):
         operation_id="equip-1",
     )
     assert equipped["detail"]["equipped_weapon"] == "Heavy Pistol"
-    assert equipped["detail"]["equipped_armor"] == {"name": "Light Armorjack Body (SP 11)", "sp": 11}
-    assert equipped["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head (SP 11)", "sp": 11}
+    assert equipped["detail"]["equipped_armor"] == {"name": "Light Armorjack Body (SP 11)", "sp": 11, "penalty": 0}
+    assert equipped["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head (SP 11)", "sp": 11, "penalty": 0}
+    assert equipped["detail"]["equipment"]["weapons"][0]["type"] == "Heavy Pistol"
+    assert len(equipped["detail"]["equipment"]["armor"]) == 2
 
     unequipped = store.update_character_profile(
         char["id"],
@@ -169,6 +171,33 @@ def test_delete_character_and_equip_loadout(tmp_path):
     assert "equipped_weapon" not in unequipped["detail"]
     assert "equipped_armor" not in unequipped["detail"]
     assert "equipped_head_armor" not in unequipped["detail"]
+    assert unequipped["detail"]["equipment"]["weapons"] == []
+    assert unequipped["detail"]["equipment"]["armor"] == []
+
+    # Switching weapon and body armor updates detail.equipment without reverting to old items
+    re_equipped = store.update_character_profile(
+        char["id"],
+        expected_revision=unequipped["revision"],
+        profile={
+            "equipped_weapon": "Heavy Pistol",
+            "equipped_armor": {"name": "Heavy Armorjack", "sp": 13},
+        },
+        reason="Equip Heavy Armorjack",
+        operation_id="equip-3",
+    )
+    assert re_equipped["detail"]["equipped_armor"] == {"name": "Heavy Armorjack", "sp": 13, "penalty": 2}
+    switched = store.update_character_profile(
+        char["id"],
+        expected_revision=re_equipped["revision"],
+        profile={
+            "equipped_weapon": "Assault Rifle",
+            "equipped_armor": {"name": "Kevlar", "sp": 7},
+        },
+        reason="Switch to Kevlar and Assault Rifle",
+        operation_id="equip-4",
+    )
+    assert switched["detail"]["equipped_weapon"] == "Assault Rifle"
+    assert switched["detail"]["equipped_armor"] == {"name": "Kevlar", "sp": 7, "penalty": 0}
 
     deleted = store.delete_character(char["id"])
     assert deleted == {"deleted": True, "id": char["id"], "name": "Kestrel"}

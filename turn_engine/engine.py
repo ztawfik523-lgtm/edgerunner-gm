@@ -248,6 +248,9 @@ class TurnEngine:
         return self.executor.deduct_humanity(character_id, amount, reason, operation_id)
 
     def _solo_summary(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        import combat as _combat
+        import rules_eval as _rules_eval
+
         runtime = (ctx.get("solo") or {}).get("runtime") or {}
         enc = runtime.get("encounter")
         chars_by_id = {
@@ -257,10 +260,73 @@ class TurnEngine:
         enc_view = None
         if isinstance(enc, dict) and enc.get("active"):
             enc_npcs = enc.get("npcs")
+            npc_items: list[tuple[str, dict[str, Any]]] = []
             if isinstance(enc_npcs, dict):
-                for nid, npc in enc_npcs.items():
-                    if isinstance(npc, dict):
-                        chars_by_id[str(npc.get("id") or nid)] = str((npc.get("detail") or {}).get("handle") or npc.get("name") or nid)
+                npc_items = [(str(npc.get("id") or nid), npc) for nid, npc in enc_npcs.items() if isinstance(npc, dict)]
+            elif isinstance(enc_npcs, list):
+                npc_items = [(str(npc.get("id") or f"npc-{i}"), npc) for i, npc in enumerate(enc_npcs) if isinstance(npc, dict)]
+
+            npc_statuses: list[dict[str, Any]] = []
+            for npc_id, npc in npc_items:
+                detail = npc.get("detail") if isinstance(npc.get("detail"), dict) else {}
+                display_name = str(detail.get("handle") or npc.get("name") or npc_id)
+                chars_by_id[npc_id] = display_name
+
+                hp_val = npc.get("hp", 0)
+                hp_int = int(hp_val) if isinstance(hp_val, int) and not isinstance(hp_val, bool) else 0
+                raw_max = npc.get("max_hp")
+                max_hp_int = int(raw_max) if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max >= 1 else max(1, hp_int)
+                stats = npc.get("stats") if isinstance(npc.get("stats"), dict) else {}
+                raw_move = stats.get("MOVE", 0)
+                move_int = max(0, int(raw_move)) if isinstance(raw_move, int) and not isinstance(raw_move, bool) else 0
+                is_dead = bool(detail.get("dead") or (detail.get("conditions") or {}).get("dead"))
+                w_state = "dead" if is_dead else _combat.wound_state(hp_int, max_hp_int, move_int)["name"]
+
+                equip = detail.get("equipment") if isinstance(detail.get("equipment"), dict) else {}
+                armor_list = equip.get("armor") if isinstance(equip.get("armor"), list) else []
+                body_sps = [
+                    int(a["sp"]) for a in armor_list
+                    if isinstance(a, dict) and a.get("equipped") is not False
+                    and str(a.get("location") or "body").strip().casefold() in {"body", "body & head"}
+                    and isinstance(a.get("sp"), int) and not isinstance(a.get("sp"), bool)
+                ]
+                head_sps = [
+                    int(a["sp"]) for a in armor_list
+                    if isinstance(a, dict) and a.get("equipped") is not False
+                    and str(a.get("location") or "").strip().casefold() in {"head", "body & head"}
+                    and isinstance(a.get("sp"), int) and not isinstance(a.get("sp"), bool)
+                ]
+                eq_body = detail.get("equipped_armor") if isinstance(detail.get("equipped_armor"), dict) else {}
+                eq_head = detail.get("equipped_head_armor") if isinstance(detail.get("equipped_head_armor"), dict) else {}
+                sp_body = max(body_sps) if body_sps else (int(eq_body["sp"]) if isinstance(eq_body.get("sp"), int) else 0)
+                sp_head = max(head_sps) if head_sps else (int(eq_head["sp"]) if isinstance(eq_head.get("sp"), int) else 0)
+
+                injuries = [
+                    str(inj.get("name") or inj.get("id"))
+                    for inj in _rules_eval.active_injuries(npc)
+                    if not inj.get("suppressed") and not inj.get("treated") and not inj.get("quick_fixed")
+                ]
+                weapons = equip.get("weapons") if isinstance(equip.get("weapons"), list) else []
+                primary_weapon = None
+                for w in weapons:
+                    if isinstance(w, dict) and (w.get("type") or w.get("name")):
+                        primary_weapon = str(w.get("type") or w.get("name"))
+                        break
+                if primary_weapon is None and isinstance(detail.get("equipped_weapon"), str) and detail["equipped_weapon"].strip():
+                    primary_weapon = detail["equipped_weapon"].strip()
+
+                npc_statuses.append({
+                    "id": npc_id,
+                    "name": display_name,
+                    "hp": hp_int,
+                    "max_hp": max_hp_int,
+                    "wound_state": w_state,
+                    "sp_body": sp_body,
+                    "sp_head": sp_head,
+                    "injuries": injuries,
+                    "weapon": primary_weapon,
+                })
+
             q = enc.get("queue") or []
             idx = enc.get("turn_index", 0)
             cur_id = q[idx] if isinstance(idx, int) and 0 <= idx < len(q) else None
@@ -269,12 +335,22 @@ class TurnEngine:
                 "round": enc.get("round", 1),
                 "current_actor": chars_by_id.get(cur_id, cur_id),
                 "queue": [chars_by_id.get(cid, cid) for cid in q],
+                "npcs": npc_statuses,
             }
-        runs_view = {
-            rid: {"connected": bool(r.get("connected")), "floor": r.get("current_floor_id"), "actions_remaining": r.get("actions_remaining")}
-            for rid, r in (runtime.get("runs") or {}).items()
-            if isinstance(r, dict) and r.get("connected")
-        }
+        runs_view: dict[str, Any] = {}
+        for rid, r in (runtime.get("runs") or {}).items():
+            if not isinstance(r, dict):
+                continue
+            inner = r.get("run") if isinstance(r.get("run"), dict) else r
+            if inner.get("connected"):
+                floor = inner.get("floor_id")
+                if floor in (None, ""):
+                    floor = inner.get("current_floor_id")
+                runs_view[rid] = {
+                    "connected": True,
+                    "floor": floor,
+                    "actions_remaining": inner.get("actions_remaining"),
+                }
         clock_mins = int(runtime.get("clock_minutes") or 0)
         return {
             "clock_minutes": clock_mins,

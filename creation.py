@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 from pathlib import Path
 from typing import Callable, Any
+import rules_eval
 from sourcecatalog import skills as source_skills_catalog, lookup_skill, _normalize as _catalog_normalize
 from economy import HOUSING as ECONOMY_HOUSING, LIFESTYLES as ECONOMY_LIFESTYLES
 from roles import validate_role_choices
@@ -658,7 +659,7 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
         val = args.get(str_key)
         if isinstance(val, str) and val.strip():
             detail[str_key] = val.strip()
-    return {
+    char = {
         "name": name.strip(), "role": role, "stats": stats, "skills": skills,
         "hp": hp, "max_hp": hp, "humanity": starting_humanity,
         "seriously_wounded": seriously_wounded, "death_save": death_save,
@@ -666,3 +667,4 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
         "inventory": inventory, "revision": 1,
         "detail": detail,
     }
+    return rules_eval.sync_equipment_views(char)

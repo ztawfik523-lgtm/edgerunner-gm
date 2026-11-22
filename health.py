@@ -9,6 +9,7 @@ from typing import Any, Callable
 from combat import daily_heal, death_save, stabilize_check
 from mechanics import roll_dice, skill_check
 from combat import _CRITICALS
+import rules_eval
 
 SOURCE = "Cyberpunk RED Core Rulebook, pp. 186–188, 221–223, 230"
 
@@ -36,6 +37,11 @@ def _roll(action, actor, target, args, randbelow):
     stats = _stats(actor); skills = _skills(actor)
     if action == "stabilize":
         hp, max_hp = target.get("hp", 0), target.get("max_hp", 1)
+        detail = _d(target)
+        conds = detail.get("conditions") if isinstance(detail.get("conditions"), dict) else {}
+        is_bleeding = bool(detail.get("bleeding") or conds.get("bleeding"))
+        if hp >= max_hp and hp >= 1 and not is_bleeding:
+            raise ValueError("target is already at full HP")
         name = "mortal" if hp < 1 else "serious" if hp < (max_hp + 1)//2 else "light"
         first = _skill(skills, "First Aid", "first_aid")
         para = _skill(skills, "Paramedic", "paramedic")
@@ -44,12 +50,15 @@ def _roll(action, actor, target, args, randbelow):
         options = {"First Aid": first, "Paramedic": para}
         skill_name = requested if requested in options and options[requested] is not None else max(((k,v) for k,v in options.items() if v is not None), key=lambda x:x[1])[0]
         skill = options[skill_name]
-        check = stabilize_check(stats.get("TECH", 0), skill, name, randbelow=randbelow)
+        ctx = rules_eval.effective_check_context(actor, "TECH", skill_name)
+        check = stabilize_check(ctx["stat_value"], skill, name, modifier=ctx["total_modifier"], randbelow=randbelow)
         if check["success"]:
-            detail = _d(target); detail["stabilized"] = True
+            detail["stabilized"] = True
             if name == "mortal":
-                target["hp"] = 1; detail["unconscious_minutes"] = 1
-                detail["death_save_penalty"] = detail.get("death_save_base_penalty", 0)
+                target["hp"] = 1
+                detail["unconscious_minutes"] = 1
+                detail.setdefault("conditions", {})["unconscious"] = True
+                detail["death_save_penalty"] = 0
         check["skill"] = skill_name
         return {"action": action, "success": check["success"], "check": check, "source": SOURCE}
     raise ValueError("unsupported action")
@@ -63,24 +72,31 @@ def _has_medtech(ch):
 def _therapy(chars, actor_id, target_id, args, randbelow):
     if actor_id == target_id: raise ValueError("Medtech cannot perform therapy on self")
     actor, target = chars[actor_id], chars[target_id]
-    skills = _skills(actor); medtech = _skill(skills, "Medical Tech", "Medical Technology")
+    skills = _skills(actor)
+    medtech_skill_name = "Medical Tech" if "Medical Tech" in skills else "Medical Technology"
+    medtech = _skill(skills, "Medical Tech", "Medical Technology")
     if not _has_medtech(actor) or type(medtech) is not int or medtech <= 0:
         raise ValueError("actor must be a Medtech with Medical Tech")
     kind = args.get("therapy")
     data = {"standard": (500, 15, 2), "extreme": (1000, 17, 4), "addiction": (1000, 15, 0)}
     if kind not in data: raise ValueError("therapy must be standard, extreme or addiction")
+    ad = _d(target)
+    addiction = None
+    if kind == "addiction":
+        addiction = args.get("addiction") or args.get("drug")
+        addictions = ad.get("addictions") if isinstance(ad.get("addictions"), list) else []
+        if not isinstance(addiction, str) or addiction not in addictions:
+            raise ValueError("named existing addiction required")
     cost, dv, dice = data[kind]
     if type(target.get("money")) is not int or target["money"] < cost:
         raise ValueError("insufficient funds")
     target["money"] -= cost
-    check = skill_check(_stats(actor).get("TECH", 0), medtech, dv, randbelow=randbelow)
-    ad = _d(target)
+    ctx = rules_eval.effective_check_context(actor, "TECH", medtech_skill_name)
+    check = skill_check(ctx["stat_value"], medtech, dv, modifier=ctx["total_modifier"], randbelow=randbelow)
     outcome = {"therapy": kind, "success": check["success"], "check": check, "cost": cost, "minutes": 10080, "source": SOURCE}
     if not check["success"]: return outcome
     if kind == "addiction":
-        addiction = args.get("addiction")
         addictions = ad.setdefault("addictions", [])
-        if not isinstance(addiction, str) or addiction not in addictions: raise ValueError("named existing addiction required")
         addictions.remove(addiction)
         target_clock = ad.get("clock_minutes", 0)
         ad.setdefault("addiction_auto_fail_until", {})[addiction] = target_clock + 525600
@@ -88,33 +104,79 @@ def _therapy(chars, actor_id, target_id, args, randbelow):
     else:
         rolls = roll_dice(dice, 6, randbelow)
         humanity = target.get("humanity", ad.get("humanity"))
-        initial_emp = ad.get("initial_emp", target.get("initial_emp"))
-        if type(humanity) is not int or type(initial_emp) is not int:
+        if type(humanity) is not int:
             raise ValueError("humanity and recorded initial_emp are required")
+        initial_emp = rules_eval.effective_initial_emp(target)
         max_humanity = initial_emp * 10
         for item in ad.get("cyberware", []):
-            if not isinstance(item, dict): continue
-            if item.get("humanity_loss", 0) == 0: continue
+            if not isinstance(item, dict) or item.get("installed") is False:
+                continue
+            hl = item.get("hl")
+            if hl is None or hl == 0:
+                hl = item.get("humanity_loss", 0)
+            if type(hl) is not int or hl <= 0:
+                continue
             max_humanity -= 4 if item.get("borgware") else 2
+        max_humanity = max(0, max_humanity)
         new_humanity = min(max_humanity, humanity + sum(rolls))
         target["humanity"] = new_humanity
         if "humanity" in ad: ad["humanity"] = new_humanity
-        stats = target.setdefault("stats", ad.setdefault("stats", {})); stats["EMP"] = new_humanity // 10
-        outcome.update(dice=rolls, humanity=new_humanity, max_humanity=max_humanity, emp=stats["EMP"])
+        emp = rules_eval.sync_emp_from_humanity(target)
+        if isinstance(ad.get("stats"), dict):
+            ad["stats"]["EMP"] = emp
+        outcome.update(dice=rolls, humanity=new_humanity, max_humanity=max_humanity, emp=emp)
     return outcome
 
 
-def _has_replaced_part(target, location):
+def _has_replaced_part(target, location, injury_name=None):
     target_cyber = _d(target).get("cyberware", [])
-    parts = {"body": "body", "head": "head"}
-    return any(
-        isinstance(x, dict) and (
-            x.get("location") == parts.get(location) or
-            (location == "body" and any(k in x.get("name", "").lower() for k in ("arm", "leg", "cyberarm", "cyberleg"))) or
-            (location == "head" and any(k in x.get("name", "").lower() for k in ("eye", "audio", "ear", "cybereye", "cyberaudio")))
-        )
-        for x in target_cyber
-    )
+    if not isinstance(target_cyber, list):
+        return False
+    inj_low = (injury_name or "").strip().lower()
+
+    def _matches(item: dict) -> bool:
+        if item.get("installed") is False or item.get("disabled") is True:
+            return False
+        name_text = f"{item.get('name', '')} {item.get('type', '')} {item.get('id', '')}".lower()
+        loc_text = str(item.get("location") or "").strip().lower()
+        if not inj_low:
+            parts = {"body": "body", "head": "head"}
+            return (
+                loc_text == parts.get(location)
+                or (location == "body" and any(k in name_text for k in ("cyberarm", "cyber arm", "cyberleg", "cyber leg")))
+                or (location == "head" and any(k in name_text for k in ("cybereye", "cyber eye", "cyberaudio", "cyber audio")))
+            )
+        if "option" in name_text:
+            return False
+        if "arm" in inj_low:
+            return any(k in name_text for k in ("cyberarm", "cyber arm")) or loc_text in ("arm", "cyberarm")
+        if "hand" in inj_low or "finger" in inj_low:
+            return any(k in name_text for k in ("cyberarm", "cyber arm", "cyberhand", "cyber hand")) or loc_text in ("arm", "cyberarm", "hand", "cyberhand")
+        if "leg" in inj_low:
+            return any(k in name_text for k in ("cyberleg", "cyber leg")) or loc_text in ("leg", "cyberleg")
+        if "foot" in inj_low or "ankle" in inj_low:
+            return any(k in name_text for k in ("cyberleg", "cyber leg", "cyberfoot", "cyber foot")) or loc_text in ("leg", "cyberleg", "foot", "cyberfoot")
+        if "eye" in inj_low:
+            return any(k in name_text for k in ("cybereye", "cyber eye")) or loc_text in ("eye", "cybereye")
+        if "ear" in inj_low:
+            return any(k in name_text for k in ("cyberaudio", "cyber audio", "cyberear", "cyber ear")) or loc_text in ("ear", "cyberaudio", "cyberear")
+        return False
+
+    return any(isinstance(x, dict) and _matches(x) for x in target_cyber)
+
+
+def _has_enhanced_antibodies(target) -> bool:
+    for item in _d(target).get("cyberware", []):
+        if isinstance(item, str):
+            if "enhanced antibod" in item.lower():
+                return True
+        elif isinstance(item, dict):
+            if item.get("installed") is False or item.get("disabled") is True:
+                continue
+            text = f"{item.get('name', '')} {item.get('id', '')}".lower()
+            if "enhanced antibod" in text:
+                return True
+    return False
 
 
 def _extract_dv_for_skill(source: str, skill: str) -> int:
@@ -155,19 +217,20 @@ def _injury_care(actor, actor_id, target, target_id, action, args, randbelow):
     for skill_name in ("First Aid", "Paramedic", "Surgery"):
         if skill_name in source and _skill(skills, skill_name) is not None:
             choices.append(skill_name)
-    if _has_replaced_part(target, location) and _skill(skills, "Cybertech") is not None:
+    if _has_replaced_part(target, location, injury_name=name) and _skill(skills, "Cybertech") is not None:
         choices.append("Cybertech")
     selected = args.get("skill")
     if selected not in choices: raise ValueError("selected skill is not permitted by injury metadata or actor skills")
     if selected == "Surgery" and not _has_medtech(actor): raise ValueError("Surgery requires Medtech role")
     if selected == "Cybertech":
-        if not _has_replaced_part(target, location):
+        if not _has_replaced_part(target, location, injury_name=name):
             raise ValueError("Cybertech applies only to a replaced body part")
         dvs = [int(x) for x in re.findall(r"DV\s*(\d+)", source)]
         dv = min(dvs) if dvs else 13
     else:
         dv = _extract_dv_for_skill(source, selected)
-    check = skill_check(_stats(actor).get("TECH", 0), _skill(skills, selected), dv, randbelow=randbelow)
+    ctx = rules_eval.effective_check_context(actor, "TECH", selected)
+    check = skill_check(ctx["stat_value"], _skill(skills, selected), dv, modifier=ctx["total_modifier"], randbelow=randbelow)
     if check["success"]:
         detail = _d(target)
         if action == "treat_injury":
@@ -175,16 +238,10 @@ def _injury_care(actor, actor_id, target, target_id, action, args, randbelow):
         else:
             injury["effect_suppressed_until"] = detail.get("clock_minutes", 0) + 1440
             if action == "quick_fix" and treatment.startswith("Quick Fix"):
-                injury["effect_suppressed_until"] = None; injury["effect_removed"] = True
-        base = 0
-        for current in injuries:
-            if not isinstance(current, dict): continue
-            try:
-                loc, roll_text = current.get("id", "").split(":", 1)
-                if "base death-save penalty +1" in _CRITICALS[loc][int(roll_text)][1].lower(): base += 1
-            except (ValueError, KeyError):
-                continue
-        detail["death_save_base_penalty"] = base
+                injury["effect_suppressed_until"] = None
+                injury["effect_removed"] = True
+                injuries.remove(injury)
+        rules_eval.recompute_death_save_base_penalty(target)
     return {"success": check["success"], "check": check, "skill": selected, "injury": name, "minutes": 1 if action == "quick_fix" else 240, "source": SOURCE}
 
 
@@ -205,17 +262,28 @@ def apply_action(characters: dict, actor_id: str, action: str, args: dict,
         light = args.get("light_activity") is True
         healed = target.get("hp", 0)
         if light:
-            for _ in range(days):
-                healed = daily_heal(healed, target.get("max_hp", 1), _stats(target).get("BODY", 0), detail.get("stabilized", False), True)["new_hp"]
-        else:
+            now = detail.get("clock_minutes", 0)
+            if type(now) is not int:
+                now = 0
+            body_rate = rules_eval.effective_body(target)
+            if _has_enhanced_antibodies(target):
+                body_rate *= 2
+            pharma = detail.get("pharmaceutical_effects") if isinstance(detail.get("pharmaceutical_effects"), dict) else {}
+            ab = pharma.get("Antibiotic") if isinstance(pharma.get("Antibiotic"), dict) else None
+            ab_expires = ab.get("expires_at", 0) if ab else 0
+            ab_daily = ab.get("daily_hp", 2) if ab else 2
+            if type(ab_daily) is not int or ab_daily < 0:
+                ab_daily = 2
+            for day_idx in range(days):
+                day_start = now + day_idx * 1440
+                ab_bonus = ab_daily if (ab and type(ab_expires) is int and ab_expires > day_start) else 0
+                healed = daily_heal(healed, target.get("max_hp", 1), body_rate + ab_bonus, detail.get("stabilized", False), True)["new_hp"]
+        elif days > 0:
             detail["stabilized"] = False
         target["hp"] = healed
         result = {"healed_to": healed, "days": days, "light_activity": light, "source": SOURCE}
     elif action == "death_save":
-        check = death_save(_stats(target).get("BODY", 0), detail.get("death_save_penalty", 0), randbelow)
-        detail["death_save_penalty"] = check["next_penalty"]
-        if check["dead"]: detail["dead"] = True
-        result = check
+        result = rules_eval.apply_death_save(target, randbelow=randbelow)
     elif action == "therapy":
         result = _therapy(chars, actor_id, target_id, args, randbelow)
     elif action in ("quick_fix", "treat_injury"):

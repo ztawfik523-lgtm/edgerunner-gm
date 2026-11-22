@@ -80,6 +80,145 @@ def create_architecture(floors, access_points):
         apids.add(point.get("id"))
     return {"floors":result,"access_points":_copy(access_points),"viruses":[],"audit":[]}
 
+def _is_active_program(prog: dict[str, Any]) -> bool:
+    return bool(prog.get("active")) and int(prog.get("rez", 0) or 0) > 0 and not bool(prog.get("destroyed"))
+
+
+def _booster_bonus(run: dict[str, Any], effect_code: str) -> int:
+    return 2 * sum(
+        1 for p in run.get("deck", {}).get("programs", [])
+        if _is_active_program(p) and p.get("effect") == effect_code
+    )
+
+
+def _is_move_blocked(run: dict[str, Any]) -> bool:
+    conds = run.get("conditions") or {}
+    return bool(
+        conds.get("cannot_move")
+        or conds.get("cannot_progress")
+        or int(conds.get("cannot_move_turns") or 0) > 0
+        or conds.get("net_movement_block")
+    )
+
+
+def _is_jack_out_blocked(run: dict[str, Any]) -> bool:
+    conds = run.get("conditions") or {}
+    return bool(
+        conds.get("cannot_jack_out")
+        or int(conds.get("cannot_jack_out_turns") or 0) > 0
+        or int(conds.get("safe_exit_blocked") or 0) > 0
+        or conds.get("net_movement_block")
+    )
+
+
+def _clear_exit_state(run: dict[str, Any], arch: dict[str, Any]) -> None:
+    run["connected"] = False
+    run["controls"] = {}
+    run["floor_id"] = run["access_floor_id"]
+    run["passed_passwords"] = []
+    run["encountered_ice"] = []
+    for p in run.get("deck", {}).get("programs", []):
+        p["active"] = False
+    for floor in arch.get("floors", []):
+        if floor.get("type") == "ice" and isinstance(floor.get("ice"), dict):
+            floor["ice"]["pursuing"] = False
+            floor["ice"]["encountered"] = False
+    conds = run.setdefault("conditions", {})
+    for key in (
+        "cannot_move",
+        "cannot_move_turns",
+        "cannot_progress",
+        "cannot_jack_out",
+        "cannot_jack_out_turns",
+        "safe_exit_blocked",
+        "net_movement_block",
+        "slide_penalty",
+    ):
+        conds.pop(key, None)
+
+
+def _floor_depths(arch: dict[str, Any], root_id: Any) -> dict[Any, int]:
+    floors_by_id = {f["id"]: f for f in arch.get("floors", [])}
+    seeds = [root_id] if root_id in floors_by_id else [ap["floor_id"] for ap in arch.get("access_points", []) if ap.get("floor_id") in floors_by_id]
+    depths: dict[Any, int] = {}
+    queue: list[Any] = []
+    for s in seeds:
+        if s not in depths:
+            depths[s] = 0
+            queue.append(s)
+    while queue:
+        fid = queue.pop(0)
+        d = depths[fid]
+        for nb in floors_by_id[fid].get("adjacent", []):
+            if nb in floors_by_id and nb not in depths:
+                depths[nb] = d + 1
+                queue.append(nb)
+    return depths
+
+
+def _deepest_floor_ids(arch: dict[str, Any], root_id: Any) -> set[Any]:
+    depths = _floor_depths(arch, root_id)
+    if not depths:
+        return {f["id"] for f in arch.get("floors", [])}
+    max_depth = max(depths.values())
+    return {fid for fid, d in depths.items() if d == max_depth}
+
+
+def _has_graph_path(arch: dict[str, Any], start_id: Any, target_id: Any) -> bool:
+    floors_by_id = {f["id"]: f for f in arch.get("floors", [])}
+    if start_id not in floors_by_id or target_id not in floors_by_id:
+        return False
+    visited = {start_id}
+    queue = [start_id]
+    while queue:
+        fid = queue.pop(0)
+        if fid == target_id:
+            return True
+        for nb in floors_by_id[fid].get("adjacent", []):
+            if nb in floors_by_id and nb not in visited:
+                visited.add(nb)
+                queue.append(nb)
+    return False
+
+
+def _has_clear_path(arch: dict[str, Any], run: dict[str, Any], start_id: Any, target_id: Any) -> bool:
+    floors_by_id = {f["id"]: f for f in arch.get("floors", [])}
+    if start_id not in floors_by_id or target_id not in floors_by_id:
+        return False
+    passed = set(run.get("passed_passwords", []))
+    visited = {start_id}
+    queue = [start_id]
+    while queue:
+        fid = queue.pop(0)
+        for nb in floors_by_id[fid].get("adjacent", []):
+            if nb not in floors_by_id or nb in visited:
+                continue
+            nb_floor = floors_by_id[nb]
+            if nb == target_id:
+                return nb_floor.get("type") != "obstruction"
+            if nb_floor.get("type") == "obstruction":
+                continue
+            if nb_floor.get("type") == "password" and nb not in passed:
+                continue
+            if nb_floor.get("type") == "ice" and (nb_floor.get("ice") or {}).get("rezzed"):
+                continue
+            visited.add(nb)
+            queue.append(nb)
+    return False
+
+
+def _clear_skunk_penalty_if_derezzed(run: dict[str, Any], arch: dict[str, Any]) -> None:
+    skunk_active = any(
+        f.get("type") == "ice"
+        and (f.get("ice") or {}).get("name") == "Skunk"
+        and (f.get("ice") or {}).get("rezzed")
+        and (f["id"] in run.get("encountered_ice", []) or (f.get("ice") or {}).get("pursuing"))
+        for f in arch.get("floors", [])
+    )
+    if not skunk_active:
+        run.get("conditions", {}).pop("slide_penalty", None)
+
+
 def create_run(character_id, interface, deck, architecture, access_point_id, distance, blocked=False, virtuality=True):
     if isinstance(interface,bool) or not isinstance(interface,int) or not 1<=interface<=10: raise ValueError("interface must be 1..10")
     if not isinstance(deck,dict): raise TypeError("deck must be an object")
@@ -105,7 +244,7 @@ def create_run(character_id, interface, deck, architecture, access_point_id, dis
     arch=_copy(architecture)
     ap=next((a for a in arch["access_points"] if a.get("id")==access_point_id),None)
     if ap is None: raise ValueError("unknown access point")
-    return {"character_id":character_id,"interface":interface,"deck":{"capacity":capacity,"programs":programs,"hardware":hw},"connected":False,"floor_id":ap["floor_id"],"access_point_id":access_point_id,"access_floor_id":ap["floor_id"],"distance":distance,"blocked":blocked,"virtuality":virtuality,"actions_remaining":_budget(interface),"action_budget":_budget(interface),"turn":0,"slide_used":False,"activated_this_round":[],"run_used_programs":[],"encountered_ice":[],"discovered":[],"passed_passwords":[],"trace":[],"cloak_dv":None,"controls":{},"node_activated":[],"virus_work":None,"conditions":{}}
+    return {"character_id":character_id,"interface":interface,"deck":{"capacity":capacity,"programs":programs,"hardware":hw},"connected":False,"floor_id":ap["floor_id"],"access_point_id":access_point_id,"access_floor_id":ap["floor_id"],"distance":distance,"blocked":blocked,"virtuality":virtuality,"actions_remaining":_budget(interface),"action_budget":_budget(interface),"turn":0,"slide_used":False,"activated_this_round":[],"run_used_programs":[],"run_used_program_names":[],"run_used_hardware":[],"encountered_ice":[],"discovered":[],"passed_passwords":[],"trace":[],"cloak_dv":None,"controls":{},"node_activated":[],"virus_work":None,"conditions":{}}
 
 def public_view(run, architecture):
     seen=set(run.get("discovered",[])); a={"floors":[],"access_points":[{"id":p["id"],"floor_id":p["floor_id"]} for p in architecture.get("access_points",[]) if p["floor_id"] in seen]}
@@ -122,8 +261,7 @@ def _unsafe(run, arch, omit=None):
         f=next((x for x in arch["floors"] if x["id"]==fid),None)
         if f and f.get("ice",{}).get("rezzed") and f["ice"]["name"]!=omit:
             effects.append({"type":"black_ice_effect","name":f["ice"]["name"],"effect":f["ice"]["stats"]["effect"]})
-    run["connected"]=False; run["controls"]={}; run["floor_id"]=run["access_floor_id"]
-    for p in run["deck"]["programs"]: p["active"]=False
+    _clear_exit_state(run, arch)
     return effects
 
 def apply_action(run, architecture, action, args=None, randbelow=secrets.randbelow):
@@ -140,13 +278,42 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
         if not fresh: return
         ice.update(encountered=True, pursuing=True)
         if floor["id"] not in r["encountered_ice"]: r["encountered_ice"].append(floor["id"])
-        pc = r["interface"] + 2*sum(p["active"] and p["rez"]>0 and p["effect"]=="speed+2" for p in r["deck"]["programs"]) + _die(randbelow)
-        ic = ice["stats"]["spd"] + _die(randbelow)
+        speed_bonus = _booster_bonus(r, "speed+2")
+        speed_check = mechanics.opposed_check(
+            {"stat": r["interface"], "skill": 0, "dv": 0, "modifier": speed_bonus},
+            {"stat": ice["stats"]["spd"], "skill": 0, "dv": 0},
+            randbelow,
+        )
+        pc = speed_check["attacker"]["total"]
+        ic = speed_check["defender"]["total"]
         encounters.append({"type":"ice_initiative","floor_id":floor["id"],"name":ice["name"],"initiative":"top"})
-        result["speed_check"] = {"runner":pc,"ice":ic}
+        result["speed_check"] = {"runner":pc,"ice":ic,"check":speed_check}
         if ic>pc: effects.append({"type":"black_ice_effect","name":ice["name"],"floor_id":floor["id"]})
     if action=="new_turn":
-        r["turn"]+=1; r["actions_remaining"]=max(2,r["action_budget"]-r["conditions"].get("next_turn_action_penalty",0)); r["conditions"].pop("next_turn_action_penalty",None); r["slide_used"]=False; r["activated_this_round"]=[]; r["node_activated"]=[]
+        conds = r.setdefault("conditions", {})
+        r["turn"]+=1; r["actions_remaining"]=max(2,r["action_budget"]-int(conds.pop("next_turn_action_penalty",0) or 0)); r["slide_used"]=False; r["activated_this_round"]=[]; r["node_activated"]=[]
+        for turns_key, flag_keys in (
+            ("cannot_move_turns", ("cannot_move", "cannot_progress")),
+            ("cannot_jack_out_turns", ("cannot_jack_out", "safe_exit_blocked")),
+        ):
+            if turns_key in conds:
+                rem = int(conds.get(turns_key) or 0) - 1
+                if rem <= 0:
+                    conds.pop(turns_key, None)
+                    for fk in flag_keys:
+                        conds.pop(fk, None)
+                else:
+                    conds[turns_key] = rem
+                    if "safe_exit_blocked" in flag_keys and "safe_exit_blocked" in conds:
+                        conds["safe_exit_blocked"] = rem
+        if "cannot_jack_out_turns" not in conds and isinstance(conds.get("safe_exit_blocked"), int) and not isinstance(conds.get("safe_exit_blocked"), bool):
+            rem = conds["safe_exit_blocked"] - 1
+            if rem <= 0:
+                conds.pop("safe_exit_blocked", None)
+            else:
+                conds["safe_exit_blocked"] = rem
+        if not any(conds.get(k) for k in ("cannot_move_turns", "cannot_jack_out_turns", "cannot_move", "cannot_progress", "cannot_jack_out", "safe_exit_blocked")):
+            conds.pop("net_movement_block", None)
     elif action=="scan": result["requires_meat_action"]=True; result["marker"]="scan_access_points"
     elif action=="jack_in":
         spend()
@@ -157,28 +324,49 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
             r["connected"]=True; enter(next(f for f in a["floors"] if f["id"]==ap["floor_id"]))
             if not r["virtuality"]: effects.append({"type":"character_condition","condition":"unconscious_in_meat"})
     elif action in ("jack_out","move"):
-        if action=="jack_out": spend()
         if action=="jack_out":
+            spend()
             max_range=8 if "Range Upgrade" in r["deck"]["hardware"] else 6
-            if not r["connected"] or r["distance"]>max_range or r["conditions"].get("safe_exit_blocked",0)>0:
+            if not r["connected"] or r["distance"]>max_range or _is_jack_out_blocked(r):
                 result["success"]=False
+                if _is_jack_out_blocked(r):
+                    result["blocked_by"]="jack_out_blocked"
             else:
-                r["connected"]=False; r["floor_id"]=r["access_floor_id"]; r["controls"]={}; r["passed_passwords"]=[]
-                for p in r["deck"]["programs"]: p["active"]=False
-                for floor in a["floors"]:
-                    if floor["type"]=="ice": floor["ice"]["pursuing"]=False; floor["ice"]["encountered"]=False
-                r["encountered_ice"]=[]
+                _clear_exit_state(r, a)
         elif not r["connected"]: raise ValueError("must be jacked in")
-        elif args.get("distance",r["distance"])>(8 if "Range Upgrade" in r["deck"]["hardware"] else 6):
-            effects=_unsafe(r,a); result["unsafe_effects"]=effects
         else:
-            target=args.get("floor_id"); floor=next((f for f in a["floors"] if f["id"]==target),None)
-            if floor is None or target not in next(f for f in a["floors"] if f["id"]==r["floor_id"])["adjacent"]: result["success"]=False
-            elif floor["type"]=="obstruction" or (next(f for f in a["floors"] if f["id"]==r["floor_id"])["type"]=="password" and r["floor_id"] not in r["passed_passwords"]): result["success"]=False; result["blocked_by"]="password"
+            dist = args.get("distance", r["distance"])
+            if isinstance(dist, bool) or not isinstance(dist, (int, float)) or dist < 0:
+                raise ValueError("distance must be numeric and >= 0")
+            if dist > (8 if "Range Upgrade" in r["deck"]["hardware"] else 6):
+                effects=_unsafe(r,a); result["unsafe_effects"]=effects
+            elif _is_move_blocked(r):
+                result["success"]=False; result["blocked_by"]="movement_blocked"
             else:
-                enter(floor)
-        if action=="move": r["distance"]=args.get("distance",r["distance"])
-    elif action in ("backdoor","pathfinder","eye_dee","copy_file","slide","cloak","control","activate_node","virus_start","virus_work","zap","activate_program","deactivate_program","ice_turn"):
+                target=args.get("floor_id"); floor=next((f for f in a["floors"] if f["id"]==target),None)
+                here=next(f for f in a["floors"] if f["id"]==r["floor_id"])
+                if floor is None or target == here["id"]:
+                    result["success"]=False
+                else:
+                    depths = _floor_depths(a, r.get("access_floor_id"))
+                    cur_depth = depths.get(here["id"])
+                    tgt_depth = depths.get(target)
+                    is_retreat = cur_depth is not None and tgt_depth is not None and tgt_depth < cur_depth
+                    if here["type"]=="password" and here["id"] not in r["passed_passwords"]:
+                        if target in here["adjacent"] and is_retreat and floor["type"] != "obstruction":
+                            enter(floor)
+                        else:
+                            result["success"]=False; result["blocked_by"]="password"
+                    elif floor["type"]=="obstruction":
+                        result["success"]=False; result["blocked_by"]="password"
+                    elif target in here["adjacent"] or _has_clear_path(a, r, here["id"], target):
+                        enter(floor)
+                    else:
+                        result["success"]=False
+                        if _has_graph_path(a, here["id"], target):
+                            result["blocked_by"]="password"
+            r["distance"]=dist
+    elif action in ("backdoor","pathfinder","eye_dee","copy_file","slide","cloak","control","activate_node","virus_start","virus_work","zap","activate_program","deactivate_program","backup_drive","restore_program","ice_turn"):
         if action=="copy_file":
             if not r["connected"]: raise ValueError("must be jacked in")
             here=next(f for f in a["floors"] if f["id"]==r["floor_id"])
@@ -194,9 +382,10 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
             ice = floor["ice"]; anti_program = ice["name"] in {"Dragon", "Killer", "Sabertooth"}
             target = None
             if anti_program:
-                candidates = [p for p in r["deck"]["programs"] if p["active"] and p["rez"]>0 and not p["destroyed"]]
+                candidates = [p for p in r["deck"]["programs"] if _is_active_program(p)]
                 if not candidates:
-                    result = {"requires_human_ruling":True,"reason":"Anti-program ICE has no active valid target"}
+                    result["no_target"] = True
+                    result["skipped"] = "Anti-program ICE has no active valid target"
                 else: target = candidates[_die(randbelow, len(candidates))-1]
             if not anti_program or target is not None:
                 defense = target["def_"] if target else r["interface"]
@@ -210,63 +399,152 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
         else:
             if not r["connected"]: raise ValueError("must be jacked in")
             spend(); here=next(f for f in a["floors"] if f["id"]==r["floor_id"])
-            if action in ("activate_program","deactivate_program"):
+            if action in ("backup_drive","restore_program"):
+                hw_list = r.get("deck", {}).get("hardware", [])
+                used_hw = r.setdefault("run_used_hardware", [])
+                if hw_list.count("Backup Drive") == 0 or used_hw.count("Backup Drive") >= hw_list.count("Backup Drive"):
+                    result["success"] = False
+                else:
+                    instance_id = args.get("instance_id")
+                    prog_name = args.get("program_name")
+                    victim = next(
+                        (
+                            p for p in r["deck"]["programs"]
+                            if p.get("destroyed")
+                            and (
+                                (instance_id is not None and p.get("instance_id") == instance_id)
+                                or (instance_id is None and prog_name is not None and p.get("name") == prog_name)
+                                or (instance_id is None and prog_name is None)
+                            )
+                        ),
+                        None,
+                    )
+                    if victim is None:
+                        result["success"] = False
+                    else:
+                        victim["destroyed"] = False
+                        victim["rez"] = victim["max_rez"]
+                        victim["active"] = False
+                        used_hw.append("Backup Drive")
+                        result["restored"] = victim["instance_id"]
+            elif action in ("activate_program","deactivate_program"):
                 instance_id=args.get("instance_id"); p=next((p for p in r["deck"]["programs"] if p["instance_id"]==instance_id and not p["destroyed"]),None)
                 if not p: result["success"]=False
                 elif action=="activate_program":
-                    if p["active"] or instance_id in r["activated_this_round"]: result["success"]=False
-                    elif p["type"] in ("Defender",) and p["name"] in {q["name"] for q in r["deck"]["programs"] if q["active"]}: result["success"]=False
-                    elif p["type"] == "Defender" and instance_id in r["run_used_programs"]: result["success"]=False
+                    used_names = r.setdefault("run_used_program_names", [])
+                    if _is_active_program(p) or instance_id in r["activated_this_round"]: result["success"]=False
+                    elif p["type"] in ("Defender",) and p["name"] in {q["name"] for q in r["deck"]["programs"] if _is_active_program(q)}: result["success"]=False
+                    elif p["type"] == "Defender" and (instance_id in r["run_used_programs"] or p["name"] in used_names): result["success"]=False
+                    elif p["name"] == "Superglue" and (instance_id in r["run_used_programs"] or "Superglue" in used_names): result["success"]=False
                     else:
                         p["active"]=True; p["rez"]=p["max_rez"]; r["activated_this_round"].append(instance_id)
-                        if p["type"] == "Defender": r["run_used_programs"].append(instance_id)
+                        if p["type"] == "Defender":
+                            r["run_used_programs"].append(instance_id)
+                            used_names.append(p["name"])
                         if p["type"].endswith("Attacker"):
-                            target = next((f for f in a["floors"] if f["id"] == args.get("target_floor_id")), None)
-                            if not target or target["type"]!="ice" or not target["ice"]["rezzed"]:
-                                raise ValueError("A rezzed discovered ICE target is required")
-                            if target["id"] not in r["discovered"]: raise ValueError("Target has not been discovered")
-                            if p["type"] != "Anti-Program Attacker": raise ValueError("Anti-personnel programs require a runner target")
-                            check = mechanics.opposed_check({"stat":r["interface"]+p["atk"],"skill":0,"dv":0}, {"stat":target["ice"]["stats"]["def_"],"skill":0,"dv":0}, randbelow)
-                            result["check"] = check
-                            if check["attacker_wins"]:
-                                dice = mechanics.roll_dice(3 if p["name"]=="Sword" else 2,6,randbelow)
-                                target["ice"]["rez"] = max(0,target["ice"]["rez"]-sum(dice)); target["ice"]["rezzed"] = target["ice"]["rez"]>0
-                                result["damage_dice"] = dice
+                            if p["type"] != "Anti-Program Attacker":
+                                target_run = args.get("target_run")
+                                target_iface = args.get("target_interface")
+                                if target_iface is not None or isinstance(target_run, dict):
+                                    t_iface = target_run.get("interface", 0) if isinstance(target_run, dict) else int(target_iface)
+                                    flak_active = isinstance(target_run, dict) and any(
+                                        _is_active_program(tp) and tp.get("name") == "Flak"
+                                        for tp in target_run.get("deck", {}).get("programs", [])
+                                    )
+                                    eff_atk = 0 if flak_active else p["atk"]
+                                    if p["name"] == "Superglue":
+                                        r["run_used_programs"].append(instance_id)
+                                        used_names.append("Superglue")
+                                    check = mechanics.opposed_check({"stat": r["interface"] + eff_atk, "skill": 0, "dv": 0}, {"stat": t_iface, "skill": 0, "dv": 0}, randbelow)
+                                    result["check"] = check
+                                    if check["attacker_wins"] and isinstance(target_run, dict):
+                                        from neteffects import resolve_effect
+                                        resolved = resolve_effect(p["name"], target_run, randbelow=randbelow, black_ice=False)
+                                        result["target_run"] = resolved["run"]
+                                        result["target_effects"] = resolved["character_effects"]
+                                        result["effect_dice"] = resolved["dice"]
+                                    p["active"] = False
+                                else:
+                                    raise ValueError("Anti-personnel programs require a runner target")
+                            else:
+                                target = next((f for f in a["floors"] if f["id"] == args.get("target_floor_id")), None)
+                                if not target or target["type"]!="ice" or not target["ice"]["rezzed"]:
+                                    raise ValueError("A rezzed discovered ICE target is required")
+                                if target["id"] not in r["discovered"]: raise ValueError("Target has not been discovered")
+                                check = mechanics.opposed_check({"stat":r["interface"]+p["atk"],"skill":0,"dv":0}, {"stat":target["ice"]["stats"]["def_"],"skill":0,"dv":0}, randbelow)
+                                result["check"] = check
+                                if check["attacker_wins"]:
+                                    dice = mechanics.roll_dice(3 if p["name"]=="Sword" else 2,6,randbelow)
+                                    target["ice"]["rez"] = max(0,target["ice"]["rez"]-sum(dice)); target["ice"]["rezzed"] = target["ice"]["rez"]>0
+                                    if not target["ice"]["rezzed"]:
+                                        target["ice"]["pursuing"] = False
+                                        _clear_skunk_penalty_if_derezzed(r, a)
+                                    result["damage_dice"] = dice
                         if p["type"].endswith("Attacker"): p["active"]=False
                 else: p["active"]=False
             elif action=="slide":
                 if r["slide_used"]: result["success"]=False
+                elif _is_move_blocked(r): result["success"]=False; result["blocked_by"]="movement_blocked"
                 else:
                     r["slide_used"]=True; target=next((f for f in a["floors"] if f["id"]==args.get("ice_floor_id")),None)
                     destination=next((f for f in a["floors"] if f["id"]==args.get("floor_id")),None)
-                    if not target or target.get("type")!="ice" or target["ice"]["name"]=="Demon" or not target["ice"].get("pursuing") or not destination or destination["id"] not in here["adjacent"] or destination["type"] in ("password","obstruction"):
+                    dest_blocked = (
+                        not destination
+                        or destination["id"] not in here["adjacent"]
+                        or destination["type"] == "obstruction"
+                        or (destination["type"] == "password" and destination["id"] not in r["passed_passwords"])
+                    )
+                    if not target or target.get("type")!="ice" or target["ice"]["name"]=="Demon" or not target["ice"].get("pursuing") or dest_blocked:
                         result["success"]=False
                     else:
-                        c=mechanics.opposed_check({"stat":r["interface"],"skill":0,"dv":0},{"stat":target["ice"]["stats"]["per"],"skill":0,"dv":0},randbelow); result["check"]=c
+                        speed_bonus = _booster_bonus(r, "speed+2")
+                        slide_pen = int(r.get("conditions", {}).get("slide_penalty") or 0)
+                        if slide_pen == 0 and (
+                            (target["ice"].get("name") == "Skunk" and target["ice"].get("rezzed"))
+                            or any(
+                                f.get("type") == "ice"
+                                and (f.get("ice") or {}).get("name") == "Skunk"
+                                and (f.get("ice") or {}).get("rezzed")
+                                and (f["id"] in r.get("encountered_ice", []) or (f.get("ice") or {}).get("pursuing"))
+                                for f in a.get("floors", [])
+                            )
+                        ):
+                            slide_pen = -2
+                        c=mechanics.opposed_check({"stat":r["interface"],"skill":0,"dv":0,"modifier":speed_bonus+slide_pen},{"stat":target["ice"]["stats"]["per"],"skill":0,"dv":0},randbelow); result["check"]=c
                         if c["attacker_wins"]:
                             target["ice"]["pursuing"]=False; enter(destination); result["escaped"]=True
             elif action in ("backdoor","pathfinder","eye_dee","cloak","control"):
                 target=next((f for f in a["floors"] if f["id"]==args.get("floor_id",r["floor_id"])),None)
                 if target is None or target["id"]!=here["id"]: raise ValueError("action target must be the current floor")
                 if action=="pathfinder":
-                    c=mechanics.skill_check(r["interface"],0,0,modifier=sum(2 for p in r["deck"]["programs"] if p["active"] and p["effect"]=="pathfinder+2"),randbelow=randbelow)
-                    visible=set(r["discovered"]); visited=set(); frontier=[here["id"]]; steps=0
+                    c=mechanics.skill_check(r["interface"],0,0,modifier=_booster_bonus(r,"pathfinder+2"),randbelow=randbelow)
+                    visible=set(r["discovered"]); visited=set(); enqueued={here["id"]}; frontier=[here["id"]]; steps=0
+                    passed=set(r.get("passed_passwords",[]))
                     while frontier and steps<c["total"]:
                         fid=frontier.pop(0)
                         if fid in visited: continue
                         visited.add(fid)
                         floor=next(f for f in a["floors"] if f["id"]==fid); visible.add(fid); steps+=1
-                        if floor.get("dv") is not None and floor["dv"]>c["total"]: continue
-                        frontier.extend(x for x in floor["adjacent"] if x not in visible)
+                        if floor["type"]=="password" and fid not in passed and floor.get("dv") is not None and floor["dv"]>c["total"]: continue
+                        if floor["type"]=="obstruction" and (floor.get("dv") is None or floor["dv"]>c["total"]): continue
+                        for x in floor["adjacent"]:
+                            if x not in visited and x not in enqueued:
+                                enqueued.add(x)
+                                frontier.append(x)
                     r["discovered"]=list(visible); result["check"]=c
                 elif action=="cloak":
-                    c=_check(r["interface"],999,0,randbelow); r["cloak_dv"]=c["total"]+2*sum(p["active"] and p["effect"]=="cloak+2" for p in r["deck"]["programs"]); result["check"]=c
+                    eraser_bonus = _booster_bonus(r, "cloak+2")
+                    c=_check(r["interface"],0,eraser_bonus,randbelow)
+                    r["cloak_dv"]=c["total"]
+                    result["check"]=c
+                    result["cloak_dv"]=c["total"]
                 else:
                     required_type = {"backdoor":"password","eye_dee":"file","control":"control"}[action]
                     if target["type"] != required_type: raise ValueError(f"{action} requires a {required_type} floor")
-                    dv=r["controls"].get(str(target["id"]),target.get("dv") or 0); bonus=2*sum(p["active"] and p["rez"]>0 and p["effect"]=="backdoor+2" for p in r["deck"]["programs"]) if action=="backdoor" else 0
+                    dv=r["controls"].get(str(target["id"]),target.get("dv") or 0); bonus=_booster_bonus(r,"backdoor+2") if action=="backdoor" else 0
                     c=_check(r["interface"],dv,bonus,randbelow); result["check"]=c
-                    if action=="backdoor" and target["type"]=="password" and c["success"]: r["passed_passwords"].append(target["id"])
+                    if action=="backdoor" and target["type"]=="password" and c["success"]:
+                        if target["id"] not in r["passed_passwords"]: r["passed_passwords"].append(target["id"])
                     if action=="eye_dee" and target["type"]=="file" and c["success"]: result["file"]=_copy(target["file"])
                     if action=="control" and target["type"]=="control" and c["success"]: r["controls"][str(target["id"])]=c["total"]
                     if action=="control" and target.get("password") is not None: result["requires_human_ruling"]="known-password traversal behavior/cost"
@@ -277,12 +555,15 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
                 else: r["node_activated"].append(fid); result["node"]=node.get("control")
             elif action=="virus_start":
                 current = next(x for x in a["floors"] if x["id"]==r["floor_id"])
-                # Virus can only start on floors not adjacent to any rezzed, pursuing ICE
+                # Virus can only start on the deepest floor and not adjacent to any rezzed, pursuing ICE
+                deepest_floors = _deepest_floor_ids(a, r.get("access_floor_id"))
                 adjacent_ice = any(
                     f["type"] == "ice" and f["ice"].get("rezzed") and f["ice"].get("pursuing")
                     for f in a["floors"] if f["id"] in current.get("adjacent", [])
                 )
-                if adjacent_ice: result["success"]=False
+                if r["floor_id"] not in deepest_floors:
+                    result["success"]=False; result["blocked_by"]="not_deepest_floor"
+                elif adjacent_ice: result["success"]=False
                 else:
                     v=args.get("virus",{}); 
                     if not isinstance(v,dict) or set(v)!={"description","dv","actions_required"} or not isinstance(v["description"],str) or isinstance(v["dv"],bool) or not isinstance(v["dv"],int) or v["dv"]<=0 or isinstance(v["actions_required"],bool) or not isinstance(v["actions_required"],int) or v["actions_required"]<=0: raise ValueError("virus schema needs description, positive integer dv and actions_required")
@@ -308,5 +589,8 @@ def apply_action(run, architecture, action, args=None, randbelow=secrets.randbel
                 if check["attacker_wins"]:
                     dice=mechanics.roll_dice(1,6,randbelow); result["damage_dice"]=dice
                     target["ice"]["rez"]=max(0,target["ice"]["rez"]-sum(dice)); target["ice"]["rezzed"]=target["ice"]["rez"]>0
+                    if not target["ice"]["rezzed"]:
+                        target["ice"]["pursuing"] = False
+                        _clear_skunk_penalty_if_derezzed(r, a)
     else: raise ValueError("unknown action")
     return {"run":r,"architecture":a,"result":result,"character_effects":effects,"encounter_effects":encounters}

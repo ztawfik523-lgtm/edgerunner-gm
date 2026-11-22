@@ -752,7 +752,7 @@ def _injury_penalty_for_check(
     is_hand = bool(tag_set & {"hand", "hands", "manual"}) or skill_norm in _HAND_SKILLS
 
     for inj in injuries:
-        if inj.get("suppressed") or inj.get("treated") or inj.get("quick_fixed"):
+        if inj.get("suppressed") or inj.get("treated"):
             continue
         name = str(inj.get("name") or "")
         name_norm = _norm(name)
@@ -862,9 +862,9 @@ def effective_check_context(
     injury_penalty, injury_reasons = _injury_penalty_for_check(injuries, stat_key, skill_norm, tag_set)
     reasons.extend(injury_reasons)
 
-    solo_raw = detail.get("solo_allocation")
+    solo_raw = detail.get("combat_awareness")
     if not isinstance(solo_raw, dict):
-        solo_raw = detail.get("combat_awareness")
+        solo_raw = detail.get("solo_allocation")
     solo_alloc = solo_raw if isinstance(solo_raw, dict) else {}
 
     def _solo_pts(key: str) -> int:
@@ -1102,7 +1102,7 @@ def recompute_death_save_base_penalty(char: dict[str, Any]) -> int:
     """Count active unsuppressed Critical Injuries imposing a Death Save penalty and store it."""
     total = 0
     for inj in active_injuries(char):
-        if inj.get("suppressed") or inj.get("treated") or inj.get("quick_fixed"):
+        if inj.get("suppressed") or inj.get("treated"):
             continue
         pen = inj.get("death_save_penalty", 1)
         if _is_int(pen) and pen > 0:

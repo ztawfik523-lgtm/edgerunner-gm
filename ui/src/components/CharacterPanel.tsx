@@ -460,13 +460,16 @@ export function CharacterPanel({
     if (!active || busy) return;
     setBusy(true);
     try {
-      let rollRes: {
-        total: number;
-        success: boolean;
-        die: number;
-        explosion: number;
-        wound_modifier: number;
+      type RawRollResult = {
+        total?: number;
+        success?: boolean;
+        die?: number | null;
+        dice?: number[];
+        explosion?: number;
+        critical_adjustment?: number;
+        wound_modifier?: number;
       };
+      let rollRes: RawRollResult;
       try {
         const chatRoll = await postManualChatRoll({
           campaign_id: campaignId,
@@ -480,7 +483,11 @@ export function CharacterPanel({
           channel_id: activeChannelId,
         });
         rollRes = chatRoll.result;
-      } catch {
+      } catch (err) {
+        const status = (err as { status?: unknown } | null)?.status;
+        if (status !== 404 && status !== 501) {
+          throw err;
+        }
         rollRes = await runSkillCheck(campaignId, {
           character_id: active.id,
           expected_revision: active.revision,
@@ -492,7 +499,15 @@ export function CharacterPanel({
           reason: checkReason.trim() || "Manual check",
         });
       }
-      setLastRoll(rollRes);
+      const toFinite = (val: unknown, fallback = 0): number =>
+        typeof val === "number" && Number.isFinite(val) ? val : fallback;
+      setLastRoll({
+        total: toFinite(rollRes.total, 0),
+        success: Boolean(rollRes.success),
+        die: toFinite(rollRes.die ?? rollRes.dice?.[0] ?? 0, 0),
+        explosion: toFinite(rollRes.explosion ?? rollRes.critical_adjustment ?? 0, 0),
+        wound_modifier: toFinite(rollRes.wound_modifier ?? 0, 0),
+      });
       setCheckLuck(0);
       await onRefresh();
     } catch (err) {

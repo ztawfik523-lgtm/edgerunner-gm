@@ -8,6 +8,7 @@ from pathlib import Path
 from campaign import CampaignStore, DEFAULT_DB, _json, _integer
 from mechanics import roll_dice, skill_check
 from memory import CampaignMemory
+import rules_eval
 
 _ROLE_ABILITY_TO_ROLE = {
     "interface": "Netrunner",
@@ -205,27 +206,67 @@ class GameplayService:
             _integer(expected_revision, "expected_revision", 1, 2**63 - 1)
             if before["revision"] != expected_revision:
                 raise ValueError("revision conflict; read the character before rolling")
-            if stat == "ROLE":
+            if not isinstance(stat, str) or not stat.strip():
+                raise ValueError("Unknown stat")
+            stat_upper = stat.strip().upper()
+            if stat_upper == "ROLE":
                 role_rank = _resolve_role_ability_rank(before, skill)
                 if role_rank is None:
                     raise ValueError("Unknown stat")
-                stat_value, skill_value = role_rank, 0
-            elif isinstance(stat, str) and stat in before["stats"]:
+            else:
+                canonical_stat = next(
+                    (k for k in before["stats"] if isinstance(k, str) and k.strip().upper() == stat_upper),
+                    None,
+                )
+                if canonical_stat is None:
+                    raise ValueError("Unknown stat")
                 if skill is not None and (not isinstance(skill, str) or not skill.strip()):
                     raise ValueError("skill must be a name or null for an untrained check")
-                stat_value, skill_value = before["stats"][stat], before["skills"].get(skill, 0)
-            else:
-                raise ValueError("Unknown stat")
             _integer(luck, "luck", 0, before["luck_remaining"])
-            threshold = (before["max_hp"] + 1) // 2
-            wound_modifier = -4 if before["hp"] < 1 else -2 if before["hp"] < threshold else 0
-            result = skill_check(stat_value, skill_value, dv,
-                                 modifier=modifier, luck=luck, complementary=complementary,
-                                 extra_time=extra_time)
-            # Apply the known wound penalty separately, keeping caller modifiers auditable.
-            result["wound_modifier"] = wound_modifier
-            result["total"] += wound_modifier
+            ctx = rules_eval.effective_check_context(before, stat_upper, skill)
+            if stat_upper == "ROLE":
+                stat_value, skill_value = ctx["skill_value"], 0
+            else:
+                stat_value, skill_value = ctx["stat_value"], ctx["skill_value"]
+            result = skill_check(
+                stat_value,
+                skill_value,
+                dv,
+                modifier=modifier,
+                luck=luck,
+                complementary=complementary,
+                extra_time=extra_time,
+            )
+            dice = list(result.get("dice") or [])
+            initial_die = dice[0] if dice else None
+            crit_adj = int(result.get("critical_adjustment", 0) or 0)
+            if ctx["fumble_recovery"] and initial_die == 1:
+                result["total"] -= crit_adj
+                crit_adj = 0
+                result["critical_adjustment"] = 0
+                result["dice"] = [1]
+                is_crit_failure = False
+            else:
+                is_crit_failure = initial_die == 1
+            is_crit_success = initial_die == 10
+
+            # Apply authoritative sheet/condition modifiers separately, keeping caller modifiers auditable.
+            result["total"] += ctx["total_modifier"]
             result["success"] = result["total"] > dv
+            result["margin"] = result["total"] - dv
+            result["reason"] = reason
+            result["die"] = initial_die
+            result["explosion"] = crit_adj
+            result["critical_success"] = is_crit_success
+            result["critical_failure"] = is_crit_failure
+            result["wound_modifier"] = ctx["wound_penalty"]
+            result["armor_penalty"] = ctx["armor_penalty"]
+            result["injury_penalty"] = ctx["injury_penalty"]
+            result["solo_bonus"] = ctx["solo_bonus"]
+            result["fumble_recovery"] = ctx["fumble_recovery"]
+            result["modifier_breakdown"] = list(ctx["reasons"])
+            result["stat_value"] = stat_value
+            result["skill_value"] = skill_value
             result["operation_id"] = operation_id
             after = dict(before, luck_remaining=before["luck_remaining"] - luck,
                          revision=before["revision"] + 1)

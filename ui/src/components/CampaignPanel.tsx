@@ -408,7 +408,9 @@ export function CampaignPanel({
   };
 
   const activeEncounter = solo?.runtime.encounter?.active ? solo.runtime.encounter : null;
-  const activeRuns = Object.entries(solo?.runtime.runs ?? {}).filter(([, r]) => r.connected);
+  const activeRuns = Object.entries(solo?.runtime.runs ?? {})
+    .map(([runId, runEntry]) => [runId, runEntry?.run ?? runEntry] as const)
+    .filter(([, r]) => Boolean(r?.connected));
   const totalMins = Math.max(0, solo?.runtime.clock_minutes ?? 0);
   const clockDay = Math.floor(totalMins / 1440) + 1;
   const hourNum = Math.floor((totalMins % 1440) / 60);
@@ -726,7 +728,7 @@ export function CampaignPanel({
                         Active NET Run
                       </span>
                       <span className="font-mono">
-                        Actions: {run.actions_remaining ?? 0} · Floor: {run.current_floor_id ?? "root"}
+                        Actions: {run.actions_remaining ?? 0} · Floor: {run.floor_id ?? run.current_floor_id ?? "root"}
                       </span>
                     </div>
                   ))}
@@ -893,7 +895,7 @@ export function CampaignPanel({
                         Active NET Run
                       </span>
                       <span className="font-mono">
-                        Actions: {run.actions_remaining ?? 0} · Floor: {run.current_floor_id ?? "root"}
+                        Actions: {run.actions_remaining ?? 0} · Floor: {run.floor_id ?? run.current_floor_id ?? "root"}
                       </span>
                     </div>
                   ))}

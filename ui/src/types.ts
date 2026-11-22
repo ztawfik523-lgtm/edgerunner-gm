@@ -295,6 +295,14 @@ export interface CampaignRecord {
   state: CampaignNarrativeState;
 }
 
+export interface SoloNetRunState {
+  connected?: boolean;
+  floor_id?: string | number;
+  current_floor_id?: string | number;
+  actions_remaining?: number;
+  floors?: Array<{ id: string | number; label?: string; kind?: string; visited?: boolean }>;
+}
+
 export interface SoloRuntime {
   encounter: {
     active?: boolean;
@@ -304,11 +312,12 @@ export interface SoloRuntime {
   } | null;
   runs: Record<
     string,
-    {
-      connected?: boolean;
-      current_floor_id?: string;
-      actions_remaining?: number;
-      floors?: Array<{ id: string; label?: string; kind?: string; visited?: boolean }>;
+    SoloNetRunState & {
+      run?: SoloNetRunState;
+      architecture?: {
+        floors?: Array<{ id: string | number; type?: string; adjacent?: Array<string | number>; ice?: { name: string } }>;
+        access_points?: Array<{ id: string; floor_id: string | number }>;
+      };
     }
   >;
   clock_minutes: number;

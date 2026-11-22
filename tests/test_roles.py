@@ -116,3 +116,144 @@ def test_fix_haggle_failure_does_not_grant_terms():
     result = roles.apply_action(c, "fixer_haggle", {"transaction_id": "t1", "opponent_gm_approved": True,
         "opponent": {"COOL": 10, "Trading": 10}, "deal": "discount_10"}, lambda sides: next(seq))
     assert result["result"]["success"] is False and result["result"]["terms"] is None
+
+
+def test_exec_1d6_loyalty_natural_1_and_negative_loyalty_betrayal():
+    c = character("Exec", 4)
+    c["detail"]["team"] = [{"id": "m1", "name": "Kaito", "role": "Bodyguard", "loyalty": 4}]
+    seen_sides = []
+
+    def d6_four(sides):
+        seen_sides.append(sides)
+        return 3  # die = 4 (fails < 4, passes if 1d6 wasn't 1d10)
+
+    res = roles.apply_action(c, "exec_team", {"member_id": "m1", "task": "Hold the door"}, d6_four)
+    assert seen_sides == [6]
+    assert res["result"]["die"] == 4
+    assert res["result"]["success"] is False
+
+    # Natural 1 sets leave_after_job / resigned
+    nat1 = roles.apply_action(c, "exec_team", {"member_id": "m1", "task": "Hold the door"}, lambda sides: 0)
+    assert nat1["result"]["die"] == 1
+    assert nat1["result"]["success"] is True
+    assert nat1["result"]["leave_after_job"] is True
+    assert nat1["character"]["detail"]["team"][0]["leave_after_job"] is True
+    assert nat1["character"]["detail"]["team"][0]["resigned"] is True
+
+    # Negative loyalty table entries & betrayal when loyalty <= 0
+    betrayed = roles.apply_action(c, "exec_change_loyalty", {"member_id": "m1", "reason": "endanger"})
+    assert betrayed["result"]["loyalty"] == -2
+    assert betrayed["result"]["betrayed"] is True
+    assert betrayed["result"]["resigned"] is True
+    assert betrayed["character"]["detail"]["team"][0]["betrayed"] is True
+
+
+def test_medtech_synthesize_inventory_wound_penalty_and_clock():
+    c = character("Medtech", 4)
+    c["stats"] = {"TECH": 8, "MOVE": 6}
+    c["skills"] = {"Medical Tech": 6}
+    c["money"] = 500
+    c["hp"] = 5
+    c["max_hp"] = 30  # Seriously Wounded (-2)
+    c["detail"]["roles"] = [{"role": "Medtech", "rank": 4, "choices": {"medicine": {"Pharmaceuticals": 2, "Surgery": 1, "Cryosystem Operation": 1}, "recipes": ["Speedheal", "Stim"]}}]
+
+    # 8 + 6 + 2(die) - 2(wound) = 14 > 13 -> succeeds; 6 doses stored in both inventory & detail
+    ok = roles.apply_action(c, "medtech_synthesize", {"recipe": "Speedheal"}, fixed(2))
+    assert ok["result"]["doses"] == 6
+    assert ok["character"]["inventory"]["pharma:Speedheal"] == 6
+    assert ok["character"]["detail"]["pharmaceuticals"]["Speedheal"] == 6
+    assert ok["character"]["detail"]["clock_minutes"] == 60
+    assert ok["character"]["money"] == 300
+
+
+def test_solo_allocate_wires_with_rules_eval():
+    import rules_eval
+
+    c = character("Solo", 7)
+    c["stats"] = {"REF": 7, "INT": 6}
+    c["skills"] = {"Handgun": 5}
+    allocated = roles.apply_action(c, "solo_allocate", {"allocation": {"precision_attack": 1, "fumble_recovery": 1}})
+    char_after = allocated["character"]
+    ctx = rules_eval.effective_check_context(char_after, "REF", "Handgun", tags=("attack", "ranged"))
+    assert ctx["solo_bonus"] == 1
+    assert ctx["fumble_recovery"] is True
+
+
+def test_tech_project_derives_price_category_enforces_working_and_writes_inventory():
+    c = character("Tech", 4)
+    c["stats"] = {"TECH": 8}
+    c["skills"] = {"Handgun": 6}
+    c["money"] = 500
+    c["inventory"] = {}
+    c["detail"]["roles"] = [{
+        "role": "Tech",
+        "rank": 4,
+        "choices": {
+            "maker": [["Field Expertise", "Upgrade Expertise"], ["Fabrication Expertise", "Invention Expertise"], ["Field Expertise", "Fabrication Expertise"], ["Upgrade Expertise", "Invention Expertise"]],
+            "maker_ranks": {"Field Expertise": 2, "Upgrade Expertise": 2, "Fabrication Expertise": 2, "Invention Expertise": 2},
+        },
+    }]
+    c["detail"]["catalog_items"] = {
+        "heavy_pistol": {"name": "Heavy Pistol", "cost": 100, "category": "weapon", "source_sha256": "abc123", "repair_skill": "Handgun"},
+    }
+    begun = roles.apply_action(c, "tech_project_begin", {"project_kind": "fabricate", "project_id": "fab-1", "item_id": "heavy_pistol"})
+    assert begun["result"]["category"] == "Premium"
+    assert begun["result"]["materials_paid"] == 50  # One category lower than Premium (100) is Costly (50)
+    worked = roles.apply_action(begun["character"], "tech_project_work", {"project_id": "fab-1", "project_kind": "fabricate", "elapsed_minutes": 1440})
+    assert worked["result"]["complete"] is True
+    finished = roles.apply_action(worked["character"], "tech_project_finish", {"project_id": "fab-1", "project_kind": "fabricate"}, fixed(5))
+    assert finished["result"]["state"] == "complete"
+    assert finished["character"]["inventory"]["heavy_pistol"] == 1
+
+    # Cannot advance or finish an already-completed project
+    with pytest.raises(ValueError, match="working"):
+        roles.apply_action(finished["character"], "tech_project_work", {"project_id": "fab-1", "project_kind": "fabricate", "elapsed_minutes": 60})
+    with pytest.raises(ValueError, match="working"):
+        roles.apply_action(finished["character"], "tech_project_finish", {"project_id": "fab-1", "project_kind": "fabricate"}, fixed(5))
+
+
+def test_media_publish_setdefault_and_exploding_rocker_media_checks():
+    m = character("Media", 4)
+    pub = roles.apply_action(m, "media_publish", {"topic": "Corp Scandal", "evidence_count": 2, "evidence_verified": True}, fixed(2))
+    assert pub["result"]["believed"] is True
+    assert len(pub["character"]["detail"]["media"]["published_stories"]) == 1
+    assert "Corp Scandal" in pub["character"]["detail"]["published_topics"]
+
+    # Media rumor explodes on natural 10 (10 + 5 + rank 4 = 19 > 13 Detailed)
+    seq = iter([9, 4])
+    rumor = roles.apply_action(m, "media_rumor", {"rumor": "Detailed", "week": 1}, lambda s: next(seq))
+    assert rumor["result"]["total"] == 19
+    assert rumor["result"]["rumor"] == "Detailed"
+
+    # Rockerboy Charismatic Impact fumbles on natural 1 (1 - 5 + rank 4 = 0)
+    r = character("Rockerboy", 4)
+    seq2 = iter([0, 4])
+    fumble = roles.apply_action(r, "rocker_convert", {"target_eligible": True, "group_size": "single"}, lambda s: next(seq2))
+    assert fumble["result"]["total"] == 0
+    assert fumble["result"]["success"] is False
+
+
+def test_spend_ip_zero_to_one_role_benefits_duplicate_medtech_and_nomad_upgrades():
+    c = character("Tech", 4, ip=200)
+    c["skills"] = {"Athletics": 0}
+    # 0 -> 1 typical skill (20 IP) and unlisted difficult skill (0 -> 1, 40 IP)
+    s1 = roles.apply_action(c, "spend_ip_skill", {"skill": "Athletics"})
+    assert s1["result"]["rank"] == 1 and s1["result"]["cost"] == 20
+    s2 = roles.apply_action(s1["character"], "spend_ip_skill", {"skill": "Martial Arts (Karate)"})
+    assert s2["result"]["rank"] == 1 and s2["result"]["cost"] == 40
+
+    # Duplicate Medtech recipe rejected
+    med = character("Medtech", 4, ip=500)
+    with pytest.raises(ValueError, match="duplicate"):
+        roles.validate_role_choices("Medtech", 2, {"medicine": {"Pharmaceuticals": 2}, "recipes": ["Speedheal", "Speedheal"]})
+
+    # Nomad vehicle validation & upgrade attachment
+    nomad = character("Nomad", 10)
+    nomad["money"] = 2000
+    nomad["detail"]["family_motorpool"] = [{"id": "compact-groundcar", "name": "Compact Groundcar", "verified": True, "upgrades": []}]
+    nomad["detail"]["active_vehicle"] = "compact-groundcar"
+    nomad["detail"]["family_upgrades"] = [{"id": "nos", "name": "NOS (Nitrous Boost)", "verified": True}]
+    with pytest.raises(ValueError, match="now_minutes"):
+        roles.apply_action(nomad, "nomad_vehicle", {"mode": "repair_destroyed", "vehicle_id": "compact-groundcar", "now_minutes": -5})
+    upg = roles.apply_action(nomad, "nomad_vehicle", {"mode": "purchase_upgrade", "upgrade_id": "nos"})
+    assert "NOS (Nitrous Boost)" in upg["character"]["detail"]["family_motorpool"][0]["upgrades"]

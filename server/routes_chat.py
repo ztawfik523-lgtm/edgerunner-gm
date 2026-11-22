@@ -479,8 +479,28 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             character_id = body["character_id"].strip()
             stat = str(body.get("stat") or "REF").strip().upper()
             skill = str(body.get("skill") or "").strip() or None
-            dv = int(body.get("dv", 13))
-            modifier = int(body.get("modifier", 0))
+            raw_dv = body.get("dv", 13)
+            if isinstance(raw_dv, bool):
+                raise ValueError("dv must be an integer")
+            dv = int(raw_dv)
+            raw_mod = body.get("modifier", 0)
+            if isinstance(raw_mod, bool):
+                raise ValueError("modifier must be an integer")
+            modifier = int(raw_mod)
+            raw_comp = body.get("complementary")
+            if raw_comp is None:
+                complementary = False
+            elif isinstance(raw_comp, bool):
+                complementary = raw_comp
+            else:
+                raise ValueError("complementary must be a boolean")
+            raw_extra = body.get("extra_time")
+            if raw_extra is None:
+                extra_time = False
+            elif isinstance(raw_extra, bool):
+                extra_time = raw_extra
+            else:
+                raise ValueError("extra_time must be a boolean")
             luck = _parse_luck_spend(body.get("luck", 0))
             reason = str(body.get("reason") or "Manual skill roll").strip() or "Manual skill roll"
 
@@ -491,28 +511,46 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
 
             def _do_roll():
                 svc = ctx.gameplay_service()
-                char = svc.store.get_character(character_id)
-                if char is None:
-                    raise ValueError("Character not found")
-                d = char.get("detail") or {}
-                owner = str(d.get("owner_username") or "").strip()
-                if eff_role == "user" and uname and owner and owner.lower() != uname.lower():
-                    raise PermissionError(f"You cannot roll for {char.get('name')} (owned by {owner}).")
-                check_res = svc.execute(
-                    "skill_check",
-                    {
-                        "character_id": character_id,
-                        "expected_revision": char["revision"],
-                        "stat": stat,
-                        "skill": skill,
-                        "dv": dv,
-                        "modifier": modifier,
-                        "luck": luck,
-                        "reason": reason,
-                        "operation_id": f"mroll-{uuid.uuid4().hex[:12]}",
-                    },
-                    campaign_id=campaign_id,
-                )["result"]
+                char = None
+                d: dict[str, Any] = {}
+                check_res = None
+                for attempt in range(3):
+                    char = svc.store.get_character(character_id)
+                    if char is None:
+                        raise ValueError("Character not found")
+                    d = char.get("detail") or {}
+                    owner = str(d.get("owner_username") or "").strip()
+                    if eff_role == "user" and uname and owner and owner.lower() != uname.lower():
+                        raise PermissionError(f"You cannot roll for {char.get('name')} (owned by {owner}).")
+                    try:
+                        check_res = svc.execute(
+                            "skill_check",
+                            {
+                                "character_id": character_id,
+                                "expected_revision": char["revision"],
+                                "stat": stat,
+                                "skill": skill,
+                                "dv": dv,
+                                "modifier": modifier,
+                                "luck": luck,
+                                "complementary": complementary,
+                                "extra_time": extra_time,
+                                "reason": reason,
+                                "operation_id": f"mroll-{uuid.uuid4().hex[:12]}",
+                            },
+                            campaign_id=campaign_id,
+                        )["result"]
+                        break
+                    except ValueError as exc:
+                        if "revision conflict" in str(exc).lower() and attempt < 2:
+                            continue
+                        raise
+                assert char is not None and check_res is not None
+                die_val = (check_res.get("dice") or [check_res.get("die")])[0]
+                crit_adj = check_res.get("critical_adjustment", 0)
+                check_res["die"] = die_val
+                check_res["explosion"] = crit_adj
+                check_res["critical_adjustment"] = crit_adj
                 speaker_label = str(d.get("handle") or char["name"])
                 roll_card = {
                     "actor": speaker_label,
@@ -522,12 +560,15 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     "dv": dv,
                     "modifier": modifier,
                     "luck_spent": luck,
+                    "complementary": complementary,
+                    "extra_time": extra_time,
                     "reason": reason,
                     "total": check_res["total"],
-                    "die": check_res.get("die"),
+                    "die": die_val,
                     "dice": check_res.get("dice"),
                     "base": check_res.get("base"),
-                    "explosion": check_res.get("explosion", 0),
+                    "explosion": crit_adj,
+                    "critical_adjustment": crit_adj,
                     "wound_modifier": check_res.get("wound_modifier", 0),
                     "success": check_res["success"],
                 }
@@ -565,7 +606,11 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 return {"roll": roll_card, "result": check_res, "message": msg, "tree": updated_tree}
 
             out = await asyncio.to_thread(_do_roll)
-            ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat"})
+            ctx.coop.publish(
+                campaign_id,
+                "sync",
+                {"campaign_id": campaign_id, "kind": "chat", "channel_id": out["message"]["channel_id"]},
+            )
             return {**out, "request_id": request_id}
         except PermissionError as exc:
             return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})

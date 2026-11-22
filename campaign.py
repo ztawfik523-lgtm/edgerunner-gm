@@ -4,13 +4,17 @@ Derived starting HP and humanity follow Cyberpunk RED Corebook pp. 79–80.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any
+
+import rules_eval
 
 DEFAULT_DB = Path(os.environ.get("REDGM_CAMPAIGN_DB", Path.home() / ".local/share/cyberpunk-red-gm/campaign.sqlite"))
 STAT_NAMES = ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")
@@ -332,8 +336,10 @@ class CampaignStore:
             if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or row["revision"] != expected_revision:
                 raise ValueError(f"revision conflict: expected {expected_revision}, current {row['revision']}")
             before = self._record(row)
-            updated = dict(before)
-            new_detail = dict(before.get("detail") or {})
+            updated = copy.deepcopy(before)
+            new_detail = updated.get("detail")
+            if not isinstance(new_detail, dict):
+                new_detail = {}
             string_detail_keys = {
                 "handle",
                 "real_name",
@@ -349,6 +355,29 @@ class CampaignStore:
                 "reputation_note",
             }
             armor_detail_keys = {"equipped_armor", "equipped_head_armor"}
+
+            def _clear_armor_slot(detail_dict: dict[str, Any], target_loc: str, other_key: str) -> None:
+                eq = detail_dict.get("equipment")
+                if not isinstance(eq, dict) or not isinstance(eq.get("armor"), list):
+                    return
+                other_loc = "head" if target_loc == "body" else "body"
+                kept_armor = []
+                for piece in eq["armor"]:
+                    if not isinstance(piece, dict):
+                        continue
+                    loc = str(piece.get("location") or "body").strip().casefold()
+                    if loc == target_loc:
+                        continue
+                    if loc == "body & head":
+                        other_val = detail_dict.get(other_key)
+                        if isinstance(other_val, dict) and str(other_val.get("name") or "").strip():
+                            narrowed = dict(piece)
+                            narrowed["location"] = other_loc
+                            kept_armor.append(narrowed)
+                        continue
+                    kept_armor.append(piece)
+                eq["armor"] = kept_armor
+
             for key, val in profile.items():
                 if key == "roles":
                     if not isinstance(val, list):
@@ -365,8 +394,11 @@ class CampaignStore:
                         raise ValueError("profile real_name_hidden must be a boolean")
                     new_detail["real_name_hidden"] = val
                 elif key in armor_detail_keys:
+                    target_loc = "body" if key == "equipped_armor" else "head"
+                    other_key = "equipped_head_armor" if key == "equipped_armor" else "equipped_armor"
                     if val is None or val == "":
                         new_detail.pop(key, None)
+                        _clear_armor_slot(new_detail, target_loc, other_key)
                     elif isinstance(val, dict):
                         armor_name = str(val.get("name") or "").strip()
                         if not armor_name:
@@ -375,8 +407,29 @@ class CampaignStore:
                         if "sp" in val and val["sp"] is not None:
                             armor_obj["sp"] = _integer(val["sp"], f"profile {key} sp", 0, 100)
                         new_detail[key] = armor_obj
+                        _clear_armor_slot(new_detail, target_loc, other_key)
                     else:
                         raise ValueError(f"profile {key} must be an object or null")
+                elif key == "equipped_weapon":
+                    eq = new_detail.get("equipment")
+                    if val is None or val == "":
+                        new_detail.pop("equipped_weapon", None)
+                        if isinstance(eq, dict) and isinstance(eq.get("weapons"), list):
+                            eq["weapons"] = []
+                    elif isinstance(val, str):
+                        cleaned_w = val.strip()
+                        new_detail["equipped_weapon"] = cleaned_w
+                        if isinstance(eq, dict) and isinstance(eq.get("weapons"), list) and eq["weapons"]:
+                            norm_w = re.sub(r"\s+", " ", cleaned_w).casefold()
+                            has_w = any(
+                                re.sub(r"\s+", " ", str(w.get("type") or w.get("name") or "").strip()).casefold() == norm_w
+                                for w in eq["weapons"]
+                                if isinstance(w, dict)
+                            )
+                            if not has_w:
+                                eq["weapons"] = []
+                    else:
+                        raise ValueError("profile equipped_weapon must be a string or null")
                 elif key in string_detail_keys:
                     if val is None or val == "":
                         new_detail.pop(key, None)
@@ -393,9 +446,11 @@ class CampaignStore:
             elif isinstance(new_detail.get("real_name"), str) and new_detail["real_name"].strip() and not new_detail.get("handle"):
                 updated["name"] = new_detail["real_name"].strip()
             updated["detail"] = new_detail
+            rules_eval.sync_equipment_views(updated)
+            new_detail = updated["detail"]
             updated["revision"] += 1
-            conn.execute("UPDATE characters SET name=?,detail=?,revision=? WHERE id=?",
-                         (updated["name"], _json(new_detail), updated["revision"], str(character_id)))
+            conn.execute("UPDATE characters SET name=?,detail=?,inventory=?,revision=? WHERE id=?",
+                         (updated["name"], _json(new_detail), _json(updated["inventory"]), updated["revision"], str(character_id)))
             conn.execute("INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated

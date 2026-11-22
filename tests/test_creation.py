@@ -450,7 +450,7 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
         lambda s: 0,
     )
     assert tech["detail"]["roles"][0]["choices"]["maker_ranks"]["Upgrade Expertise"] == 3
-    assert tech["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head Armor (SP 11)", "sp": 11}
+    assert tech["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head Armor (SP 11)", "sp": 11, "penalty": 0}
     assert tech["detail"]["housing"] == "cube"
     assert tech["detail"]["lifestyle"] == "Generic Prepak"
     assert tech["detail"]["reputation"] == 3
@@ -603,8 +603,8 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
         rules,
         lambda s: 0,
     )
-    assert skin_only["detail"]["equipped_armor"] == {"name": "Skinweave", "sp": 7}
-    assert skin_only["detail"]["equipped_head_armor"] == {"name": "Skinweave", "sp": 7}
+    assert skin_only["detail"]["equipped_armor"] == {"name": "Skinweave", "sp": 7, "penalty": 0}
+    assert skin_only["detail"]["equipped_head_armor"] == {"name": "Skinweave", "sp": 7, "penalty": 0}
 
     # Omitted money_spent_eb still enforces 2550 eb catalog gear cap
     with pytest.raises(ValueError, match="exceeds 2550 eb budget"):
@@ -646,6 +646,50 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
             rules,
             lambda s: 0,
         )
+
+
+def test_build_character_synchronizes_equipment_views(rules):
+    basics = [
+        "Athletics", "Brawling", "Concentration", "Conversation", "Education",
+        "Evasion", "First Aid", "Human Perception", "Language (Streetslang)",
+        "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth",
+    ]
+    base_skills = dict.fromkeys(basics, 2)
+    base_skills.update({f"Skill {i}": 5 for i in range(1, 13)})
+    stats = dict(zip(STATS, [6, 7, 6, 7, 6, 6, 6, 6, 6, 6]))
+
+    char = build_character(
+        {
+            "name": "Chrome",
+            "method": "complete_package",
+            "role": "Solo",
+            "stats": stats,
+            "skills": base_skills,
+            "lifepath": {"cultural_origin": "North American"},
+            "starting_gear": {
+                "inventory": {
+                    "Heavy Pistol": 1,
+                    "ammo: h pistol": 24,
+                    "Medium Armorjack Body Armor (SP 12)": 1,
+                },
+                "cyberware": [{"name": "Standard Cyberarm", "hl": 7}],
+                "equipped_weapon": "Heavy Pistol",
+                "equipped_armor": {"name": "Medium Armorjack Body Armor (SP 12)", "sp": 12},
+                "money_spent_eb": 700,
+            },
+        },
+        rules,
+        lambda s: 0,
+    )
+    detail = char["detail"]
+    assert detail["free_hands"] == 2
+    assert detail["cyberarm"] is True
+    assert char["inventory"]["ammo:H Pistol"] == 24
+    assert "ammo: h pistol" not in char["inventory"]
+    assert detail["equipment"]["weapons"][0]["type"] == "Heavy Pistol"
+    assert detail["equipment"]["armor"][0]["sp"] == 12
+    assert detail["equipment"]["armor"][0]["penalty"] == 2
+    assert detail["equipped_armor"] == {"name": "Medium Armorjack Body Armor (SP 12)", "sp": 12, "penalty": 2}
 
 
 

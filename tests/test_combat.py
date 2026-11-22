@@ -13,8 +13,11 @@ def fixed(*values):
 
 def test_initiative_plain_d10_and_validation():
     assert initiative(8, randbelow=fixed(9))["total"] == 18
+    assert initiative(8, bonus=-3, randbelow=fixed(9))["total"] == 15
     with pytest.raises(TypeError):
         initiative(True, randbelow=fixed(0))
+    with pytest.raises(ValueError):
+        initiative(8, bonus=-101, randbelow=fixed(0))
 
 
 def test_wound_thresholds():
@@ -25,6 +28,10 @@ def test_wound_thresholds():
         "name": "mortal", "action_penalty": -4, "move": 1,
         "source": "Cyberpunk RED Core Rulebook, p. 221",
     }
+    assert wound_state(0, 10, 0) == {
+        "name": "mortal", "action_penalty": -4, "move": 0,
+        "source": "Cyberpunk RED Core Rulebook, p. 221",
+    }
 
 
 def test_attack_check_uses_standard_skill_check():
@@ -32,19 +39,28 @@ def test_attack_check_uses_standard_skill_check():
     assert result["total"] == 16 and result["success"]
 
 
-def test_melee_armor_rounds_sp_down_and_does_not_mutate():
+def test_melee_and_martial_arts_armor_round_sp_up_and_do_not_mutate():
     armor = [{"id": "vest", "sp": 11}]
-    out = damage_and_armor([6], armor, melee=True)
-    assert out["effective_sp"] == 5
+    blocked = damage_and_armor([6], armor, melee=True)
+    assert blocked["effective_sp"] == 6
+    assert blocked["penetration"] == 0 and blocked["armor_after"][0]["sp"] == 11
+    out = damage_and_armor([6, 1], armor, melee=True)
+    assert out["effective_sp"] == 6
     assert out["penetration"] == 1 and out["armor_after"][0]["sp"] == 10
+    ma = damage_and_armor([6, 2], armor, martial_arts=True)
+    assert ma["effective_sp"] == 6
+    assert ma["penetration"] == 2 and ma["armor_after"][0]["sp"] == 10
     assert armor[0]["sp"] == 11
 
 
-def test_highest_armor_only_head_and_critical_bonus():
+def test_all_layer_armor_ablation_head_and_critical_bonus():
     out = damage_and_armor([6, 6], [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}], location="head")
-    # Head shot: penetration (12-8=4) * 2 = 8, critical bonus +5 = 13
+    # Head shot: penetration (12-8=4) * 2 = 8, critical bonus +5 = 13; all layers ablate together
     assert out["critical_trigger"] and out["hp_damage"] == 13
-    assert out["armor_after"] == [{"id": "a", "sp": 4}, {"id": "b", "sp": 7}]
+    assert out["armor_after"] == [{"id": "a", "sp": 3}, {"id": "b", "sp": 7}]
+    no_pen = damage_and_armor([4, 4], [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}], location="head")
+    assert no_pen["penetration"] == 0
+    assert no_pen["armor_after"] == [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}]
 
 
 def test_autofire_raw_damage_and_brawling_dice():
