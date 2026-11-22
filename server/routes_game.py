@@ -10,7 +10,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from server.redaction import redact_campaign_context
+from lifecycle import SOLO_ACTIONS
+from server.redaction import redact_campaign, redact_campaign_context, redact_character
 from server.security import ServerContext
 
 
@@ -32,9 +33,11 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
             auto_revision = bool(body.get("auto_revision", False))
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
+            is_gm = ctx.is_admin_or_pin_only(request, sess)
+            include_hidden = ctx.can_view_gm_private_state(request, sess)
             uname = str(sess.get("username") or "").strip()
 
-            admin_campaign_actions = {
+            admin_gm_actions = {
                 "create_campaign",
                 "update_campaign",
                 "rename_campaign",
@@ -42,26 +45,65 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                 "undo_campaign",
                 "delete_campaign",
                 "set_primary_campaign",
+                "attach_character",
+                "start_encounter",
+                "end_encounter",
+                "create_architecture",
+                "start_netrun",
+                "advance_time",
             }
-            if action_name in admin_campaign_actions and eff_role == "user":
+            if action_name in admin_gm_actions and not is_gm:
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "Admin permission required to create or modify campaigns and sessions.", "request_id": request_id},
+                    content={"detail": f"Admin permission required for '{action_name}'.", "request_id": request_id},
                 )
+
+            if action_name == "encounter_action" and not is_gm:
+                sub_action = str(args_payload.get("action") or "").strip()
+                if sub_action in {"add_npc", "remove_npc"}:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Admin permission required to add or remove NPCs in an encounter.", "request_id": request_id},
+                    )
+                actor_id = args_payload.get("actor_id")
+                if not isinstance(actor_id, str) or not actor_id.strip():
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Admin permission required for encounter actions without a player character.", "request_id": request_id},
+                    )
+                actor_char = await asyncio.to_thread(
+                    lambda cid=actor_id.strip(): ctx.gameplay_service().store.get_character(cid)
+                )
+                if actor_char is None:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Only Admin/GM can control NPCs in an encounter.", "request_id": request_id},
+                    )
+                denied = ctx.check_character_ownership(
+                    actor_char,
+                    eff_role=eff_role,
+                    uname=uname,
+                    action_name=action_name,
+                    request_id=request_id,
+                )
+                if denied is not None:
+                    return denied
 
             # Automatically stamp owner_username when a signed-in user creates a character
             if uname and action_name == "create_character":
                 det = dict(args_payload.get("detail") or {}) if isinstance(args_payload.get("detail"), dict) else {}
-                if not det.get("owner_username"):
+                if not is_gm or not det.get("owner_username"):
                     det["owner_username"] = uname
                 args_payload["detail"] = det
             elif uname and action_name == "create_player_character":
-                inner_args = dict(args_payload.get("arguments") or {}) if isinstance(args_payload.get("arguments"), dict) else {}
-                if not inner_args.get("owner_username"):
-                    inner_args["owner_username"] = uname
-                args_payload["arguments"] = inner_args
+                if not is_gm or not args_payload.get("owner_username"):
+                    args_payload["owner_username"] = uname
+                if isinstance(args_payload.get("detail"), dict) and (not is_gm or not args_payload["detail"].get("owner_username")):
+                    args_payload["detail"] = {**args_payload["detail"], "owner_username": uname}
+                if isinstance(args_payload.get("arguments"), dict) and (not is_gm or not args_payload["arguments"].get("owner_username")):
+                    args_payload["arguments"] = {**args_payload["arguments"], "owner_username": uname}
 
-            if eff_role == "user" and action_name == "delete_character":
+            if not is_gm and action_name == "delete_character":
                 target_char_id = args_payload.get("character_id")
                 if isinstance(target_char_id, str) and target_char_id:
                     existing_char = await asyncio.to_thread(lambda: ctx.gameplay_service().store.get_character(target_char_id))
@@ -83,12 +125,23 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                 "role_action",
                 "gear_action",
                 "health_action",
+                "substance_action",
                 "economy_action",
             }
-            if eff_role == "user" and uname and action_name in char_mutating_actions:
-                target_char_id = args_payload.get("character_id")
-                if isinstance(target_char_id, str) and target_char_id:
-                    existing_char = await asyncio.to_thread(lambda: ctx.gameplay_service().store.get_character(target_char_id))
+            if not is_gm and action_name in char_mutating_actions:
+                referenced_ids: list[str] = []
+                containers = [args_payload]
+                if isinstance(args_payload.get("arguments"), dict):
+                    containers.append(args_payload["arguments"])
+                for container in containers:
+                    for id_key in ("character_id", "actor_id", "target_id"):
+                        raw_id = container.get(id_key)
+                        if isinstance(raw_id, str) and raw_id.strip() and raw_id.strip() not in referenced_ids:
+                            referenced_ids.append(raw_id.strip())
+                for target_char_id in referenced_ids:
+                    existing_char = await asyncio.to_thread(
+                        lambda cid=target_char_id: ctx.gameplay_service().store.get_character(cid)
+                    )
                     denied = ctx.check_character_ownership(
                         existing_char,
                         eff_role=eff_role,
@@ -98,6 +151,31 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                     )
                     if denied is not None:
                         return denied
+                    if (
+                        action_name == "update_character_profile"
+                        and existing_char is not None
+                        and isinstance(args_payload.get("profile"), dict)
+                        and "owner_username" in args_payload["profile"]
+                    ):
+                        existing_owner = str((existing_char.get("detail") or {}).get("owner_username") or "").strip()
+                        requested_owner = str(args_payload["profile"].get("owner_username") or "").strip()
+                        if existing_owner:
+                            if requested_owner.lower() != existing_owner.lower():
+                                return JSONResponse(
+                                    status_code=403,
+                                    content={
+                                        "detail": "Only Admin can reassign or clear ownership on an owned character.",
+                                        "request_id": request_id,
+                                    },
+                                )
+                        elif requested_owner and (not uname or requested_owner.lower() != uname.lower()):
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": "You can only claim an unclaimed character for yourself.",
+                                    "request_id": request_id,
+                                },
+                            )
 
             read_only_actions = {
                 "list_campaigns",
@@ -120,13 +198,13 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                             cur_c = svc.store.get_character(cid)
                             if cur_c is not None:
                                 args_payload["expected_revision"] = cur_c["revision"]
-                    elif action_name in {"update_campaign", "attach_character", "start_session", "undo_campaign"}:
+                    elif action_name in {"update_campaign", "rename_campaign", "attach_character", "start_session", "undo_campaign"}:
                         target_camp = camp_id or args_payload.get("campaign_id")
                         if isinstance(target_camp, str) and target_camp:
                             cur_camp = svc.memory.get_campaign(target_camp)
                             if cur_camp is not None:
                                 args_payload["expected_revision"] = cur_camp["revision"]
-                    elif camp_id and "expected_revision" in args_payload:
+                    elif camp_id and action_name in (SOLO_ACTIONS - {"solo_context", "solo_history"}):
                         try:
                             cur_solo = svc.solo.context(camp_id)
                             args_payload["expected_revision"] = cur_solo["revision"]
@@ -164,16 +242,17 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                                 channel_id="main",
                                 metadata={"session_started": sess_num},
                             )
-                            ts.sync_active_leaf_revisions(target_camp, channel_id="main")
+                            ts.sync_all_active_leaf_revisions(target_camp)
                     except Exception:
                         pass
                 if auto_revision and camp_id and action_name not in read_only_actions:
                     try:
                         from turnloop import ChatTreeStore
-                        ChatTreeStore(svc).sync_active_leaf_revisions(camp_id)
+                        ChatTreeStore(svc).sync_all_active_leaf_revisions(camp_id)
                     except Exception:
                         pass
                 if action_name == "campaign_context" and isinstance(res_out.get("result"), dict):
+                    ctx_res = res_out["result"]
                     try:
                         from turnloop import (
                             TurnEngine,
@@ -182,14 +261,12 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                             parse_campaign_meta,
                             parse_session_zero,
                         )
-                        ctx_res = res_out["result"]
                         camp_obj = ctx_res.get("campaign") or {}
                         camp_id_ctx = camp_obj.get("id")
                         state_obj = camp_obj.get("state") or {}
                         chars_obj = ctx_res.get("characters") or []
                         eng_ctx = TurnEngine(svc, None)
                         secrets_obj = eng_ctx._get_gm_secrets(camp_id_ctx) if camp_id_ctx else {}
-                        include_hidden = ctx.can_view_gm_private_state(request, sess)
                         ctx_res["npc_profiles"] = build_npc_profiles(state_obj, secrets_obj, include_hidden=include_hidden)
                         ctx_res["party_grouping"] = compute_party_grouping(chars_obj, state_obj)
                         ctx_res["campaign_meta"] = parse_campaign_meta(state_obj)
@@ -200,25 +277,47 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                                 if include_hidden
                                 else eng_ctx.list_public_clocks(camp_id_ctx)
                             )
+                            ctx_res["banner_url"] = (
+                                eng_ctx.private_state.get_banner(camp_id_ctx)
+                                or str((state_obj.get("discoveries") or {}).get("__banner_url") or (state_obj.get("discoveries") or {}).get("Banner URL") or "")
+                            )
                         if include_hidden:
                             ctx_res["gm_secrets"] = {
                                 str(k): str(v)
                                 for k, v in secrets_obj.items()
                                 if not str(k).startswith("__")
                             }
-                        res_out["result"] = redact_campaign_context(ctx_res, is_gm=include_hidden, viewer_username=uname)
                     except Exception:
                         pass
+                    res_out["result"] = redact_campaign_context(ctx_res, is_gm=include_hidden, viewer_username=uname)
+                elif not include_hidden:
+                    if action_name == "get_campaign" and isinstance(res_out.get("result"), dict):
+                        res_out["result"] = redact_campaign(res_out["result"], is_gm=False)
+                    elif action_name == "get_character" and isinstance(res_out.get("result"), dict):
+                        res_out["result"] = redact_character(res_out["result"], is_gm=False, viewer_username=uname)
+                    elif action_name == "list_characters" and isinstance(res_out.get("result"), list):
+                        res_out["result"] = [
+                            redact_character(c, is_gm=False, viewer_username=uname)
+                            for c in res_out["result"]
+                        ]
                 return res_out
 
             if "campaign_id" in body:
                 if not isinstance(body["campaign_id"], str) or not body["campaign_id"]:
                     raise ValueError("campaign_id must be a nonempty string")
                 result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(body["campaign_id"]))
-                if action_name not in read_only_actions:
+                if action_name == "delete_campaign":
+                    ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "campaign_deleted"})
+                    ctx.coop.clear_campaign(body["campaign_id"])
+                elif action_name not in read_only_actions:
                     ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "game", "action": action_name})
             else:
                 result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(None))
+                if action_name == "delete_campaign":
+                    deleted_id = args_payload.get("campaign_id")
+                    if isinstance(deleted_id, str) and deleted_id:
+                        ctx.coop.publish(deleted_id, "sync", {"campaign_id": deleted_id, "kind": "campaign_deleted"})
+                        ctx.coop.clear_campaign(deleted_id)
             return {**result, "request_id": request_id}
         except HTTPException:
             raise
@@ -242,7 +341,7 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
     @app.post("/v1/creation/ai-assist")
     async def creation_ai_assist(request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.require_player(request, request_id)
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
         try:
@@ -253,6 +352,8 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
         eff_role = ctx.effective_role(request, sess)
         try:
             active_llm = ctx.resolve_active_llm(body.get("llm") if isinstance(body, dict) else None, eff_role=eff_role)
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
         except Exception as exc:
             return JSONResponse(status_code=503, content={"detail": f"LLM settings unavailable: {exc}", "request_id": request_id})
         try:

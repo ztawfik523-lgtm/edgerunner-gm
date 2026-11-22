@@ -1099,12 +1099,18 @@ export function CampaignCreatorModal({
         allClocks.length > 0;
 
       if (hasWorldData) {
-        const unresolvedPayload: Record<string, string> = {};
+        const unresolvedPayload: Record<string, string> = editCampaign
+          ? { ...(editCampaign.state.unresolved ?? {}) }
+          : {};
         if (beatLines.length > 0) {
           unresolvedPayload["Beat Chart"] = beatLines.join(" | ");
+        } else if (editCampaign) {
+          delete unresolvedPayload["Beat Chart"];
         }
         if (district) {
           unresolvedPayload["District & Threat"] = `${district}${activeDistrict?.zone_type ? ` [${activeDistrict.zone_type}]` : ""} (${activeDistrict?.threat_rating ?? "Moderate"})`;
+        } else if (editCampaign) {
+          delete unresolvedPayload["District & Threat"];
         }
         const worldEntitiesPayload: NonNullable<CampaignBootstrapPayload["world_entities"]> = {
           ...(factionDetails.length > 0 || editCampaign ? { factions: factionDetails } : {}),

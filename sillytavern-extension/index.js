@@ -3,15 +3,29 @@ const DEFAULT_BACKEND = 'http://127.0.0.1:8765';
 const RULE_TOOLS = ['search_corebook', 'read_corebook_page', 'catalog_corebook', 'read_corebook_section', 'read_corebook_pages', 'find_corebook_phrase'];
 const GLOBAL_KEY = '__cyberpunkRedCampaignExtension';
 const CAMPAIGN_META = 'cyberpunk_red_gm';
-const GAME_ACTIONS = ['create_character', 'list_characters', 'get_character', 'update_character', 'history', 'undo'];
-const CAMPAIGN_ACTIONS = ['get_campaign', 'campaign_context', 'update_campaign', 'attach_character', 'start_session', 'campaign_history', 'undo_campaign'];
+const GAME_ACTIONS = ['create_character', 'list_characters', 'get_character', 'update_character', 'update_character_profile', 'history', 'undo'];
+const CAMPAIGN_ACTIONS = ['get_campaign', 'campaign_context', 'update_campaign', 'rename_campaign', 'attach_character', 'start_session', 'campaign_history', 'undo_campaign'];
+const SOLO_ACTIONS = ['solo_context', 'solo_history', 'undo_action', 'create_player_character', 'advance_time', 'start_encounter', 'encounter_action', 'end_encounter', 'health_action', 'role_action', 'gear_action', 'economy_action', 'substance_action', 'create_architecture', 'start_netrun', 'net_action'];
 const state = globalThis[GLOBAL_KEY] || (globalThis[GLOBAL_KEY] = { enabled: false, generation: 0, serial: 0, tools: new Set(), listeners: [], interceptor: null });
 state.selection ??= 0;
 
 function backendUrl() { return DEFAULT_BACKEND; }
+function authHeaders() {
+    const headers = {};
+    let token = globalThis.REDGM_API_TOKEN || '';
+    let pin = globalThis.REDGM_PIN || '';
+    try {
+        if (!token && typeof globalThis.localStorage?.getItem === 'function') token = globalThis.localStorage.getItem('redgm:authToken') || '';
+        if (!pin && typeof globalThis.localStorage?.getItem === 'function') pin = globalThis.localStorage.getItem('redgm:roomPin') || '';
+    } catch (_) { /* storage unavailable */ }
+    if (String(token).trim()) headers.Authorization = `Bearer ${String(token).trim()}`;
+    if (String(pin).trim()) headers['X-RedGM-Pin'] = String(pin).trim();
+    return headers;
+}
 async function request(path, options = {}) {
     let response;
-    try { response = await fetch(`${backendUrl()}${path}`, { headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}) }, signal: AbortSignal.timeout(30000), ...options }); }
+    const { headers: optHeaders, ...restOptions } = options;
+    try { response = await fetch(`${backendUrl()}${path}`, { credentials: 'include', headers: { Accept: 'application/json', ...authHeaders(), ...(restOptions.body ? { 'Content-Type': 'application/json' } : {}), ...(optHeaders || {}) }, signal: AbortSignal.timeout(30000), ...restOptions }); }
     catch (error) { throw new Error(`Corebook backend is unreachable (${error.message}). Check that the local API is running and browser CORS/mixed-content rules allow this request.`); }
     if (!response.ok) {
         let detail = '';
@@ -56,8 +70,21 @@ function promptText(context) {
         const actor = queue[turnIdx];
         runtimeParts.push(`encounter=active round=${runtime.encounter.round ?? 1} turn=${turnIdx + 1}/${queue.length}${actor ? ` actor=${actor}` : ''}`);
     }
-    const runIds = Object.keys(runtime?.runs || {});
-    if (runIds.length > 0) runtimeParts.push(`netruns=${runIds.join(',')}`);
+    const runEntries = Object.entries(runtime?.runs || {});
+    if (runEntries.length > 0) {
+        const formattedRuns = runEntries.map(([runId, entry]) => {
+            const runObj = (entry && typeof entry === 'object' && entry.run && typeof entry.run === 'object') ? entry.run : entry;
+            const floorId = runObj?.floor_id ?? runObj?.current_floor_id;
+            const connected = runObj?.connected;
+            const actionsRem = runObj?.actions_remaining;
+            const parts = [];
+            if (floorId != null) parts.push(`floor=${floorId}`);
+            if (connected != null) parts.push(`connected=${connected}`);
+            if (actionsRem != null) parts.push(`actions=${actionsRem}`);
+            return parts.length ? `${runId}(${parts.join(',')})` : runId;
+        });
+        runtimeParts.push(`netruns=${formattedRuns.join(',')}`);
+    }
     if ((runtime?.clock_minutes ?? 0) > 0) runtimeParts.push(`clock_minutes=${runtime.clock_minutes}`);
     const runtimeLine = runtimeParts.length ? `Active solo runtime: ${runtimeParts.join('; ')}.\n` : '';
     const marker = '[Snapshot truncated; use campaign_context for complete facts.]';
@@ -65,7 +92,8 @@ function promptText(context) {
     let text = `${instructions}\n${header}\n${runtimeLine}Authoritative mechanical character records:\n`;
     if (text.length + marker.length > limit) text = `${instructions}\nCyberpunk RED campaign id=${campaign.id}; session=${campaign.session_number}; revision=${campaign.revision}.\n${runtimeLine}`;
     for (const line of chars) { if (text.length + line.length + 1 + marker.length > limit) break; text += `${line}\n`; }
-    const sections = [['Saved narrative notes (not mechanically verified)', campaign.state?.summary], ['Scene data', campaign.state?.scene], ['Objectives data', JSON.stringify(campaign.state?.objectives || {})], ['Unresolved data', JSON.stringify(campaign.state?.unresolved || {})], ['NPC data', JSON.stringify(campaign.state?.npcs || {})], ['Discoveries data', JSON.stringify(campaign.state?.discoveries || {})]];
+    const publicDiscoveries = Object.fromEntries(Object.entries(campaign.state?.discoveries || {}).filter(([k]) => !String(k).startsWith('__')));
+    const sections = [['Saved narrative notes (not mechanically verified)', campaign.state?.summary], ['Scene data', campaign.state?.scene], ['Objectives data', JSON.stringify(campaign.state?.objectives || {})], ['Unresolved data', JSON.stringify(campaign.state?.unresolved || {})], ['NPC data', JSON.stringify(campaign.state?.npcs || {})], ['Discoveries data', JSON.stringify(publicDiscoveries)]];
     for (const [label, value] of sections) {
         if (!value) continue;
         const available = limit - text.length - marker.length - label.length - 3;
@@ -116,7 +144,7 @@ function registerTools() {
     } });
     registerTool({ name: 'roll_dice', displayName: 'Roll Dice', description: 'Roll actual backend dice. Failure means no roll or result occurred; do not substitute prose.', parameters: { type: 'object', properties: { count: { type: 'integer', minimum: 1, maximum: 100 }, sides: { type: 'integer', minimum: 2, maximum: 1000 }, reason: { type: 'string' }, operation_id: { type: 'string' } }, required: ['count', 'sides', 'reason', 'operation_id'], additionalProperties: false }, action: async a => { if (!Number.isInteger(a?.count) || a.count < 1 || a.count > 100 || !Number.isInteger(a.sides) || a.sides < 2 || a.sides > 1000 || !a.reason || !a.operation_id) throw new Error('Invalid dice roll arguments. No roll occurred.'); const s = current(), id = binding(s); if (!id) throw new Error('No campaign bound to this chat. No roll occurred.'); const result = await postGame('roll_dice', a, id); await refreshAfterMutation(s, id); return result; } });
     registerTool({ name: 'skill_check', displayName: 'Skill Check', description: 'Perform an authoritative backend check (rolls dice, spends declared LUCK atomically, and applies wound penalties automatically). Failure means no roll, result, or save occurred; do not substitute prose.', parameters: { type: 'object', properties: { character_id: { type: 'string' }, expected_revision: { type: 'integer', minimum: 0 }, stat: { type: 'string', enum: ['INT','REF','DEX','TECH','COOL','WILL','LUCK','MOVE','BODY','EMP'] }, skill: { anyOf: [{ type: 'string' }, { type: 'null' }] }, dv: { type: 'integer', minimum: 0 }, operation_id: { type: 'string' }, reason: { type: 'string' }, modifier: { type: 'integer' }, luck: { type: 'integer', minimum: 0 }, complementary: { type: 'boolean' }, extra_time: { type: 'boolean' } }, required: ['character_id','expected_revision','stat','skill','dv','operation_id','reason'], additionalProperties: false }, action: async a => { if (!a?.character_id || !Number.isInteger(a.expected_revision) || !['INT','REF','DEX','TECH','COOL','WILL','LUCK','MOVE','BODY','EMP'].includes(a.stat) || !(a.skill === null || typeof a.skill === 'string') || !Number.isInteger(a.dv) || a.dv < 0 || !a.operation_id || !a.reason || (a.modifier !== undefined && !Number.isInteger(a.modifier)) || (a.luck !== undefined && (!Number.isInteger(a.luck) || a.luck < 0)) || (a.complementary !== undefined && typeof a.complementary !== 'boolean') || (a.extra_time !== undefined && typeof a.extra_time !== 'boolean')) throw new Error('Invalid skill check arguments. No roll or save occurred.'); const s = current(), id = binding(s); if (!id) throw new Error('No campaign bound to this chat. No roll or save occurred. Use /red-campaign create NAME or /red-campaign use ID.'); const result = await postGame('skill_check', a, id); await refreshAfterMutation(s, id); return result; } });
-    registerTool({ name: 'solo_action', displayName: 'Solo Action', description: 'Run solo action: solo_context, solo_history, undo_action, create_player_character, start_encounter, encounter_action, end_encounter, health_action, role_action, create_architecture, start_netrun, net_action. Supply arguments object. Mutations require expected_revision from solo_context result.solo.revision (not character/campaign revision), operation_id and reason. Use IDs belonging to bound backend. Never send campaign_id.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['solo_context','solo_history','undo_action','create_player_character','start_encounter','encounter_action','end_encounter','health_action','role_action','create_architecture','start_netrun','net_action'] }, arguments: { type: 'object' } }, required: ['action','arguments'], additionalProperties: false }, action: async a => { const allowed = ['solo_context','solo_history','undo_action','create_player_character','start_encounter','encounter_action','end_encounter','health_action','role_action','create_architecture','start_netrun','net_action']; if (!allowed.includes(a?.action) || !a.arguments || typeof a.arguments !== 'object' || Array.isArray(a.arguments)) throw new Error('Invalid solo action.'); if (Object.hasOwn(a.arguments, 'campaign_id')) throw new Error('campaign_id override is not allowed.'); const s = current(), id = binding(s); if (!id) throw new Error('No campaign bound to this chat.'); const result = await postGame(a.action, a.arguments, id); if (a.action !== 'solo_context' && a.action !== 'solo_history') await refreshAfterMutation(s, id); return result; } });
+    registerTool({ name: 'solo_action', displayName: 'Solo Action', description: `Run solo action: ${SOLO_ACTIONS.join(', ')}. Supply arguments object. Mutations require expected_revision from solo_context result.solo.revision (not character/campaign revision), operation_id and reason. Use IDs belonging to bound backend. Never send campaign_id.`, parameters: { type: 'object', properties: { action: { type: 'string', enum: SOLO_ACTIONS }, arguments: { type: 'object' } }, required: ['action','arguments'], additionalProperties: false }, action: async a => { if (!SOLO_ACTIONS.includes(a?.action) || !a.arguments || typeof a.arguments !== 'object' || Array.isArray(a.arguments)) throw new Error('Invalid solo action.'); if (Object.hasOwn(a.arguments, 'campaign_id')) throw new Error('campaign_id override is not allowed.'); const s = current(), id = binding(s); if (!id) throw new Error('No campaign bound to this chat.'); const result = await postGame(a.action, a.arguments, id); if (a.action !== 'solo_context' && a.action !== 'solo_history') await refreshAfterMutation(s, id); return result; } });
 }
 function uuid() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
 function announce(text, isError) {

@@ -929,7 +929,10 @@ async def test_world_clocks_branch_isolation_and_compress_memory(tmp_path: Path)
         assert r1.status_code == 200
         user_id_1 = [ev["data"] for ev in _parse_sse(r1.text) if ev["event"] == "turn_done"][0]["user_message"]["id"]
 
-        clocks_res = (await client.get(f"/v1/campaigns/{camp_id}/clocks")).json()
+        gm_clocks = (await client.get(f"/v1/campaigns/{camp_id}/clocks")).json()
+        assert [c["name"] for c in gm_clocks["clocks"]] == ["NCPD Heat", "Corp Hit Team"]
+
+        clocks_res = (await client.get(f"/v1/campaigns/{camp_id}/clocks", headers={"X-RedGM-View-Role": "user"})).json()
         assert [c["name"] for c in clocks_res["clocks"]] == ["NCPD Heat"]
         assert clocks_res["clocks"][0]["filled"] == 1
 
@@ -2947,6 +2950,505 @@ async def test_think_mode_api_slash_command_and_validation(tmp_path: Path):
         done_non = [e["data"] for e in _parse_sse(r_non.text) if e["event"] == "turn_done"][0]
         assert done_non["user_message"]["content"] == "/thinking out loud"
         assert "turn_intent" not in done_non["user_message"]["metadata"]
+
+
+def test_latest_snapshot_leaf_ignores_orphaned_inactive_branch_nodes(tmp_path: Path):
+    from contextlib import closing
+
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    engine = TurnEngine(svc, ScriptedLLM())
+    revs = engine.tree._current_revisions(camp_id)
+    u1 = engine.tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="Knock on the door",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    a1 = engine.tree.append_message(
+        camp_id,
+        parent_id=u1["id"],
+        role="assistant",
+        content="Branch 1",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    engine._save_branch_private_state(camp_id, a1["id"], u1["id"], {"branch": "one"}, [])
+
+    # Create a newer sibling assistant branch with its own snapshot, then corrupt its is_active=1 while keeping a1 active
+    a2 = engine.tree.append_message(
+        camp_id,
+        parent_id=u1["id"],
+        role="assistant",
+        content="Branch 2",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    engine._save_branch_private_state(camp_id, a2["id"], u1["id"], {"branch": "two"}, [])
+    engine.tree.switch_branch(camp_id, a1["id"])
+    with closing(svc.store._connect()) as conn, conn:
+        conn.execute("UPDATE chat_messages SET is_active=1 WHERE id=?", (a2["id"],))
+        # Ensure a1 is still first in creation order so get_tree's active_branch follows a1
+        conn.execute("UPDATE chat_messages SET is_active=1 WHERE id=?", (a1["id"],))
+
+    assert engine._latest_snapshot_leaf(camp_id) == a1["id"]
+    assert engine._get_gm_secrets(camp_id) == {"branch": "one"}
+
+
+def test_split_party_channel_seeds_private_state_from_main_leaf(tmp_path: Path):
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    engine = TurnEngine(svc, ScriptedLLM())
+    engine.seed_initial_gm_state(camp_id, secrets={"root_secret": "Turn-0"})
+    revs = engine.tree._current_revisions(camp_id)
+    u1 = engine.tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="Scout ahead",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    a1 = engine.tree.append_message(
+        camp_id,
+        parent_id=u1["id"],
+        role="assistant",
+        content="You spot guards.",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    engine._save_branch_private_state(
+        camp_id,
+        a1["id"],
+        u1["id"],
+        {"root_secret": "Turn-0", "live_secret": "From main leaf"},
+        [{"id": "alert", "name": "Site Alert", "filled": 2, "segments": 6, "category": "heat", "visibility": "secret", "note": ""}],
+    )
+
+    prep = engine.preprocess(camp_id, "Check the dock", channel_id="scene-dock")
+    assert prep["gm_secrets"]["live_secret"] == "From main leaf"
+    assert prep["clocks"][0]["id"] == "alert"
+    assert prep["clocks"][0]["filled"] == 2
+
+
+def test_merge_gm_secrets_pins_npc_real_keys_during_eviction():
+    from turnloop import BranchPrivateStateStore
+
+    current = {"__npc_real:Vex": "Viktor K.", "__npc_real:Nyx": "Nadia R."}
+    updates = {f"note_{i}": f"Secret note {i}" for i in range(60)}
+    merged = BranchPrivateStateStore.merge_gm_secrets(current, updates)
+    assert len(merged) <= 50
+    assert merged["__npc_real:Vex"] == "Viktor K."
+    assert merged["__npc_real:Nyx"] == "Nadia R."
+
+
+def test_chat_tree_cycle_guards_and_export_branch_no_duplicate_rolls(tmp_path: Path):
+    from contextlib import closing
+
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    tree = ChatTreeStore(svc)
+    revs = tree._current_revisions(camp_id)
+    roll = {"actor": "Vee Mercer", "skill": "Handgun", "stat": "REF", "total": 15, "dv": 13}
+    u1 = tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="I shoot the lock",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+        metadata={"speaker_name": "Vee Mercer", "rolls": [roll]},
+    )
+    a1 = tree.append_message(
+        camp_id,
+        parent_id=u1["id"],
+        role="assistant",
+        content="The lock shatters.",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+        metadata={"rolls": [roll]},
+    )
+    exported = tree.export_branch(camp_id)
+    assert exported["markdown"].count("- Roll (Vee Mercer): Handgun = 15 vs DV 13") == 1
+
+    # Corrupt parent pointers into a cycle; cycle guards must prevent infinite loops
+    with closing(svc.store._connect()) as conn, conn:
+        conn.execute("UPDATE chat_messages SET parent_id=? WHERE id=?", (a1["id"], u1["id"]))
+    chain = tree.get_branch_to(camp_id, a1["id"])
+    assert len(chain) == 2
+    switched = tree.switch_branch(camp_id, a1["id"])
+    assert switched["campaign_id"] == camp_id
+
+
+@pytest.mark.anyio
+async def test_campaign_compressions_per_channel_and_archivist_hides_internal_keys(tmp_path: Path):
+    from contextlib import closing
+    import sqlite3
+
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    # Simulate legacy campaign_compressions table without channel_id column
+    with closing(svc.store._connect()) as conn, conn:
+        conn.execute("DROP TABLE IF EXISTS campaign_compressions")
+        conn.execute(
+            """
+            CREATE TABLE campaign_compressions (
+                campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
+                leaf_id TEXT,
+                compressed_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO campaign_compressions (campaign_id, leaf_id, compressed_count, updated_at) VALUES (?, NULL, 3, '2026-01-01')",
+            (camp_id,),
+        )
+
+    archivist_llm = ScriptedLLM(
+        complete_reply=json.dumps(
+            {
+                "library_entries": [],
+                "campaign_updates": {"summary": "Short recap"},
+                "gm_secrets": {},
+                "clock_ops": [],
+            }
+        )
+    )
+    engine = TurnEngine(svc, archivist_llm)
+    assert engine._get_compressed_count(camp_id, channel_id="main") == 3
+    assert engine._get_compressed_count(camp_id, channel_id="scene-dock") == 0
+    engine._set_compressed_count(camp_id, None, 5, channel_id="scene-dock")
+    assert engine._get_compressed_count(camp_id, channel_id="main") == 3
+    assert engine._get_compressed_count(camp_id, channel_id="scene-dock") == 5
+
+    # Seed internal __* keys into campaign discoveries and verify Archivist does not see them
+    camp = svc.campaign_context(camp_id)["campaign"]
+    svc.execute(
+        "update_campaign",
+        {
+            "campaign_id": camp_id,
+            "expected_revision": camp["revision"],
+            "changes": {
+                "summary": "Crew met Fixer",
+                "discoveries": {
+                    "__campaign_meta": json.dumps({"district": "Watson"}),
+                    "__npc_identities": json.dumps({"Ghost": {"handle": "Ghost", "real_name_hidden": True}}),
+                    "Dock Keycard": "Found on guard",
+                },
+            },
+            "reason": "Seed discoveries",
+            "operation_id": "comp-seed-1",
+        },
+        campaign_id=camp_id,
+    )
+    revs = engine.tree._current_revisions(camp_id)
+    u1 = engine.tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="Let's recap",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+    )
+    await engine.compress_memory(camp_id, leaf_id=u1["id"])
+    sys_prompt = archivist_llm.planner_calls[-1][0]["content"]
+    assert "__campaign_meta" not in sys_prompt
+    assert "__npc_identities" not in sys_prompt
+    assert "Dock Keycard" in sys_prompt
+
+
+def test_sync_all_active_leaf_revisions(tmp_path: Path):
+    _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
+    tree = ChatTreeStore(svc)
+    revs = tree._current_revisions(camp_id)
+    tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="Main chat",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+        channel_id="main",
+    )
+    tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="Dock chat",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+        channel_id="scene-dock",
+    )
+    camp = svc.campaign_context(camp_id)["campaign"]
+    svc.execute(
+        "update_campaign",
+        {
+            "campaign_id": camp_id,
+            "expected_revision": camp["revision"],
+            "changes": {"scene": "Afterlife VIP"},
+            "reason": "Scene shift",
+            "operation_id": "sync-all-1",
+        },
+        campaign_id=camp_id,
+    )
+    assert tree.get_tree(camp_id, channel_id="main")["revision_mismatch"] is True
+    assert tree.get_tree(camp_id, channel_id="scene-dock")["revision_mismatch"] is True
+    tree.sync_all_active_leaf_revisions(camp_id)
+    assert tree.get_tree(camp_id, channel_id="main")["revision_mismatch"] is False
+    assert tree.get_tree(camp_id, channel_id="scene-dock")["revision_mismatch"] is False
+
+
+def test_normalize_campaign_changes_protects_internal_keys_and_enforces_caps(tmp_path: Path):
+    from campaign import _json
+    from turnloop import _encode_party_locations_json, _normalize_campaign_changes, parse_npc_identities_public
+
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    ctx = svc.campaign_context(camp_id)
+
+    # 1. LLM-emitted __* discovery keys are ignored; omitted real_name_hidden preserves previous value
+    cur_state = {
+        "scene": "Alley",
+        "summary": "Intro",
+        "npcs": {},
+        "objectives": {},
+        "discoveries": {
+            "__campaign_meta": '{"district":"Watson"}',
+            "__npc_identities": json.dumps({"Rogue": {"handle": "Rogue", "real_name_hidden": False, "real_name": "Rogue Amendiares"}}),
+            **{f"clue_{i}": f"detail {i}" for i in range(38)},
+        },
+        "unresolved": {},
+    }
+    clean, _ = _normalize_campaign_changes(
+        {
+            "discoveries": {"__campaign_meta": "CORRUPT", "__evil": "bad", "new_clue": "Camera feed"},
+            "pc_locations": {char_id: "Kabuki Market"},
+            "npc_identities": {"Rogue": {"personality": "Guarded"}},
+        },
+        cur_state,
+        characters=ctx["characters"],
+    )
+    assert clean["discoveries"]["__campaign_meta"] == '{"district":"Watson"}'
+    assert "__evil" not in clean["discoveries"]
+    assert "new_clue" in clean["discoveries"]
+    assert "__party_locations" in clean["discoveries"]
+    assert "__npc_identities" in clean["discoveries"]
+    assert len(clean["discoveries"]) == 40
+    parsed_ids = parse_npc_identities_public({"discoveries": clean["discoveries"]})
+    assert parsed_ids["Rogue"]["real_name_hidden"] is False
+    assert parsed_ids["Rogue"]["real_name"] == "Rogue Amendiares"
+    assert parsed_ids["Rogue"]["personality"] == "Guarded"
+
+    # 2. 24,000-char ceiling trims oldest non-__* discoveries / summary without dropping __* keys
+    huge_state = {
+        "scene": "S" * 3500,
+        "summary": "M" * 3500,
+        "npcs": {f"npc_{i}": "N" * 800 for i in range(15)},
+        "objectives": {},
+        "discoveries": {
+            "__campaign_meta": '{"district":"Watson"}',
+            **{f"old_clue_{i}": "D" * 900 for i in range(10)},
+        },
+        "unresolved": {},
+    }
+    capped, _ = _normalize_campaign_changes({"summary": "M" * 3900}, huge_state)
+    merged = {**huge_state, **capped}
+    assert len(_json(merged)) <= 24000
+    assert "__campaign_meta" in merged["discoveries"]
+
+    # 3. _encode_party_locations_json never produces invalid JSON even with many long locations
+    many_locs = {f"char-{i:03d}-long-uuid": f"Very Long Night City District Sector Location Name {i}" for i in range(60)}
+    encoded = _encode_party_locations_json("split", many_locs, {})
+    assert len(encoded) <= 2000
+    assert isinstance(json.loads(encoded), dict)
+
+
+@pytest.mark.anyio
+async def test_run_turn_resolves_channel_from_parent_and_abort_preserves_persisted_assistant(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    tree = ChatTreeStore(svc)
+    revs = tree._current_revisions(camp_id)
+    dock_root = tree.append_message(
+        camp_id,
+        parent_id=None,
+        role="user",
+        content="At the dock",
+        campaign_revision=revs["campaign_revision"],
+        solo_revision=revs["solo_revision"],
+        channel_id="scene-dock",
+    )
+
+    class FailAfterNarratorLLM:
+        enable_multi_call = True
+
+        def __init__(self):
+            self.config = LLMConfig(model="stub", mode="two_pass")
+            self.calls = 0
+
+        async def complete(self, messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return "{}"
+            raise BaseException("Simulated Chronicler abort")
+
+        async def stream(self, messages, **_kwargs):
+            yield "The cargo crane groans overhead."
+
+    eng = TurnEngine(svc, FailAfterNarratorLLM())
+    events: list[dict[str, Any]] = []
+    with pytest.raises(BaseException, match="Simulated Chronicler abort"):
+        async for ev in eng.run_turn(
+            camp_id,
+            "Look at the crane",
+            parent_id=dock_root["id"],
+            speaker_character_id=char_id,
+        ):
+            events.append(ev)
+
+    dock_tree = eng.tree.get_tree(camp_id, channel_id="scene-dock")
+    # Channel was resolved from parent_id, and both user_msg + persisted assistant_msg survived the post-Narrator abort
+    assert len(dock_tree["active_branch"]) == 3
+    assert dock_tree["active_branch"][-1]["role"] == "assistant"
+    assert "cargo crane groans" in dock_tree["active_branch"][-1]["content"]
+
+    # Conversely, an abort BEFORE Narrator completes deletes the un-replied user_msg
+    class FailInNarratorLLM:
+        def __init__(self):
+            self.config = LLMConfig(model="stub", mode="two_pass")
+
+        async def complete(self, messages, **_kwargs):
+            return "{}"
+
+        async def stream(self, messages, **_kwargs):
+            raise RuntimeError("LLM stream dropped")
+            yield ""  # pragma: no cover
+
+    eng2 = TurnEngine(svc, FailInNarratorLLM())
+    with pytest.raises(RuntimeError, match="LLM stream dropped"):
+        async for _ in eng2.run_turn(
+            camp_id,
+            "Aborted message",
+            parent_id=dock_tree["active_leaf_id"],
+            speaker_character_id=char_id,
+        ):
+            pass
+    dock_tree_after = eng2.tree.get_tree(camp_id, channel_id="scene-dock")
+    assert len(dock_tree_after["active_branch"]) == 3
+
+
+@pytest.mark.anyio
+async def test_regenerate_turn_no_double_deduction_and_branch_rolls_isolated(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    char_before = svc.store.get_character(char_id)
+    assert char_before["luck_remaining"] == 6
+    assert char_before["humanity"] == 60
+
+    class SequencedRegenLLM:
+        def __init__(self):
+            self.config = LLMConfig(model="stub", mode="two_pass")
+            self.turn_num = 0
+
+        async def complete(self, messages, **_kwargs):
+            self.turn_num += 1
+            return json.dumps(
+                {
+                    "checks": [{"actor": "Vee Mercer", "skill": "Handgun", "dv": 13, "reason": f"Attempt {self.turn_num}"}],
+                    "state_ops": [
+                        {"type": "update_character", "actor": "Vee Mercer", "changes": {"money": 250}, "reason": "Found credchip"},
+                        {"type": "update_campaign", "changes": {"scene": f"Alley branch {self.turn_num}"}, "reason": "Scene"},
+                    ],
+                }
+            )
+
+        async def stream(self, messages, **_kwargs):
+            yield f"Outcome {self.turn_num}"
+
+    eng = TurnEngine(svc, SequencedRegenLLM())
+    ev1 = [
+        ev
+        async for ev in eng.run_turn(
+            camp_id,
+            "Take the shot",
+            speaker_character_id=char_id,
+            luck_spend=2,
+            overclock=True,
+        )
+    ]
+    done1 = ev1[-1]["data"]
+    a1_id = done1["assistant_message"]["id"]
+    u_id = done1["user_message"]["id"]
+    c_after_1 = svc.store.get_character(char_id)
+    assert c_after_1["luck_remaining"] == 4
+    assert c_after_1["humanity"] == 58
+    assert c_after_1["money"] == 250
+
+    ev2 = [ev async for ev in eng.regenerate_turn(camp_id, a1_id)]
+    done2 = ev2[-1]["data"]
+    a2_id = done2["assistant_message"]["id"]
+    c_after_2 = svc.store.get_character(char_id)
+    # Regenerating must restore pre-turn baseline first so LUCK, Humanity, and money are NOT double-applied
+    assert c_after_2["luck_remaining"] == 4
+    assert c_after_2["humanity"] == 58
+    assert c_after_2["money"] == 250
+
+    a1_msg = eng.tree.get_message(camp_id, a1_id)
+    a2_msg = eng.tree.get_message(camp_id, a2_id)
+    assert a1_msg["metadata"]["rolls"][0]["reason"] == "Attempt 1"
+    assert a2_msg["metadata"]["rolls"][0]["reason"] == "Attempt 2"
+    assert eng.tree.get_message(camp_id, u_id)["metadata"]["rolls"][0]["reason"] == "Attempt 2"
+
+    # Switching back to branch 1 restores user_msg.metadata["rolls"] to branch 1's roll without touching a2
+    eng.tree.switch_branch(camp_id, a1_id)
+    assert eng.tree.get_message(camp_id, u_id)["metadata"]["rolls"][0]["reason"] == "Attempt 1"
+    assert eng.tree.get_message(camp_id, a2_id)["metadata"]["rolls"][0]["reason"] == "Attempt 2"
+
+
+def test_settings_per_key_fault_tolerance(tmp_path: Path):
+    from turnloop import (
+        DEFAULT_PROMPT_TEMPLATES,
+        load_llm_settings,
+        load_prompt_settings,
+        load_server_settings,
+        save_llm_settings,
+        save_server_settings,
+        write_settings_doc,
+    )
+
+    sp = tmp_path / "settings.json"
+    write_settings_doc(
+        {
+            "model": "custom-qwen",
+            "temperature": 99.0,  # out of range -> falls back to default
+            "max_tokens": "bad",  # wrong type -> falls back to default
+            "prompts": {
+                "system_persona": 12345,  # invalid type -> falls back to default
+                "narrator_extra": "Keep it gritty.",
+            },
+            "server": {
+                "bind_host": "0.0.0.0",
+                "port": 99999,  # out of range -> falls back to default
+            },
+        },
+        sp,
+    )
+
+    llm = load_llm_settings(sp)
+    assert llm["model"] == "custom-qwen"
+    assert llm["temperature"] == 0.75
+    assert llm["max_tokens"] == 2400
+
+    prompts = load_prompt_settings(sp)
+    assert prompts["system_persona"] == DEFAULT_PROMPT_TEMPLATES["system_persona"]
+    assert prompts["narrator_extra"] == "Keep it gritty."
+
+    srv = load_server_settings(sp)
+    assert srv["bind_host"] == "0.0.0.0"
+    assert srv["port"] == 8765
+
+    # Strict validation on save_*_settings still rejects invalid values
+    with pytest.raises(ValueError):
+        save_llm_settings({"temperature": 99.0}, sp)
+    with pytest.raises(ValueError):
+        save_server_settings({"port": 99999}, sp)
+
 
 
 

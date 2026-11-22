@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from server.redaction import redact_chat_tree, redact_sse_event
+from server.redaction import redact_chat_message, redact_chat_tree, redact_sse_event
 from server.security import ServerContext
 
 _THINK_CMD_RE = re.compile(r"^/think(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
@@ -33,7 +33,45 @@ def _parse_luck_spend(raw: Any) -> int:
 
 def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     """Register chat, turn streaming, co-op SSE/presence, clocks, and campaign routes."""
-    from turnloop import load_llm_settings
+    from turnloop import ChatTreeStore, compute_party_grouping, load_llm_settings
+
+    def _allowed_channels_for(
+        campaign_id: str,
+        *,
+        is_gm: bool,
+        uname: str,
+    ) -> tuple[set[str] | None, dict[str, Any] | None, list[dict[str, Any]]]:
+        if is_gm:
+            return None, None, []
+        camp_ctx = ctx.gameplay_service().campaign_context(campaign_id)
+        chars = camp_ctx.get("characters") or []
+        state = (camp_ctx.get("campaign") or {}).get("state") or {}
+        grouping = compute_party_grouping(chars, state)
+        if grouping.get("mode") != "split":
+            return None, grouping, chars
+        allowed: set[str] = {"main"}
+        if uname:
+            uname_low = uname.strip().lower()
+            char_chan = grouping.get("char_channel_map") or {}
+            for ch in chars:
+                owner = str((ch.get("detail") or {}).get("owner_username") or "").strip().lower()
+                if owner and owner == uname_low:
+                    assigned = char_chan.get(ch.get("id"))
+                    if assigned:
+                        allowed.add(str(assigned))
+        return allowed, grouping, chars
+
+    def _filter_turns_payload(payload: dict[str, Any], allowed: set[str] | None) -> dict[str, Any]:
+        if allowed is None or not isinstance(payload, dict):
+            return payload
+        out = dict(payload)
+        if isinstance(out.get("active_turns"), dict):
+            filtered = {ch: info for ch, info in out["active_turns"].items() if ch in allowed}
+            out["active_turns"] = filtered
+            active = out.get("active_turn")
+            if isinstance(active, dict) and str(active.get("channel_id") or "main") not in allowed:
+                out["active_turn"] = filtered.get("main") or next(iter(filtered.values()), None)
+        return out
 
     def _relay_coop_turn(
         events_iter_fn,
@@ -49,6 +87,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         truncate_from_id: str | None = None,
         is_gm: bool = True,
         turn_intent: str = "action",
+        author_username: str = "",
     ):
         async def _wrapped():
             delta_buf: list[str] = []
@@ -84,7 +123,16 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 async for ev in events_iter_fn():
                     ev_name = ev.get("event")
                     ev_data = ev.get("data") or {}
+                    ctx.coop.touch_turn(campaign_id, client_id, channel_id=channel_id)
                     if ev_name == "user_message":
+                        umsg = ev_data.get("message")
+                        if author_username and isinstance(umsg, dict) and umsg.get("id"):
+                            await asyncio.to_thread(
+                                lambda mid=umsg["id"]: ChatTreeStore(ctx.gameplay_service()).update_message_metadata(
+                                    campaign_id, mid, {"author_username": author_username}
+                                )
+                            )
+                            umsg.setdefault("metadata", {})["author_username"] = author_username
                         ctx.coop.publish(
                             campaign_id,
                             "peer_user_message",
@@ -92,7 +140,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                                 "campaign_id": campaign_id,
                                 "channel_id": channel_id,
                                 "client_id": client_id,
-                                "message": ev_data.get("message"),
+                                "message": umsg,
                             },
                         )
                         ctx.coop.publish(
@@ -118,6 +166,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     elif ev_name == "turn_done":
                         _flush_deltas()
                         done_emitted = True
+                        if author_username and isinstance(ev_data.get("user_message"), dict):
+                            ev_data["user_message"].setdefault("metadata", {})["author_username"] = author_username
                         ctx.coop.publish(
                             campaign_id,
                             "peer_turn_done",
@@ -133,7 +183,9 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                             "sync",
                             {"campaign_id": campaign_id, "kind": "chat", "channel_id": channel_id},
                         )
-                    yield {"event": ev_name, "data": redact_sse_event(str(ev_name), ev_data, is_gm=is_gm)}
+                    redacted = redact_sse_event(str(ev_name), ev_data, is_gm=is_gm)
+                    if redacted is not None:
+                        yield {"event": ev_name, "data": redacted}
             finally:
                 if not done_emitted:
                     _flush_deltas()
@@ -163,10 +215,11 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             return blocked
         sess = ctx.session(request)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore
+        uname = str(sess.get("username") or "").strip()
         try:
+            allowed_channels, _, _ = _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
             tree = ChatTreeStore(ctx.gameplay_service()).get_tree(campaign_id, channel_id=channel_id)
-            tree = redact_chat_tree(tree, is_gm=is_gm)
+            tree = redact_chat_tree(tree, is_gm=is_gm, allowed_channels=allowed_channels)
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -179,15 +232,24 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             return blocked
         sess = ctx.session(request)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore
+        uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str):
                 raise ValueError("campaign_id and message_id must be strings")
+            allowed_channels, _, _ = await asyncio.to_thread(
+                lambda: _allowed_channels_for(body["campaign_id"], is_gm=is_gm, uname=uname)
+            )
+            if not is_gm and allowed_channels is not None:
+                target = await asyncio.to_thread(
+                    lambda: ChatTreeStore(ctx.gameplay_service()).get_message(body["campaign_id"], body["message_id"])
+                )
+                if target is not None and ChatTreeStore._norm_channel(target.get("channel_id")) not in allowed_channels:
+                    return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
             tree = await asyncio.to_thread(
                 lambda: ChatTreeStore(ctx.gameplay_service()).switch_branch(body["campaign_id"], body["message_id"])
             )
-            tree = redact_chat_tree(tree, is_gm=is_gm)
+            tree = redact_chat_tree(tree, is_gm=is_gm, allowed_channels=allowed_channels)
             ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "chat"})
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
@@ -200,8 +262,10 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
+        eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore
+        is_admin = ctx.is_admin_or_pin_only(request, sess)
+        uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str):
@@ -209,10 +273,32 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             scope = body.get("scope", "branch")
             if not isinstance(scope, str) or scope not in {"branch", "single"}:
                 raise ValueError("scope must be 'branch' or 'single'")
+            target = await asyncio.to_thread(
+                lambda: ChatTreeStore(ctx.gameplay_service()).get_message(body["campaign_id"], body["message_id"])
+            )
+            if target is None:
+                raise ValueError(f"message not found in campaign: {body['message_id']}")
+            allowed_channels, _, chars = await asyncio.to_thread(
+                lambda: _allowed_channels_for(body["campaign_id"], is_gm=is_gm, uname=uname)
+            )
+            if not is_admin:
+                target_chan = ChatTreeStore._norm_channel(target.get("channel_id"))
+                if allowed_channels is not None and target_chan not in allowed_channels:
+                    return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
+                denied = ctx.check_message_ownership(
+                    target,
+                    eff_role=eff_role,
+                    uname=uname,
+                    chars=chars,
+                    pin_only_mode=is_admin,
+                    request_id=request_id,
+                )
+                if denied is not None:
+                    return denied
             tree = await asyncio.to_thread(
                 lambda: ChatTreeStore(ctx.gameplay_service()).delete_message(body["campaign_id"], body["message_id"], scope=scope)
             )
-            tree = redact_chat_tree(tree, is_gm=is_gm)
+            tree = redact_chat_tree(tree, is_gm=is_gm, allowed_channels=allowed_channels)
             ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "chat"})
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
@@ -225,16 +311,40 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
+        eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore
+        is_admin = ctx.is_admin_or_pin_only(request, sess)
+        uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str) or not isinstance(body.get("content"), str):
                 raise ValueError("campaign_id, message_id, and content must be strings")
+            target = await asyncio.to_thread(
+                lambda: ChatTreeStore(ctx.gameplay_service()).get_message(body["campaign_id"], body["message_id"])
+            )
+            if target is None:
+                raise ValueError(f"message not found in campaign: {body['message_id']}")
+            allowed_channels, _, chars = await asyncio.to_thread(
+                lambda: _allowed_channels_for(body["campaign_id"], is_gm=is_gm, uname=uname)
+            )
+            if not is_admin:
+                target_chan = ChatTreeStore._norm_channel(target.get("channel_id"))
+                if allowed_channels is not None and target_chan not in allowed_channels:
+                    return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
+                denied = ctx.check_message_ownership(
+                    target,
+                    eff_role=eff_role,
+                    uname=uname,
+                    chars=chars,
+                    pin_only_mode=is_admin,
+                    request_id=request_id,
+                )
+                if denied is not None:
+                    return denied
             tree = await asyncio.to_thread(
                 lambda: ChatTreeStore(ctx.gameplay_service()).update_message(body["campaign_id"], body["message_id"], body["content"])
             )
-            tree = redact_chat_tree(tree, is_gm=is_gm)
+            tree = redact_chat_tree(tree, is_gm=is_gm, allowed_channels=allowed_channels)
             ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "chat"})
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
@@ -247,9 +357,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if ctx.effective_role(request, sess) == "user" and not sess.get("pin_only_mode"):
+        if not ctx.is_admin_or_pin_only(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to export story logs.", "request_id": request_id})
-        from turnloop import ChatTreeStore
         try:
             exported = ChatTreeStore(ctx.gameplay_service()).export_branch(campaign_id, leaf_id, channel_id=channel_id)
             return {**exported, "request_id": request_id}
@@ -303,6 +412,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             await asyncio.to_thread(lambda: ctx.gameplay_service().campaign_context(campaign_id))
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+        is_gm = ctx.can_view_gm_private_state(request, sess)
+        uname = str(sess.get("username") or "").strip()
         from starlette.responses import StreamingResponse
         q: asyncio.Queue = asyncio.Queue(maxsize=1024)
         subs = ctx.coop.subscribers.setdefault(campaign_id, set())
@@ -310,8 +421,11 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
 
         async def room_stream():
             try:
+                allowed_channels, _, _ = await asyncio.to_thread(
+                    lambda: _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
+                )
                 turns = ctx.coop.all_active_turns(campaign_id)
-                init_payload = json.dumps(
+                init_data = _filter_turns_payload(
                     {
                         "campaign_id": campaign_id,
                         "players": ctx.coop.roster(campaign_id),
@@ -319,16 +433,31 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                         "active_turns": turns,
                         "sync_seq": ctx.coop.current_seq(campaign_id),
                     },
-                    ensure_ascii=False,
+                    allowed_channels if not is_gm else None,
                 )
+                init_payload = json.dumps(init_data, ensure_ascii=False)
                 yield f"event: presence\ndata: {init_payload}\n\n"
                 while True:
                     if await request.is_disconnected():
                         break
                     try:
                         msg = await asyncio.wait_for(q.get(), timeout=12.0)
-                        payload = json.dumps(msg["data"], ensure_ascii=False)
-                        yield f"event: {msg['event']}\ndata: {payload}\n\n"
+                        ev_name = str(msg["event"])
+                        ev_data = msg["data"]
+                        if not is_gm and isinstance(ev_data, dict):
+                            if ev_name == "sync" or ev_data.get("channel_id"):
+                                allowed_channels, _, _ = await asyncio.to_thread(
+                                    lambda: _allowed_channels_for(campaign_id, is_gm=False, uname=uname)
+                                )
+                            ev_chan = str(ev_data.get("channel_id") or "").strip()
+                            if allowed_channels is not None and ev_chan and ev_chan not in allowed_channels:
+                                continue
+                            ev_data = _filter_turns_payload(ev_data, allowed_channels)
+                            ev_data = redact_sse_event(ev_name, ev_data, is_gm=False)
+                            if ev_data is None:
+                                continue
+                        payload = json.dumps(ev_data, ensure_ascii=False)
+                        yield f"event: {ev_name}\ndata: {payload}\n\n"
                     except asyncio.TimeoutError:
                         ping_payload = json.dumps({"ts": time.time(), "sync_seq": ctx.coop.current_seq(campaign_id)})
                         yield f"event: ping\ndata: {ping_payload}\n\n"
@@ -389,7 +518,13 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
             is_gm = ctx.can_view_gm_private_state(request, sess)
+            is_admin = ctx.is_admin_or_pin_only(request, sess)
             uname = str(sess.get("username") or "").strip()
+            if is_intro and not is_admin:
+                return JSONResponse(status_code=403, content={"detail": "Admin permission required for intro turns.", "request_id": request_id})
+            raw_guidance = body.get("guidance")
+            if raw_guidance is not None and str(raw_guidance).strip() and not is_admin:
+                return JSONResponse(status_code=403, content={"detail": "Admin permission required for Director guidance.", "request_id": request_id})
             llm_cfg = load_llm_settings(ctx.resolved_settings_path())
 
             active_llm = ctx.resolve_active_llm(body.get("llm_config"), eff_role=eff_role)
@@ -405,12 +540,18 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 eff_role=eff_role,
                 uname=uname,
                 is_intro=is_intro,
-                pin_only_mode=bool(sess.get("pin_only_mode")),
+                pin_only_mode=is_admin,
                 require_character_to_speak=bool(llm_cfg.get("require_character_to_speak", True)),
                 request_id=request_id,
             )
             if denied is not None:
                 return denied
+
+            allowed_channels, grouping, _ = await asyncio.to_thread(
+                lambda: _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
+            )
+            if not is_gm and grouping and grouping.get("mode") == "split" and allowed_channels is not None and channel_id not in allowed_channels:
+                return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
 
             if body.get("parent_id") is not None:
                 await asyncio.to_thread(engine.tree.get_branch_to, campaign_id, body["parent_id"])
@@ -419,6 +560,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 busy_turn = ctx.coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name, channel_id=channel_id)
                 if busy_turn is not None:
                     return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
@@ -457,6 +600,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             truncate_from_id=str(body["replace_message_id"]).strip() if body.get("replace_message_id") else None,
             is_gm=is_gm,
             turn_intent=turn_intent,
+            author_username=uname,
         )
         return ctx.sse_response(
             relayed,
@@ -507,7 +651,14 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
             is_gm = ctx.can_view_gm_private_state(request, sess)
+            is_admin = ctx.is_admin_or_pin_only(request, sess)
             uname = str(sess.get("username") or "").strip()
+            channel_id = ChatTreeStore._norm_channel(body.get("channel_id"))
+            allowed_channels, grouping, _ = await asyncio.to_thread(
+                lambda: _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
+            )
+            if not is_gm and grouping and grouping.get("mode") == "split" and allowed_channels is not None and channel_id not in allowed_channels:
+                return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
 
             def _do_roll():
                 svc = ctx.gameplay_service()
@@ -520,7 +671,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                         raise ValueError("Character not found")
                     d = char.get("detail") or {}
                     owner = str(d.get("owner_username") or "").strip()
-                    if eff_role == "user" and uname and owner and owner.lower() != uname.lower():
+                    if not is_admin and owner and (not uname or owner.lower() != uname.lower()):
                         raise PermissionError(f"You cannot roll for {char.get('name')} (owned by {owner}).")
                     try:
                         check_res = svc.execute(
@@ -588,6 +739,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     "defer_reason": "Manual skill roll posted to table",
                     "rolls": [roll_card],
                 }
+                if uname:
+                    meta["author_username"] = uname
                 if isinstance(d.get("color"), str) and d["color"].strip():
                     meta["speaker_color"] = d["color"].strip()
                 if isinstance(d.get("portrait_url"), str) and d["portrait_url"].strip():
@@ -602,10 +755,20 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     channel_id=channel_id,
                     metadata=meta,
                 )
-                updated_tree = redact_chat_tree(tree_store.sync_active_leaf_revisions(campaign_id, channel_id=channel_id), is_gm=is_gm)
-                return {"roll": roll_card, "result": check_res, "message": msg, "tree": updated_tree}
+                updated_tree = redact_chat_tree(
+                    tree_store.sync_active_leaf_revisions(campaign_id, channel_id=channel_id),
+                    is_gm=is_gm,
+                    allowed_channels=allowed_channels,
+                )
+                return {
+                    "roll": roll_card,
+                    "result": check_res,
+                    "message": redact_chat_message(msg, is_gm=is_gm),
+                    "tree": updated_tree,
+                }
 
-            out = await asyncio.to_thread(_do_roll)
+            async with ctx.coop.channel_lock(campaign_id, channel_id):
+                out = await asyncio.to_thread(_do_roll)
             ctx.coop.publish(
                 campaign_id,
                 "sync",
@@ -625,15 +788,18 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             return blocked
         sess = ctx.session(request)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore
+        uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not body["campaign_id"].strip():
                 raise ValueError("campaign_id is required")
             campaign_id = body["campaign_id"].strip()
             chan = ChatTreeStore._norm_channel(body.get("channel_id"))
+            allowed_channels, _, _ = await asyncio.to_thread(
+                lambda: _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
+            )
             tree = await asyncio.to_thread(lambda: ChatTreeStore(ctx.gameplay_service()).sync_active_leaf_revisions(campaign_id, channel_id=chan))
-            tree = redact_chat_tree(tree, is_gm=is_gm)
+            tree = redact_chat_tree(tree, is_gm=is_gm, allowed_channels=allowed_channels)
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "chat", "channel_id": chan})
             return {**tree, "request_id": request_id}
         except (TypeError, ValueError) as exc:
@@ -648,13 +814,18 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        from turnloop import ChatTreeStore, TurnEngine
+        is_admin = ctx.is_admin_or_pin_only(request, sess)
+        uname = str(sess.get("username") or "").strip()
+        from turnloop import TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str):
                 raise ValueError("campaign_id and message_id must be strings")
             campaign_id = body["campaign_id"]
             message_id = body["message_id"]
+            guidance = body.get("guidance")
+            if guidance is not None and str(guidance).strip() and not is_admin:
+                return JSONResponse(status_code=403, content={"detail": "Admin permission required for Director guidance.", "request_id": request_id})
             client_id = str(body.get("client_id") or request.headers.get("x-redgm-client-id") or request_id)
             player_name = str(body.get("player_name") or "Player")
             active_llm = ctx.resolve_active_llm(body.get("llm_config"), eff_role=eff_role)
@@ -664,6 +835,11 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             if target is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
             target_channel = ChatTreeStore._norm_channel(target.get("channel_id"))
+            allowed_channels, _, _ = await asyncio.to_thread(
+                lambda: _allowed_channels_for(campaign_id, is_gm=is_gm, uname=uname)
+            )
+            if not is_gm and allowed_channels is not None and target_channel not in allowed_channels:
+                return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
             regen_luck = (
                 _parse_luck_spend(body["luck_spend"])
                 if "luck_spend" in body and body["luck_spend"] is not None
@@ -672,6 +848,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             busy_turn = ctx.coop.acquire_turn(campaign_id, client_id=client_id, player_name=player_name, channel_id=target_channel)
             if busy_turn is not None:
                 return JSONResponse(status_code=409, content={"detail": f"GM is currently resolving {busy_turn['player_name']}'s turn", "request_id": request_id})
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
@@ -686,7 +864,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 overclock=body["overclock"] if "overclock" in body and body["overclock"] is not None else None,
                 luck_spend=regen_luck,
                 mode=body.get("mode"),
-                guidance=body.get("guidance"),
+                guidance=guidance if is_admin else None,
             ),
             campaign_id=campaign_id,
             channel_id=target_channel,
@@ -712,6 +890,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
+        if not ctx.is_admin_or_pin_only(request, sess):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to compress campaign memory.", "request_id": request_id})
         eff_role = ctx.effective_role(request, sess)
         from turnloop import TurnEngine
         try:
@@ -726,6 +906,8 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "library"})
             return {**result, "request_id": request_id}
+        except PermissionError as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc), "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
@@ -735,9 +917,14 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.require_player(request, request_id)
         if blocked is not None:
             return blocked
+        sess = ctx.session(request)
         from turnloop import TurnEngine
         try:
-            clocks = TurnEngine(ctx.gameplay_service(), None, settings_path=ctx.resolved_settings_path()).list_public_clocks(campaign_id, leaf_id=leaf_id)
+            eng = TurnEngine(ctx.gameplay_service(), None, settings_path=ctx.resolved_settings_path())
+            if ctx.can_view_gm_private_state(request, sess):
+                clocks = eng.list_all_clocks(campaign_id, leaf_id=leaf_id)
+            else:
+                clocks = eng.list_public_clocks(campaign_id, leaf_id=leaf_id)
             return {"campaign_id": campaign_id, "clocks": clocks, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -745,7 +932,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     @app.post("/v1/campaigns/{campaign_id}/clocks")
     async def campaign_clocks_mutate(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.check_mutable_origin(request, request_id, require_json=True, min_role="admin")
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
@@ -756,23 +943,76 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("Request body must be a JSON object")
-            clocks = TurnEngine(ctx.gameplay_service(), None).mutate_public_clock(
+            clocks = TurnEngine(ctx.gameplay_service(), None, settings_path=ctx.resolved_settings_path()).mutate_public_clock(
                 campaign_id,
                 body,
                 leaf_id=body.get("leaf_id"),
+                allow_secret=True,
             )
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})
             return {"campaign_id": campaign_id, "clocks": clocks, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
-    @app.post("/v1/campaigns/{campaign_id}/npc-identity")
-    async def campaign_npc_identity(campaign_id: str, request: Request):
+    @app.get("/v1/campaigns/{campaign_id}/banner")
+    def campaign_banner_get(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.check_mutable_origin(request, request_id, require_json=True, min_role="admin")
+        blocked = ctx.require_player(request, request_id)
+        if blocked is not None:
+            return blocked
+        from turn_engine.chat_tree import ChatTreeStore, PrivateStateStore
+        try:
+            svc = ctx.gameplay_service()
+            camp_ctx = svc.campaign_context(campaign_id)
+            store = PrivateStateStore(svc, ChatTreeStore(svc))
+            banner_url = store.get_banner(campaign_id)
+            if not banner_url:
+                disc = (camp_ctx.get("campaign") or {}).get("state", {}).get("discoveries") or {}
+                banner_url = str(disc.get("__banner_url") or disc.get("Banner URL") or "")
+            return {"campaign_id": campaign_id, "banner_url": banner_url, "request_id": request_id}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+    @app.post("/v1/campaigns/{campaign_id}/banner")
+    async def campaign_banner_set(campaign_id: str, request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
+        if not ctx.is_admin_or_pin_only(request, sess):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to update campaign banner.", "request_id": request_id})
+        from turn_engine.chat_tree import ChatTreeStore, PrivateStateStore
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
+            raw_url = str(body.get("banner_url") or "").strip()
+            if len(raw_url) > 3_500_000:
+                raise ValueError("Banner image exceeds maximum allowed size.")
+            if raw_url and not (
+                raw_url.startswith("http://")
+                or raw_url.startswith("https://")
+                or raw_url.startswith("/")
+                or raw_url.startswith("data:image/")
+            ):
+                raise ValueError("Banner URL must be an http(s) URL, relative path, or data:image/ URI.")
+            svc = ctx.gameplay_service()
+            saved = PrivateStateStore(svc, ChatTreeStore(svc)).set_banner(campaign_id, raw_url)
+            ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign"})
+            return {"campaign_id": campaign_id, "banner_url": saved, "request_id": request_id}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+
+    @app.post("/v1/campaigns/{campaign_id}/npc-identity")
+    async def campaign_npc_identity(campaign_id: str, request: Request):
+        request_id = uuid.uuid4().hex
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
+        if blocked is not None:
+            return blocked
+        sess = ctx.session(request)
+        if not ctx.is_admin_or_pin_only(request, sess):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify NPC identities.", "request_id": request_id})
         from turnloop import TurnEngine, _normalize_campaign_changes, build_npc_profiles
         try:
             body = await request.json()
@@ -829,7 +1069,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     eng.update_gm_secrets(campaign_id, {sec_key: None})
                 else:
                     eng.update_gm_secrets(campaign_id, {sec_key: effective_real_name})
-                eng.tree.sync_active_leaf_revisions(campaign_id)
+                eng.tree.sync_all_active_leaf_revisions(campaign_id)
                 fresh_ctx = svc.campaign_context(campaign_id)
                 fresh_sec = eng._get_gm_secrets(campaign_id)
                 profiles = build_npc_profiles(
@@ -869,7 +1109,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 camp_ctx = svc.campaign_context(campaign_id)
                 camp = camp_ctx["campaign"]
                 chars = camp_ctx["characters"]
-                if eff_role == "user" and not sess.get("pin_only_mode"):
+                if not ctx.is_admin_or_pin_only(request, sess):
                     if action == "reunite":
                         raise PermissionError("Only the GM/Admin can reunite all party members at once.")
                     if isinstance(pc_locations, dict):
@@ -925,7 +1165,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                         channel_id="main",
                         metadata={"party_transition": after_grouping["mode"]},
                     )
-                tree_store.sync_active_leaf_revisions(campaign_id, channel_id="main")
+                tree_store.sync_all_active_leaf_revisions(campaign_id)
                 return {"campaign": updated_camp, "party_grouping": after_grouping}
 
             res = await asyncio.to_thread(_apply)
@@ -939,7 +1179,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     @app.post("/v1/campaigns/{campaign_id}/bootstrap")
     async def campaign_bootstrap(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.check_mutable_origin(request, request_id, require_json=True, min_role="admin")
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
@@ -1246,7 +1486,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     replace_secrets=bool(clear_missing and "gm_secrets" in body),
                     replace_clocks=bool(clear_missing and ("clocks" in body or "opening_clock" in body)),
                 )
-                eng.tree.sync_active_leaf_revisions(campaign_id)
+                eng.tree.sync_all_active_leaf_revisions(campaign_id)
                 return {
                     "campaign": camp,
                     **gm_seed,
@@ -1262,9 +1502,12 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     @app.post("/v1/campaigns/{campaign_id}/primary")
     async def campaign_set_primary(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.check_mutable_origin(request, request_id, require_json=False, min_role="admin")
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=False)
         if blocked is not None:
             return blocked
+        sess = ctx.session(request)
+        if not ctx.is_admin_or_pin_only(request, sess):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to set primary campaign.", "request_id": request_id})
         try:
             res = await asyncio.to_thread(
                 lambda: ctx.gameplay_service().execute("set_primary_campaign", {"campaign_id": campaign_id})["result"]
@@ -1277,14 +1520,18 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     @app.delete("/v1/campaigns/{campaign_id}")
     async def campaign_delete(campaign_id: str, request: Request):
         request_id = uuid.uuid4().hex
-        blocked = ctx.check_mutable_origin(request, request_id, require_json=False, min_role="admin")
+        blocked = ctx.check_mutable_origin(request, request_id, require_json=False)
         if blocked is not None:
             return blocked
+        sess = ctx.session(request)
+        if not ctx.is_admin_or_pin_only(request, sess):
+            return JSONResponse(status_code=403, content={"detail": "Admin permission required to delete campaign.", "request_id": request_id})
         try:
             res = await asyncio.to_thread(
                 lambda: ctx.gameplay_service().execute("delete_campaign", {"campaign_id": campaign_id})["result"]
             )
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "campaign_deleted"})
+            ctx.coop.clear_campaign(campaign_id)
             return {**res, "request_id": request_id}
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"detail": str(exc), "request_id": request_id})

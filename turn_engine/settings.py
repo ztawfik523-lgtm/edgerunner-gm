@@ -407,10 +407,16 @@ def load_llm_settings(settings_path: Path | None = None) -> dict[str, Any]:
     data = read_settings_doc(settings_path)
     if not data:
         return defaults
-    try:
-        return _validate_llm_settings(data, defaults)
-    except (TypeError, ValueError):
-        return defaults
+    out = dict(defaults)
+    for key in defaults:
+        if key not in data or data[key] is None:
+            continue
+        try:
+            validated = _validate_llm_settings({key: data[key]}, out)
+            out[key] = validated[key]
+        except (TypeError, ValueError):
+            out[key] = defaults[key]
+    return out
 
 
 def save_llm_settings(updates: dict[str, Any], settings_path: Path | None = None) -> dict[str, Any]:
@@ -480,9 +486,12 @@ def load_prompt_settings(settings_path: Path | None = None) -> dict[str, str]:
     out = dict(defaults)
     for key in defaults:
         val = raw.get(key)
-        if isinstance(val, str):
-            trimmed = val.strip()[:_MAX_PROMPT_CHARS]
-            out[key] = trimmed if (trimmed or key not in _NON_EMPTY_PROMPT_KEYS) else defaults[key]
+        if not isinstance(val, str):
+            continue
+        trimmed = val.strip()
+        if len(trimmed) > _MAX_PROMPT_CHARS:
+            continue
+        out[key] = trimmed if (trimmed or key not in _NON_EMPTY_PROMPT_KEYS) else defaults[key]
     return out
 
 
@@ -591,10 +600,16 @@ def load_server_settings(settings_path: Path | None = None) -> dict[str, Any]:
     raw = doc.get("server")
     if not isinstance(raw, dict):
         return defaults
-    try:
-        return _validate_server_settings(raw, defaults)
-    except (TypeError, ValueError):
-        return defaults
+    out = dict(defaults)
+    for key in defaults:
+        if key not in raw or raw[key] is None:
+            continue
+        try:
+            validated = _validate_server_settings({key: raw[key]}, out)
+            out[key] = validated[key]
+        except (TypeError, ValueError):
+            out[key] = defaults[key]
+    return out
 
 
 def save_server_settings(updates: dict[str, Any], settings_path: Path | None = None) -> dict[str, Any]:

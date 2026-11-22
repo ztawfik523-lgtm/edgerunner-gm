@@ -164,9 +164,11 @@ def setup_app_middleware(app: Any, dynamic_origins: set[str]) -> None:
                 "Accept",
                 "Authorization",
                 "Content-Type",
+                "X-Filename",
                 "X-RedGM-Client-Id",
                 "X-RedGM-Pin",
                 "X-RedGM-Token",
+                "X-RedGM-View-Role",
             ],
         )
 
@@ -337,28 +339,44 @@ class ServerContext:
         return str(sess.get("role") or "anon")
 
     def can_view_gm_private_state(self, request: Any, sess: dict[str, Any]) -> bool:
-        eff_role = self.effective_role(request, sess)
-        return eff_role in {"admin", "open"}
+        if self.effective_role(request, sess) in {"admin", "open"}:
+            return True
+        return bool(
+            sess.get("authenticated")
+            and sess.get("pin_only_mode")
+            and not self.auth.is_admin_configured()
+            and (request.headers.get("x-redgm-view-role") or "").strip().lower() != "user"
+        )
 
     def is_admin_or_pin_only(self, request: Any, sess: dict[str, Any]) -> bool:
-        eff_role = self.effective_role(request, sess)
-        if eff_role != "user":
-            return True
-        return bool(sess.get("pin_only_mode") and not self.auth.is_admin_configured())
+        return self.can_view_gm_private_state(request, sess)
 
     @staticmethod
     def filter_llm_override_for_role(cfg_raw: dict[str, Any] | None, *, eff_role: str | None = None) -> dict[str, Any] | None:
-        """Hook for gating/filtering per-request LLM overrides by caller role."""
+        """Restrict per-request LLM overrides to admin/open callers."""
+        if eff_role not in {"admin", "open"} or not isinstance(cfg_raw, dict) or not cfg_raw:
+            return None
         return cfg_raw
 
     def resolve_active_llm(self, cfg_raw: dict[str, Any] | None = None, *, eff_role: str | None = None):
+        if isinstance(cfg_raw, dict) and cfg_raw and eff_role not in {"admin", "open"}:
+            raise PermissionError("Admin privileges required for per-request LLM overrides")
         if self.llm is not None:
             return self.llm
+        from urllib.parse import urlsplit
         from turnloop import LLMConfig, OpenAICompatibleLLM, load_llm_settings
         saved = load_llm_settings(self.resolved_settings_path())
         merged = dict(saved)
         filtered = self.filter_llm_override_for_role(cfg_raw, eff_role=eff_role)
         if isinstance(filtered, dict):
+            if "base_url" in filtered and filtered["base_url"] is not None:
+                saved_parts = urlsplit(str(saved.get("base_url") or "").strip())
+                new_parts = urlsplit(str(filtered["base_url"] or "").strip())
+                saved_origin = (saved_parts.scheme.lower(), saved_parts.netloc.lower())
+                new_origin = (new_parts.scheme.lower(), new_parts.netloc.lower())
+                explicit_key = "api_key" in filtered and filtered["api_key"] is not None
+                if new_origin != saved_origin and not explicit_key:
+                    merged["api_key"] = ""
             for key in (
                 "base_url",
                 "model",
@@ -447,7 +465,7 @@ class ServerContext:
                     },
                 )
             return None
-        if uname and owner and owner.lower() != uname.lower():
+        if owner and (not uname or owner.lower() != uname.lower()):
             return JSONResponse(
                 status_code=403,
                 content={
@@ -480,7 +498,7 @@ class ServerContext:
                     content={"detail": "Selected speaking character is not attached to this campaign.", "request_id": request_id},
                 )
             owner = str((matched_char.get("detail") or {}).get("owner_username") or "").strip()
-            if uname and owner and owner.lower() != uname.lower():
+            if owner and (not uname or owner.lower() != uname.lower()):
                 return JSONResponse(
                     status_code=403,
                     content={"detail": f"You cannot speak as {matched_char.get('name')} (owned by {owner}).", "request_id": request_id},
@@ -502,10 +520,42 @@ class ServerContext:
         *,
         eff_role: str,
         uname: str,
+        chars: list[dict[str, Any]] | None = None,
+        pin_only_mode: bool = False,
         request_id: str,
     ):
-        """Hook for message authorship/ownership verification (expanded in Phase 4)."""
-        return None
+        """Enforce message authorship or owned-character attribution for non-admin edits/deletes."""
+        from fastapi.responses import JSONResponse
+        if eff_role != "user" or pin_only_mode or msg is None:
+            return None
+        if msg.get("role") != "user":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Only Admin can modify or delete GM or system messages.", "request_id": request_id},
+            )
+        meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+        author = str(meta.get("author_username") or "").strip()
+        if author:
+            if uname and author.lower() == uname.lower():
+                return None
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": f"Message belongs to {author}. Only its author or Admin can modify or delete it.",
+                    "request_id": request_id,
+                },
+            )
+        speaker_cid = str(meta.get("speaker_character_id") or "").strip()
+        if speaker_cid and chars and uname:
+            matched = next((c for c in chars if c.get("id") == speaker_cid), None)
+            if matched is not None:
+                char_owner = str((matched.get("detail") or {}).get("owner_username") or "").strip()
+                if char_owner and char_owner.lower() == uname.lower():
+                    return None
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Only the message author or Admin can modify or delete this message.", "request_id": request_id},
+        )
 
 
 def create_server_context(

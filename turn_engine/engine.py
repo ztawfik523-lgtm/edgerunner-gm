@@ -50,6 +50,7 @@ from turn_engine.state_normalization import (
     _format_clock_label,
     _normalize_campaign_changes,
     _visible_gm_secrets_for_prompt,
+    _visible_state_for_prompt,
     build_npc_profiles,
     compute_party_grouping,
     parse_session_zero,
@@ -170,9 +171,9 @@ class TurnEngine:
         return BranchPrivateStateStore.apply_clock_ops(current, ops, allow_secret=allow_secret)
 
     def _load_branch_private_state(
-        self, campaign_id: str, parent_id: str | None
+        self, campaign_id: str, parent_id: str | None, *, channel_id: str | None = None
     ) -> tuple[dict[str, str], list[dict[str, Any]]]:
-        return self.private_state.load_branch_private_state(campaign_id, parent_id)
+        return self.private_state.load_branch_private_state(campaign_id, parent_id, channel_id=channel_id)
 
     def _save_branch_private_state(
         self,
@@ -184,8 +185,8 @@ class TurnEngine:
     ) -> None:
         self.private_state.save_branch_private_state(campaign_id, message_id, parent_id, secrets, clocks)
 
-    def _latest_snapshot_leaf(self, campaign_id: str) -> str | None:
-        return self.private_state.latest_snapshot_leaf(campaign_id)
+    def _latest_snapshot_leaf(self, campaign_id: str, channel_id: str = "main") -> str | None:
+        return self.private_state.latest_snapshot_leaf(campaign_id, channel_id=channel_id)
 
     def _active_channel_leaves(self, campaign_id: str) -> list[str]:
         return self.private_state.active_channel_leaves(campaign_id)
@@ -203,8 +204,15 @@ class TurnEngine:
     def list_all_clocks(self, campaign_id: str, leaf_id: str | None = None) -> list[dict[str, Any]]:
         return self.private_state.list_all_clocks(campaign_id, leaf_id=leaf_id)
 
-    def mutate_public_clock(self, campaign_id: str, body: dict[str, Any], leaf_id: str | None = None) -> list[dict[str, Any]]:
-        return self.private_state.mutate_public_clock(campaign_id, body, leaf_id=leaf_id)
+    def mutate_public_clock(
+        self,
+        campaign_id: str,
+        body: dict[str, Any],
+        leaf_id: str | None = None,
+        *,
+        allow_secret: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.private_state.mutate_public_clock(campaign_id, body, leaf_id=leaf_id, allow_secret=allow_secret)
 
     def seed_initial_gm_state(
         self,
@@ -226,11 +234,13 @@ class TurnEngine:
             replace_clocks=replace_clocks,
         )
 
-    def _get_compressed_count(self, campaign_id: str) -> int:
-        return self.private_state.get_compressed_count(campaign_id)
+    def _get_compressed_count(self, campaign_id: str, channel_id: str = "main") -> int:
+        return self.private_state.get_compressed_count(campaign_id, channel_id=channel_id)
 
-    def _set_compressed_count(self, campaign_id: str, leaf_id: str | None, count: int) -> None:
-        self.private_state.set_compressed_count(campaign_id, leaf_id, count)
+    def _set_compressed_count(
+        self, campaign_id: str, leaf_id: str | None, count: int, channel_id: str | None = None
+    ) -> None:
+        self.private_state.set_compressed_count(campaign_id, leaf_id, count, channel_id=channel_id)
 
     def _catalog_items(self) -> dict[str, dict[str, Any]]:
         return self.executor.catalog_items()
@@ -489,7 +499,7 @@ class TurnEngine:
             main_tree = self.tree.get_tree(campaign_id, channel_id="main")
             main_tail = list(main_tree.get("active_branch") or [])[-6:]
 
-        branch_secrets, branch_clocks = self._load_branch_private_state(campaign_id, branch_parent)
+        branch_secrets, branch_clocks = self._load_branch_private_state(campaign_id, branch_parent, channel_id=chan)
 
         dice_pool = {"d10": _roll_dice(3, 10), "d6": _roll_dice(4, 6)}
 
@@ -507,7 +517,7 @@ class TurnEngine:
             ]
         ).strip()
         citations = self._collect_citations(campaign_id, citation_query or user_text, context["campaign"]["state"])
-        compressed_count = self._get_compressed_count(campaign_id)
+        compressed_count = self._get_compressed_count(campaign_id, channel_id=chan)
         turns_since_compress = max(0, len(branch) - compressed_count)
         threshold = max(4, int(self.turn_settings.get("compression_threshold", _COMPRESSION_MESSAGE_THRESHOLD)))
         party_grouping = compute_party_grouping(context["characters"], context["campaign"]["state"], active_channel_id=chan)
@@ -972,6 +982,103 @@ class TurnEngine:
             for w in executed["warnings"]:
                 yield {"event": "warning", "data": {"message": w}}
 
+        # Persist assistant_msg immediately after Narrator completes so client disconnect / Chronicler failure never loses the reply.
+        chan = str(prep.get("channel_id") or "main")
+        model_name = getattr(getattr(self.llm, "config", None), "model", "")
+        citation_cards = [
+            {
+                "id": c["id"],
+                "name": c["name"],
+                "category": c["category"],
+                "summary": c["summary"],
+                "source": c.get("source"),
+                "printed_page": c.get("printed_page"),
+                "pdf_page": c.get("pdf_page"),
+            }
+            for c in prep["citations"]
+        ]
+
+        def _compute_generation_stats() -> dict[str, Any]:
+            overall_elapsed_s = round(max(0.01, time.perf_counter() - turn_started_at), 2)
+            if usage_observed and total_completion_tokens > 0:
+                completion_tokens = total_completion_tokens
+                tokens_per_second = round(completion_tokens / overall_elapsed_s, 1)
+                tokens_estimated = False
+            else:
+                completion_tokens = max(1, round(len(raw_text) / 4)) if raw_text else 0
+                tokens_per_second = (
+                    round(completion_tokens / max(0.01, stream_elapsed_s), 1)
+                    if completion_tokens > 0
+                    else 0.0
+                )
+                tokens_estimated = True
+            return {
+                "elapsed_seconds": overall_elapsed_s,
+                "tokens_per_second": tokens_per_second,
+                "completion_tokens": completion_tokens,
+                "estimated": tokens_estimated,
+            }
+
+        pre_post_ctx = self.gameplay.campaign_context(campaign_id)
+        initial_gen_stats = _compute_generation_stats()
+        if not is_think:
+            for def_id in prep.get("deferred_user_ids") or []:
+                if def_id != user_msg["id"]:
+                    self.tree.update_message_metadata(
+                        campaign_id,
+                        def_id,
+                        {"gm_deferred": None, "defer_reason": None},
+                    )
+
+        is_manual_roll = bool((user_msg.get("metadata") or {}).get("manual_roll"))
+        user_meta_updates: dict[str, Any] = {}
+        if not is_manual_roll:
+            if executed["rolls"]:
+                user_meta_updates["rolls"] = executed["rolls"]
+            elif "rolls" in (user_msg.get("metadata") or {}):
+                user_meta_updates["rolls"] = None
+        if not is_think and (user_msg.get("metadata") or {}).get("gm_deferred"):
+            user_meta_updates["gm_deferred"] = None
+            user_meta_updates["defer_reason"] = None
+        if user_meta_updates:
+            updated_user = self.tree.update_message_metadata(campaign_id, user_msg["id"], user_meta_updates)
+            if updated_user is not None:
+                user_msg = updated_user
+
+        assistant_msg = self.tree.append_message(
+            campaign_id,
+            parent_id=user_msg["id"],
+            role="assistant",
+            content=clean_text,
+            raw_content=raw_text,
+            model=model_name,
+            campaign_revision=pre_post_ctx["campaign"]["revision"],
+            solo_revision=pre_post_ctx["solo"]["revision"],
+            channel_id=chan,
+            metadata={
+                "turn_id": prep["turn_id"],
+                "channel_id": chan,
+                "mode": "intro" if is_intro else active_mode,
+                **({"is_intro": True} if is_intro else {}),
+                **({"turn_intent": "think"} if is_think else {}),
+                "generation_stats": initial_gen_stats,
+                "rolls": executed["rolls"],
+                "patches": executed["patches"],
+                "library_added": [e["id"] for e in executed["library_added"]],
+                "citations": [c["id"] for c in prep["citations"]],
+                "citation_cards": citation_cards,
+                "warnings": executed["warnings"],
+                **({"guidance": guidance.strip()} if isinstance(guidance, str) and guidance.strip() else {}),
+            },
+        )
+        self._save_branch_private_state(
+            campaign_id,
+            assistant_msg["id"],
+            user_msg["id"],
+            executed["gm_secrets"],
+            executed["clocks"],
+        )
+
         # Optional 3rd pass (Post-Turn Chronicler) when enabled and using OpenAI-compatible or opted-in multi-call adapters.
         # On /think turns, skip Chronicler unless at least one observation check succeeded, and restrict to discoveries-only.
         chronicler_allowed = bool(self.turn_settings.get("enable_chronicler", True))
@@ -1085,77 +1192,11 @@ class TurnEngine:
             yield {"event": "warning", "data": {"message": msg}}
 
         post_ctx = self.gameplay.campaign_context(campaign_id)
-        model_name = getattr(getattr(self.llm, "config", None), "model", "")
-        citation_cards = [
-            {
-                "id": c["id"],
-                "name": c["name"],
-                "category": c["category"],
-                "summary": c["summary"],
-                "source": c.get("source"),
-                "printed_page": c.get("printed_page"),
-                "pdf_page": c.get("pdf_page"),
-            }
-            for c in prep["citations"]
-        ]
-        overall_elapsed_s = round(max(0.01, time.perf_counter() - turn_started_at), 2)
-        if usage_observed and total_completion_tokens > 0:
-            completion_tokens = total_completion_tokens
-            tokens_per_second = round(completion_tokens / overall_elapsed_s, 1)
-            tokens_estimated = False
-        else:
-            completion_tokens = max(1, round(len(raw_text) / 4)) if raw_text else 0
-            tokens_per_second = (
-                round(completion_tokens / max(0.01, stream_elapsed_s), 1)
-                if completion_tokens > 0
-                else 0.0
-            )
-            tokens_estimated = True
-        generation_stats = {
-            "elapsed_seconds": overall_elapsed_s,
-            "tokens_per_second": tokens_per_second,
-            "completion_tokens": completion_tokens,
-            "estimated": tokens_estimated,
-        }
-
-        if not is_think:
-            for def_id in prep.get("deferred_user_ids") or []:
-                if def_id != user_msg["id"]:
-                    self.tree.update_message_metadata(
-                        campaign_id,
-                        def_id,
-                        {"gm_deferred": None, "defer_reason": None},
-                    )
-
-        if executed["rolls"] or (not is_think and user_msg.get("metadata", {}).get("gm_deferred")):
-            updated_user = self.tree.update_message_metadata(
-                campaign_id,
-                user_msg["id"],
-                {
-                    **({"rolls": executed["rolls"]} if executed["rolls"] else {}),
-                    **({"gm_deferred": None, "defer_reason": None} if not is_think else {}),
-                },
-            )
-            if updated_user is not None:
-                user_msg = updated_user
-
-        chan = str(prep.get("channel_id") or "main")
-        assistant_msg = self.tree.append_message(
+        generation_stats = _compute_generation_stats()
+        updated_assistant = self.tree.update_message_metadata(
             campaign_id,
-            parent_id=user_msg["id"],
-            role="assistant",
-            content=clean_text,
-            raw_content=raw_text,
-            model=model_name,
-            campaign_revision=post_ctx["campaign"]["revision"],
-            solo_revision=post_ctx["solo"]["revision"],
-            channel_id=chan,
-            metadata={
-                "turn_id": prep["turn_id"],
-                "channel_id": chan,
-                "mode": "intro" if is_intro else active_mode,
-                **({"is_intro": True} if is_intro else {}),
-                **({"turn_intent": "think"} if is_think else {}),
+            assistant_msg["id"],
+            {
                 "generation_stats": generation_stats,
                 "rolls": executed["rolls"],
                 "patches": executed["patches"],
@@ -1163,9 +1204,12 @@ class TurnEngine:
                 "citations": [c["id"] for c in prep["citations"]],
                 "citation_cards": citation_cards,
                 "warnings": executed["warnings"],
-                **({"guidance": guidance.strip()} if isinstance(guidance, str) and guidance.strip() else {}),
             },
+            campaign_revision=post_ctx["campaign"]["revision"],
+            solo_revision=post_ctx["solo"]["revision"],
         )
+        if updated_assistant is not None:
+            assistant_msg = updated_assistant
         self._save_branch_private_state(
             campaign_id,
             assistant_msg["id"],
@@ -1193,10 +1237,15 @@ class TurnEngine:
     async def compress_memory(self, campaign_id: str, leaf_id: str | None = None) -> dict[str, Any]:
         """Distill branch history into structured Campaign Library dossiers + concise cross-referenced summary."""
         ctx = self.gameplay.campaign_context(campaign_id)
-        tree = self.tree.get_tree(campaign_id)
+        target_chan = "main"
+        if leaf_id:
+            leaf_info = self.tree.get_message(campaign_id, leaf_id)
+            if leaf_info is not None:
+                target_chan = ChatTreeStore._norm_channel(leaf_info.get("channel_id"))
+        tree = self.tree.get_tree(campaign_id, channel_id=target_chan)
         target_leaf = leaf_id or tree.get("active_leaf_id")
         branch = self.tree.get_branch_to(campaign_id, target_leaf) if target_leaf else list(tree.get("active_branch") or [])
-        secrets, clocks = self._load_branch_private_state(campaign_id, target_leaf)
+        secrets, clocks = self._load_branch_private_state(campaign_id, target_leaf, channel_id=target_chan)
         existing_lib = [
             {
                 "name": e["name"],
@@ -1242,7 +1291,7 @@ class TurnEngine:
             '  "clock_ops": [{"id": "...", "name": "...", "delta": 0, "filled": 0, "segments": 4, "category": "heat|obligation|deadline|faction|recovery", "visibility": "public|secret", "note": "..."}]\n'
             "}\n"
             f"{core_block}"
-            f"Current Campaign State: {json.dumps(ctx['campaign']['state'])}\n"
+            f"Current Campaign State: {json.dumps(_visible_state_for_prompt(ctx['campaign']['state']))}\n"
             f"Existing Campaign Library Entries: {json.dumps(existing_lib)}\n"
             f"Current Private GM Secrets: {json.dumps(_visible_gm_secrets_for_prompt(secrets))}\n"
             f"Current Clocks: {json.dumps(clocks)}"
@@ -1288,11 +1337,17 @@ class TurnEngine:
             except (TypeError, ValueError) as exc:
                 warnings.append(f"Skipped library entry '{raw_entry.get('name', '?')}': {exc}")
 
-        live_camp = self.gameplay.campaign_context(campaign_id)["campaign"]
+        live_ctx = self.gameplay.campaign_context(campaign_id)
+        live_camp = live_ctx["campaign"]
         raw_updates = parsed.get("campaign_updates") if isinstance(parsed.get("campaign_updates"), dict) else {}
         updated_campaign = live_camp
         if raw_updates:
-            changes, norm_notes = _normalize_campaign_changes(raw_updates, live_camp["state"])
+            changes, norm_notes = _normalize_campaign_changes(
+                raw_updates,
+                live_camp["state"],
+                characters=live_ctx["characters"],
+                existing_secrets=secrets,
+            )
             warnings.extend(norm_notes)
             if changes:
                 updated_campaign = self.gameplay.execute(
@@ -1316,8 +1371,8 @@ class TurnEngine:
         self._save_branch_private_state(campaign_id, target_leaf, parent_id, next_secrets, next_clocks)
         if not target_leaf:
             self._save_branch_private_state(campaign_id, None, None, next_secrets, next_clocks)
-        self._set_compressed_count(campaign_id, target_leaf, len(branch))
-        self.tree.sync_active_leaf_revisions(campaign_id)
+        self._set_compressed_count(campaign_id, target_leaf, len(branch), channel_id=target_chan)
+        self.tree.sync_all_active_leaf_revisions(campaign_id)
 
         return {
             "campaign": updated_campaign,
@@ -1394,6 +1449,10 @@ class TurnEngine:
             raise ValueError(f"Unsupported turn mode: {active_mode!r}")
 
         chan = ChatTreeStore._norm_channel(channel_id)
+        if parent_id is not None and chan == "main":
+            parent_msg = await asyncio.to_thread(self.tree.get_message, campaign_id, parent_id)
+            if parent_msg is not None:
+                chan = ChatTreeStore._norm_channel(parent_msg.get("channel_id"))
         prep = await asyncio.to_thread(
             lambda: self.preprocess(
                 campaign_id,
@@ -1492,6 +1551,7 @@ class TurnEngine:
             channel_id=chan,
             metadata=meta,
         )
+        await asyncio.to_thread(self.private_state.save_pre_turn_snapshot, campaign_id, user_msg["id"])
         yield {"event": "user_message", "data": {"message": user_msg, "channel_id": chan}}
         turn_completed = False
         try:
@@ -1512,7 +1572,8 @@ class TurnEngine:
         finally:
             if not turn_completed:
                 try:
-                    self.tree.delete_message(campaign_id, user_msg["id"])
+                    if not self.tree.has_children(campaign_id, user_msg["id"]):
+                        self.tree.delete_message(campaign_id, user_msg["id"])
                 except Exception:
                     pass
 
@@ -1570,6 +1631,9 @@ class TurnEngine:
         use_luck = int(user_msg["metadata"].get("luck_spend", 0)) if luck_spend is None else int(luck_spend)
         if use_luck < 0:
             raise ValueError("luck_spend must be a nonnegative integer")
+        restored = await asyncio.to_thread(self.private_state.restore_pre_turn_snapshot, campaign_id, user_msg["id"])
+        if not restored and not await asyncio.to_thread(self.tree.has_children, campaign_id, user_msg["id"]):
+            await asyncio.to_thread(self.private_state.save_pre_turn_snapshot, campaign_id, user_msg["id"])
         prep = await asyncio.to_thread(
             lambda: self.preprocess(
                 campaign_id,

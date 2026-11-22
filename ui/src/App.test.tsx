@@ -3497,6 +3497,225 @@ describe("Cyberpunk RED GM UI", () => {
     expect(turnBodies[1].turn_intent).toBe("think");
     expect(turnBodies[1].user_text).toBe("Are there cameras above the door?");
   });
+
+  it("routes handleSpendIpSkill & handleTherapy through /v1/game, hides hidden Real Name from non-owners, and renders Admin/Player clocks", async () => {
+    const campaign = {
+      id: "camp-4c-ui",
+      name: "Watson",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "Dock 14", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const char = {
+      id: "pc-4c",
+      name: "Vee",
+      stats: { INT: 6, REF: 8, DEX: 6, TECH: 7, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Handgun: 4, "Medical Tech": 4 },
+      hp: 30,
+      max_hp: 40,
+      humanity: 40,
+      luck_remaining: 6,
+      money: 2000,
+      inventory: [],
+      revision: 3,
+      detail: {
+        handle: "Vee",
+        real_name: "Valerie Mercer",
+        real_name_hidden: true,
+        roles: [{ role: "Medtech", rank: 4 }],
+        role_ext: { ip: 120 },
+      },
+    };
+    const gameCalls: Array<Record<string, unknown>> = [];
+    const clockPosts: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({ auth_enabled: true, authenticated: true, username: "alice", role: "user", can_bootstrap: false });
+      }
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: [],
+          active_branch: [],
+          active_leaf_id: null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url.startsWith(`/v1/campaigns/${campaign.id}/clocks`)) {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body ?? "{}"));
+          clockPosts.push(body);
+          return jsonResponse({
+            campaign_id: campaign.id,
+            clocks: [{ id: "clk-1", name: "NCPD Heat", filled: 1, segments: 4, visibility: "public" }],
+          });
+        }
+        return jsonResponse({
+          campaign_id: campaign.id,
+          clocks: [{ id: "clk-1", name: "NCPD Heat", filled: 1, segments: 4, visibility: "public" }],
+        });
+      }
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        gameCalls.push(body);
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [char],
+              solo: { revision: 2, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+        if (body.action === "role_action") {
+          return jsonResponse({
+            action: "role_action",
+            result: { committed: true, revision: 3, result: { skill: "Handgun", rank: 5, cost: 60, ip: 60 } },
+          });
+        }
+        if (body.action === "health_action") {
+          return jsonResponse({
+            action: "health_action",
+            result: { committed: true, revision: 4, result: { therapy: "standard", success: true, cost: 500, humanity: 47 } },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    // Non-admin non-owner ("alice" viewing "bob"'s PC) must NOT see hidden real_name
+    await screen.findByText("Vee");
+    expect(screen.queryByText(/Valerie Mercer/i)).not.toBeInTheDocument();
+
+    // Spend IP skill routes through role_action with expected_revision, reason, operation_id, auto_revision: true
+    fireEvent.click(await screen.findByRole("button", { name: /^Handgun/i }));
+    const spendIpBtn = await screen.findByRole("button", { name: /Upgrade \+1 \(100 IP\)/i });
+    fireEvent.click(spendIpBtn);
+    await waitFor(() => expect(gameCalls.some((c) => c.action === "role_action")).toBe(true));
+    const roleCall = gameCalls.find((c) => c.action === "role_action")!;
+    expect(roleCall.auto_revision).toBe(true);
+    expect((roleCall.arguments as Record<string, unknown>).expected_revision).toBe(3);
+    expect((roleCall.arguments as Record<string, unknown>).operation_id).toBeTruthy();
+    expect(await screen.findByText(/Upgraded Handgun to \+5 \(60 IP spent\)\./i)).toBeInTheDocument();
+
+    // Therapy routes through health_action
+    const therapyBtn = screen.getByRole("button", { name: /Therapy 500eb/i });
+    fireEvent.click(therapyBtn);
+    await waitFor(() => expect(gameCalls.some((c) => c.action === "health_action")).toBe(true));
+    const healthCall = gameCalls.find((c) => c.action === "health_action")!;
+    expect(healthCall.auto_revision).toBe(true);
+    expect((healthCall.arguments as Record<string, unknown>).action).toBe("therapy");
+    expect(((healthCall.arguments as Record<string, unknown>).arguments as Record<string, unknown>).therapy).toBe("standard");
+    expect(await screen.findByText(/Completed standard Therapy \(Humanity 47, -500 eb\)\./i)).toBeInTheDocument();
+
+    // Player sees read-only public clock in Campaign tab (no Add clock form)
+    fireEvent.click(screen.getByRole("button", { name: /^Campaign$/i }));
+    expect(await screen.findByText("NCPD Heat")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add world clock")).not.toBeInTheDocument();
+  });
+
+  it("preserves unsaved prompt edits in SettingsModal when toggling Chronicler inline", async () => {
+    const campaign = {
+      id: "camp-4c-set",
+      name: "Watson",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const llmCfg = {
+      base_url: "http://127.0.0.1:11434/v1",
+      model: "llama3",
+      has_api_key: false,
+      api_key_masked: "",
+      temperature: 0.4,
+      max_tokens: 1200,
+      timeout_s: 60,
+      mode: "two_pass",
+      enable_chronicler: true,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        if (init?.method === "POST") {
+          const patch = JSON.parse(String(init.body ?? "{}"));
+          return jsonResponse({ ...llmCfg, ...patch });
+        }
+        return jsonResponse(llmCfg);
+      }
+      if (url === "/v1/settings/all") {
+        return jsonResponse({
+          llm: llmCfg,
+          prompts: { narrator_extra: "Original server note" },
+          prompt_defaults: { narrator_extra: "" },
+          server: { bind_host: "127.0.0.1", port: 8765, allowed_origins: [] },
+          runtime: { bind_host: "127.0.0.1", port: 8765, lan_ips: [], tls: false, restarting: false },
+          auth_policy: { accounts: [], allow_guest_users: true, allow_self_signup: true, user_passcode_configured: false },
+        });
+      }
+      if (url === "/v1/corebook/status") return jsonResponse({ rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: [],
+          active_branch: [],
+          active_leaf_id: null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Settings$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Prompts$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Extra Storytelling & Prose Notes/i }));
+    const narratorField = (await screen.findAllByDisplayValue("Original server note"))[0] as HTMLTextAreaElement;
+    fireEvent.change(narratorField, { target: { value: "Unsaved custom draft" } });
+    expect(narratorField.value).toBe("Unsaved custom draft");
+
+    const toggleBtn = await screen.findByRole("button", { name: /Chronicler:\s*ON/i });
+    fireEvent.click(toggleBtn);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Chronicler:\s*OFF/i })).toBeInTheDocument());
+    expect(narratorField.value).toBe("Unsaved custom draft");
+  });
 });
 
 function initOptionsOrEmpty(x: unknown) {

@@ -1,6 +1,7 @@
 """Audited narrative campaign memory and explicit session lifecycle."""
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from contextlib import closing
@@ -9,6 +10,7 @@ from campaign import _json, _integer
 
 _SECTIONS = ("npcs", "objectives", "discoveries", "unresolved")
 _INITIAL = {"scene": "", "summary": "", **{key: {} for key in _SECTIONS}}
+_TOTAL_LIMIT = 24000
 
 
 class CampaignMemory:
@@ -86,7 +88,7 @@ class CampaignMemory:
             conn.execute("BEGIN IMMEDIATE")
             prior = self._find_prior(conn, operation_id, payload)
             if prior is not None: return prior
-            result = dict(id=str(uuid.uuid4()), name=name, revision=1, state=_INITIAL.copy(), session_number=0, is_primary=False, character_ids=[])
+            result = dict(id=str(uuid.uuid4()), name=name, revision=1, state=copy.deepcopy(_INITIAL), session_number=0, is_primary=False, character_ids=[])
             conn.execute("INSERT INTO campaigns(id,name,revision,state_json,session_number,is_primary) VALUES(?,?,?,?,?,?)",
                          (result["id"], name, 1, _json(_INITIAL), 0, 0))
             conn.execute("INSERT INTO campaign_events(campaign_id,operation_id,payload,result,before_json,after_json,reason) VALUES(?,?,?,?,?,?,?)",
@@ -120,8 +122,10 @@ class CampaignMemory:
                 "gm_secrets",
                 "campaign_clocks",
                 "turn_gm_snapshots",
+                "turn_pre_snapshots",
                 "campaign_compressions",
                 "campaign_library",
+                "library_events",
             ):
                 if tbl in tables:
                     cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})")}
@@ -168,7 +172,7 @@ class CampaignMemory:
                 if not isinstance(k, str) or not k.strip() or len(k) > 100: raise ValueError("state keys must be nonempty strings of at most 100 characters")
                 if not isinstance(v, str) or len(v) > 2000: raise ValueError("state values must be strings of at most 2000 characters")
             result[section] = dict(mapping)
-        if len(_json(result)) > 24000: raise ValueError("serialized campaign state exceeds 24000 characters")
+        if len(_json(result)) > _TOTAL_LIMIT: raise ValueError(f"serialized campaign state exceeds {_TOTAL_LIMIT} characters")
         return result
 
     def update_campaign(self, campaign_id, expected_revision, changes, reason, operation_id):

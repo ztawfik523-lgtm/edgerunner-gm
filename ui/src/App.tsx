@@ -854,7 +854,7 @@ export function App() {
           callbacks,
           signal,
         ),
-      msg.id,
+      msg.role === "assistant" ? msg.id : undefined,
       undefined,
       msg.metadata?.turn_intent,
     );

@@ -19,6 +19,7 @@ from turn_engine.state_normalization import (
     _normalize_character_changes,
     _parse_clock_minutes,
     _resolve_character,
+    parse_npc_identities_public,
 )
 
 _MAX_HOMEBREW_PER_TURN = 6
@@ -1779,6 +1780,7 @@ class PlanExecutor:
 
         # 3. Execute explicit state_ops through GameplayService with before/after snapshot capture.
         raw_state_ops = [op for op in (plan.get("state_ops") or []) if isinstance(op, dict)]
+        staged_npc_secrets: dict[str, Any] = {}
         if len(raw_state_ops) > _MAX_OPS_PER_TURN:
             warnings.append(f"Capped state_ops from {len(raw_state_ops)} to {_MAX_OPS_PER_TURN}.")
             raw_state_ops = raw_state_ops[:_MAX_OPS_PER_TURN]
@@ -1810,23 +1812,27 @@ class PlanExecutor:
                     characters=live_ctx["characters"],
                     existing_secrets=prep.get("gm_secrets") or {},
                 )
-                # Mirror hidden NPC legal names into secret gm_secrets updates so players cannot inspect them
+                pending_npc_secrets: dict[str, Any] = {}
                 if isinstance(raw_changes.get("npc_identities"), dict):
-                    sec_up = dict(plan.get("gm_secrets") or {}) if isinstance(plan.get("gm_secrets"), dict) else {}
+                    prev_ids = parse_npc_identities_public(live_camp["state"])
                     for raw_h, raw_m in raw_changes["npc_identities"].items():
                         h = str(raw_h or "").strip()
                         if not h:
                             continue
                         if raw_m is None:
-                            sec_up[f"__npc_real:{h}"] = None
+                            pending_npc_secrets[f"__npc_real:{h}"] = None
                         elif isinstance(raw_m, dict):
-                            hidden = bool(raw_m.get("real_name_hidden", True))
+                            prev_hidden = bool((prev_ids.get(h) or {}).get("real_name_hidden", True))
+                            hidden = (
+                                bool(raw_m["real_name_hidden"])
+                                if "real_name_hidden" in raw_m and raw_m["real_name_hidden"] is not None
+                                else prev_hidden
+                            )
                             rname = str(raw_m.get("real_name") or "").strip()
                             if hidden and rname:
-                                sec_up[f"__npc_real:{h}"] = rname
+                                pending_npc_secrets[f"__npc_real:{h}"] = rname
                             elif not hidden:
-                                sec_up[f"__npc_real:{h}"] = None
-                    plan["gm_secrets"] = sec_up
+                                pending_npc_secrets[f"__npc_real:{h}"] = None
                 warnings.extend(norm_notes)
                 if not changes:
                     continue
@@ -1843,6 +1849,7 @@ class PlanExecutor:
                         },
                         campaign_id=campaign_id,
                     )["result"]
+                    staged_npc_secrets.update(pending_npc_secrets)
                     patches.append(
                         {
                             "target": "campaign",
@@ -1920,7 +1927,9 @@ class PlanExecutor:
             warnings.extend(t_warns)
 
         # 5. Advance branch-scoped GM secrets & world clocks without exposing private data in patches.
-        next_secrets = self.private_state.merge_gm_secrets(prep.get("gm_secrets") or {}, plan.get("gm_secrets"))
+        raw_plan_secrets = plan.get("gm_secrets") if isinstance(plan.get("gm_secrets"), dict) else {}
+        combined_secret_updates = {**raw_plan_secrets, **staged_npc_secrets} if staged_npc_secrets else plan.get("gm_secrets")
+        next_secrets = self.private_state.merge_gm_secrets(prep.get("gm_secrets") or {}, combined_secret_updates)
         next_clocks, public_clock_changes = self.private_state.apply_clock_ops(
             prep.get("clocks") or [], plan.get("clock_ops"), allow_secret=True
         )

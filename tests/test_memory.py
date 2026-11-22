@@ -113,3 +113,18 @@ def test_session_collision_rolls_back_all_characters_and_preserves_retry(tmp_pat
     assert all(len(store.audit_events(c["id"])) == 1 for c in members)
     assert memory.get_campaign(campaign["id"])["session_number"] == 0
     assert memory.update_campaign(campaign["id"], revision, {"scene": "Clinic"}, "arrived", collision) == updated
+
+
+def test_create_campaign_does_not_share_initial_nested_dicts(tmp_path):
+    import memory as mem_mod
+
+    _, m = setup(tmp_path)
+    c1 = m.create_campaign("Alpha", "c1")
+    c2 = m.create_campaign("Beta", "c2")
+    c1["state"]["npcs"]["Rogue"] = "Fixer"
+    c1["state"]["discoveries"]["clue"] = "Shard"
+    assert c2["state"]["npcs"] == {}
+    assert c2["state"]["discoveries"] == {}
+    assert mem_mod._INITIAL["npcs"] == {}
+    assert mem_mod._INITIAL["discoveries"] == {}
+

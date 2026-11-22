@@ -5,7 +5,9 @@ import json
 import re
 from typing import Any
 
+from campaign import _json
 from combat import wound_state
+import memory
 
 _CLOCK_CATEGORIES = frozenset({"heat", "obligation", "deadline", "faction", "recovery"})
 
@@ -374,7 +376,7 @@ def compute_party_grouping(
 
 def _encode_party_locations_json(mode: str, locations: dict[str, str], channels: dict[str, Any]) -> str:
     """Serialize __party_locations cleanly within the 2000-char discovery field limit without breaking JSON."""
-    payload = {
+    payload: dict[str, Any] = {
         "mode": mode,
         "locations": {str(k)[:48]: str(v)[:100] for k, v in locations.items()},
         "channels": {
@@ -390,18 +392,27 @@ def _encode_party_locations_json(mode: str, locations: dict[str, str], channels:
         },
     }
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    if len(raw) <= 2000:
+    if len(raw) <= 1950:
         return raw
     payload["locations"] = {k: v[:40] for k, v in payload["locations"].items()}
     for meta in payload["channels"].values():
         meta["name"] = meta["name"][:32]
         meta["location"] = meta["location"][:32]
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    if len(raw) <= 2000:
+    if len(raw) <= 1950:
         return raw
-    # Last resort: drop redundant channel mirrors since compute_party_grouping rebuilds them from locations
+    # Drop redundant channel mirrors since compute_party_grouping rebuilds them from locations
     payload["channels"] = {}
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)[:2000]
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    if len(raw) <= 1950:
+        return raw
+    payload["locations"] = {k: v[:20] for k, v in payload["locations"].items()}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    while len(raw) > 1950 and payload["locations"]:
+        first_key = next(iter(payload["locations"]))
+        payload["locations"].pop(first_key, None)
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return raw if len(raw) <= 1950 else "{}"
 
 
 def _encode_npc_identities_json(cur_ids: dict[str, dict[str, Any]]) -> str:
@@ -692,6 +703,50 @@ def _visible_gm_secrets_for_prompt(gm_secrets: dict[str, Any] | None) -> dict[st
     }
 
 
+def _trim_discoveries_to_limit(disc: dict[str, str], max_entries: int = 40) -> dict[str, str]:
+    if len(disc) <= max_entries:
+        return disc
+    internal_items = [(k, v) for k, v in disc.items() if str(k).startswith("__")]
+    user_items = [(k, v) for k, v in disc.items() if not str(k).startswith("__")]
+    keep_user = max(0, max_entries - len(internal_items))
+    kept = internal_items + (user_items[-keep_user:] if keep_user > 0 else [])
+    return dict(kept[-max_entries:])
+
+
+def _enforce_total_state_limit(clean: dict[str, Any], current_state: dict[str, Any]) -> None:
+    limit = int(getattr(memory, "_TOTAL_LIMIT", 24000))
+    merged = {
+        "scene": str(clean.get("scene", current_state.get("scene", "")) or ""),
+        "summary": str(clean.get("summary", current_state.get("summary", "")) or ""),
+        "npcs": dict(clean.get("npcs", current_state.get("npcs") or {})),
+        "objectives": dict(clean.get("objectives", current_state.get("objectives") or {})),
+        "discoveries": dict(clean.get("discoveries", current_state.get("discoveries") or {})),
+        "unresolved": dict(clean.get("unresolved", current_state.get("unresolved") or {})),
+    }
+    if len(_json(merged)) <= limit:
+        return
+    disc = merged["discoveries"]
+    disc_changed = False
+    while len(_json(merged)) > limit:
+        evict_key = next((k for k in disc if not str(k).startswith("__")), None)
+        if evict_key is None:
+            break
+        disc.pop(evict_key, None)
+        disc_changed = True
+    if disc_changed:
+        clean["discoveries"] = disc
+    if len(_json(merged)) <= limit:
+        return
+    summary = merged["summary"]
+    if summary:
+        while len(_json(merged)) > limit and summary:
+            excess = len(_json(merged)) - limit
+            cut = max(1, min(len(summary), excess))
+            summary = summary[: len(summary) - cut].rstrip()
+            merged["summary"] = summary
+        clean["summary"] = summary
+
+
 def _normalize_campaign_changes(
     raw_changes: dict[str, Any],
     current_state: dict[str, Any],
@@ -719,11 +774,17 @@ def _normalize_campaign_changes(
             continue
         merged = dict(current_state.get(section) or {})
         val = mapped[section]
+        ignored_internal = False
+        applied_non_internal = False
         if isinstance(val, dict):
             for k, v in val.items():
                 key = str(k).strip()[:100]
                 if not key:
                     continue
+                if section == "discoveries" and key.startswith("__"):
+                    ignored_internal = True
+                    continue
+                applied_non_internal = True
                 if v is None or (isinstance(v, str) and not v.strip()):
                     merged.pop(key, None)
                 elif isinstance(v, dict):
@@ -735,17 +796,18 @@ def _normalize_campaign_changes(
             for entry in val:
                 text_entry = str(entry).strip()
                 if text_entry:
+                    if section == "discoveries" and text_entry.startswith("__"):
+                        ignored_internal = True
+                        continue
+                    applied_non_internal = True
                     merged[text_entry[:100]] = text_entry[:2000]
-        if len(merged) > 40:
-            if section == "discoveries":
-                internal_items = [(k, v) for k, v in merged.items() if str(k).startswith("__")]
-                user_items = [(k, v) for k, v in merged.items() if not str(k).startswith("__")]
-                keep_user = max(0, 40 - len(internal_items))
-                kept = internal_items + (user_items[-keep_user:] if keep_user > 0 else [])
-                merged = dict(kept[-40:])
-            else:
+        if section == "discoveries":
+            if applied_non_internal or not ignored_internal:
+                clean[section] = merged
+        else:
+            if len(merged) > 40:
                 merged = dict(list(merged.items())[-40:])
-        clean[section] = merged
+            clean[section] = merged
 
     if characters is not None and (isinstance(pc_locations_in, dict) or (isinstance(all_together_in, str) and all_together_in.strip())):
         base_state = {**current_state, **clean}
@@ -766,9 +828,13 @@ def _normalize_campaign_changes(
             if raw_meta is None:
                 cur_ids.pop(handle, None)
             elif isinstance(raw_meta, dict):
-                hidden = bool(raw_meta.get("real_name_hidden", True))
-                rname = str(raw_meta.get("real_name") or "").strip()[:100]
                 prev_entry = cur_ids.get(handle) or {}
+                hidden = (
+                    bool(raw_meta["real_name_hidden"])
+                    if "real_name_hidden" in raw_meta and raw_meta["real_name_hidden"] is not None
+                    else bool(prev_entry.get("real_name_hidden", True))
+                )
+                rname = str(raw_meta.get("real_name") or "").strip()[:100]
                 if not hidden and not rname:
                     sec_val = (existing_secrets or {}).get(f"__npc_real:{handle}") or ""
                     rname = (str(sec_val).strip() or str(prev_entry.get("real_name") or "").strip())[:100]
@@ -784,5 +850,11 @@ def _normalize_campaign_changes(
                 cur_ids[handle] = entry
         base_disc["__npc_identities"] = _encode_npc_identities_json(cur_ids)
         clean["discoveries"] = base_disc
+
+    if "discoveries" in clean and isinstance(clean["discoveries"], dict):
+        clean["discoveries"] = _trim_discoveries_to_limit(clean["discoveries"], 40)
+
+    if clean:
+        _enforce_total_state_limit(clean, current_state)
 
     return clean, notes

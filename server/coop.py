@@ -15,6 +15,16 @@ class _CoopHub:
         self.presence: dict[str, dict[str, dict[str, Any]]] = {}
         self.active_turns: dict[tuple[str, str], dict[str, Any]] = {}
         self.sync_seq: dict[str, int] = {}
+        self.channel_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def channel_lock(self, campaign_id: str, channel_id: str = "main") -> asyncio.Lock:
+        """Return a per-(campaign, channel) asyncio lock for serializing chat tree mutations."""
+        key = (campaign_id, self._norm_chan(channel_id))
+        lock = self.channel_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.channel_locks[key] = lock
+        return lock
 
     @staticmethod
     def _norm_chan(channel_id: str | None) -> str:
@@ -120,7 +130,7 @@ class _CoopHub:
     def acquire_turn(self, campaign_id: str, *, client_id: str, player_name: str, channel_id: str = "main") -> dict[str, Any] | None:
         chan = self._norm_chan(channel_id)
         existing = self.active_turn_for(campaign_id, chan)
-        if existing and existing.get("client_id") != client_id:
+        if existing:
             return existing
         info = {"client_id": client_id, "player_name": player_name or "Player", "channel_id": chan, "started_at": time.time()}
         self.active_turns[(campaign_id, chan)] = info
@@ -163,9 +173,11 @@ class _CoopHub:
         )
 
     def clear_campaign(self, campaign_id: str) -> None:
-        """Remove all in-memory presence, turn locks, and sync state for a deleted campaign."""
+        """Remove all in-memory presence, turn locks, channel locks, and sync state for a deleted campaign."""
         self.presence.pop(campaign_id, None)
         self.sync_seq.pop(campaign_id, None)
         for key in [k for k in self.active_turns if k[0] == campaign_id]:
             self.active_turns.pop(key, None)
+        for key in [k for k in self.channel_locks if k[0] == campaign_id]:
+            self.channel_locks.pop(key, None)
         self.subscribers.pop(campaign_id, None)

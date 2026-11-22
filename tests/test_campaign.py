@@ -205,3 +205,66 @@ def test_delete_character_and_equip_loadout(tmp_path):
     assert mem.get_campaign(camp["id"])["character_ids"] == []
     with pytest.raises(ValueError, match="character not found"):
         store.delete_character(char["id"])
+
+
+def test_undo_last_restores_all_character_columns_and_rename_owner_audits(tmp_path):
+    from memory import CampaignMemory
+
+    store = CampaignStore(tmp_path / "c.sqlite")
+    mem = CampaignMemory(store)
+    camp = mem.create_campaign("Audit Run", operation_id="camp-audit-1")
+    char = store.create_character(
+        "Vex",
+        stats(EMP=6, LUCK=7),
+        skills={"Handgun": 5},
+        money=500,
+        inventory={"Heavy Pistol": 1},
+        detail={
+            "handle": "Vex",
+            "owner_username": "alice",
+            "injuries": [{"id": "broken-arm", "name": "Broken Arm"}],
+        },
+        humanity=60,
+    )
+    mem.attach_character(camp["id"], char["id"], camp["revision"], "join", "att-audit-1")
+
+    # Profile update changes name and detail
+    prof = store.update_character_profile(
+        char["id"],
+        expected_revision=char["revision"],
+        profile={"handle": "Vex-Prime", "equipped_weapon": "Heavy Pistol"},
+        reason="Update handle and equip",
+        operation_id="prof-undo-1",
+    )
+    assert prof["name"] == "Vex-Prime"
+    assert prof["detail"]["equipped_weapon"] == "Heavy Pistol"
+    undone_prof = store.undo_last(char["id"], prof["revision"], "Revert profile", "undo-prof-1")
+    assert undone_prof["name"] == "Vex"
+    assert undone_prof["detail"] == char["detail"]
+
+    # Humanity update is also fully restored by undo_last
+    hum = store.update_character(
+        char["id"],
+        expected_revision=undone_prof["revision"],
+        changes={"humanity": 42, "money": 100},
+        reason="Cyberware loss",
+        operation_id="hum-undo-1",
+    )
+    assert hum["humanity"] == 42
+    undone_hum = store.undo_last(char["id"], hum["revision"], "Revert humanity", "undo-hum-1")
+    assert undone_hum["humanity"] == 60
+    assert undone_hum["money"] == 500
+    assert undone_hum["stats"] == char["stats"]
+    assert undone_hum["skills"] == char["skills"]
+    assert undone_hum["detail"] == char["detail"]
+
+    # rename_owner_username logs an audit event per affected character
+    before_count = len(store.audit_events(char["id"]))
+    affected = store.rename_owner_username("alice", "alice_new")
+    assert affected == [camp["id"]]
+    events = store.audit_events(char["id"])
+    assert len(events) == before_count + 1
+    assert events[-1]["before"]["detail"]["owner_username"] == "alice"
+    assert events[-1]["after"]["detail"]["owner_username"] == "alice_new"
+    assert "alice_new" in events[-1]["reason"]
+

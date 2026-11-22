@@ -108,6 +108,66 @@ assert.match(await commands.get('red-campaign').callback({}, 'use fast'), /Bound
 releaseSelection({ ok: true, json: async () => ({ result: { id: 'slow', name: 'Slow' } }) });
 assert.match(await slowSelection, /selection changed/);
 assert.equal(metadata.cyberpunk_red_gm.campaign_id, 'fast');
+// Verify __* discovery stripping, nested solo.runtime.runs[id].run unwrapping, updated actions, and auth/PIN headers.
+chatId = 'chat-batch4c';
+metadata = { cyberpunk_red_gm: { campaign_id: 'camp-4c', chat_key: JSON.stringify(['character:pc.png', 'chat-batch4c']) } };
+globalThis.REDGM_API_TOKEN = 'tok-secret';
+globalThis.REDGM_PIN = '4321';
+let lastHeaders = null;
+backend = async (_url, options) => {
+    lastHeaders = options?.headers || {};
+    const body = options?.body ? JSON.parse(options.body) : {};
+    if (body.action === 'campaign_context') {
+        return {
+            ok: true,
+            json: async () => ({
+                result: {
+                    campaign: {
+                        id: 'camp-4c',
+                        name: 'Watson',
+                        revision: 3,
+                        session_number: 2,
+                        state: {
+                            discoveries: {
+                                __campaign_meta: '{"district":"Watson"}',
+                                __npc_identities: '{"Rogue":{"real_name_hidden":true}}',
+                                public_clue: 'Militech crate manifest',
+                            },
+                        },
+                    },
+                    characters: [],
+                    solo: {
+                        revision: 7,
+                        runtime: {
+                            runs: {
+                                'net-7': {
+                                    run: { current_floor_id: 'f2', connected: true, actions_remaining: 3 },
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
+        };
+    }
+    return { ok: true, json: async () => ({ result: { ok: true } }) };
+};
+await globalThis.redgmCampaignInterceptor();
+assert.equal(lastHeaders.Authorization, 'Bearer tok-secret');
+assert.equal(lastHeaders['X-RedGM-Pin'], '4321');
+const prompt4c = prompts.at(-1)[1];
+assert.doesNotMatch(prompt4c, /__campaign_meta/);
+assert.doesNotMatch(prompt4c, /__npc_identities/);
+assert.match(prompt4c, /Militech crate manifest/);
+assert.match(prompt4c, /netruns=net-7\(floor=f2,connected=true,actions=3\)/);
+assert.ok(tools.get('game_action').parameters.properties.action.enum.includes('update_character_profile'));
+assert.ok(tools.get('campaign_action').parameters.properties.action.enum.includes('rename_campaign'));
+assert.ok(tools.get('solo_action').parameters.properties.action.enum.includes('advance_time'));
+assert.ok(tools.get('solo_action').parameters.properties.action.enum.includes('gear_action'));
+await tools.get('solo_action').action({ action: 'advance_time', arguments: { minutes: 10, expected_revision: 7, reason: 'wait', operation_id: 'op-t1' } });
+delete globalThis.REDGM_API_TOKEN;
+delete globalThis.REDGM_PIN;
+
 await extension.exit();
 assert.equal(tools.size, 0); assert.equal(listeners.get('chat-changed').size, 0);
 assert.equal(await globalThis.redgmCampaignInterceptor(), undefined);

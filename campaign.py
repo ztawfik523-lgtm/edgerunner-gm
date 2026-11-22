@@ -443,7 +443,12 @@ class CampaignStore:
                     new_detail[key] = val
             if isinstance(new_detail.get("handle"), str) and new_detail["handle"].strip():
                 updated["name"] = new_detail["handle"].strip()
-            elif isinstance(new_detail.get("real_name"), str) and new_detail["real_name"].strip() and not new_detail.get("handle"):
+            elif (
+                not new_detail.get("real_name_hidden")
+                and isinstance(new_detail.get("real_name"), str)
+                and new_detail["real_name"].strip()
+                and not new_detail.get("handle")
+            ):
                 updated["name"] = new_detail["real_name"].strip()
             updated["detail"] = new_detail
             rules_eval.sync_equipment_views(updated)
@@ -487,11 +492,39 @@ class CampaignStore:
                 raise ValueError("latest character event is creation and cannot be undone")
             before = self._record(row)
             restored = json.loads(latest["before_json"])
-            updated = dict(before, hp=restored["hp"], money=restored["money"],
-                           inventory=restored["inventory"], luck_remaining=restored["luck_remaining"],
-                           revision=before["revision"] + 1)
-            conn.execute("UPDATE characters SET hp=?,money=?,inventory=?,luck_remaining=?,revision=? WHERE id=?",
-                         (updated["hp"], updated["money"], _json(updated["inventory"]), updated["luck_remaining"], updated["revision"], str(character_id)))
+            updated = copy.deepcopy(before)
+            updated.update(
+                {
+                    "name": restored.get("name", before["name"]),
+                    "stats": copy.deepcopy(restored.get("stats", before["stats"])),
+                    "skills": copy.deepcopy(restored.get("skills", before["skills"])),
+                    "hp": restored.get("hp", before["hp"]),
+                    "max_hp": restored.get("max_hp", before["max_hp"]),
+                    "humanity": restored.get("humanity", before["humanity"]),
+                    "luck_remaining": restored.get("luck_remaining", before["luck_remaining"]),
+                    "money": restored.get("money", before["money"]),
+                    "inventory": copy.deepcopy(restored.get("inventory", before["inventory"])),
+                    "detail": copy.deepcopy(restored.get("detail", before["detail"])),
+                    "revision": before["revision"] + 1,
+                }
+            )
+            conn.execute(
+                "UPDATE characters SET name=?,stats=?,skills=?,hp=?,max_hp=?,humanity=?,luck_remaining=?,money=?,inventory=?,detail=?,revision=? WHERE id=?",
+                (
+                    updated["name"],
+                    _json(updated["stats"]),
+                    _json(updated["skills"]),
+                    updated["hp"],
+                    updated["max_hp"],
+                    updated["humanity"],
+                    updated["luck_remaining"],
+                    updated["money"],
+                    _json(updated["inventory"]),
+                    _json(updated["detail"]),
+                    updated["revision"],
+                    str(character_id),
+                ),
+            )
             conn.execute("INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated
@@ -506,17 +539,42 @@ class CampaignStore:
         affected_campaigns: list[str] = []
         with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute("SELECT id, detail, revision FROM characters").fetchall()
+            rows = conn.execute("SELECT * FROM characters").fetchall()
+            op_batch = uuid.uuid4().hex[:12]
             for row in rows:
-                detail = json.loads(row["detail"] or "{}")
+                before = self._record(row)
+                detail = before.get("detail") if isinstance(before.get("detail"), dict) else {}
                 owner = str(detail.get("owner_username") or "").strip()
                 if owner.lower() == old_clean:
-                    detail["owner_username"] = new_clean
+                    after = copy.deepcopy(before)
+                    if not isinstance(after.get("detail"), dict):
+                        after["detail"] = {}
+                    after["detail"]["owner_username"] = new_clean
+                    after["revision"] = int(before["revision"]) + 1
                     conn.execute(
                         "UPDATE characters SET detail=?, revision=? WHERE id=?",
-                        (_json(detail), int(row["revision"]) + 1, row["id"]),
+                        (_json(after["detail"]), after["revision"], before["id"]),
                     )
-                    changed_char_ids.add(str(row["id"]))
+                    op_id = f"rename_owner:{op_batch}:{before['id']}"
+                    payload = _json({
+                        "action": "rename_owner_username",
+                        "character_id": before["id"],
+                        "old_username": owner,
+                        "new_username": new_clean,
+                    })
+                    conn.execute(
+                        "INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
+                        (
+                            before["id"],
+                            after["revision"],
+                            _json(before),
+                            _json(after),
+                            f"Owner username renamed from {owner} to {new_clean}",
+                            op_id,
+                            payload,
+                        ),
+                    )
+                    changed_char_ids.add(str(before["id"]))
             if changed_char_ids:
                 has_members = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_members'"

@@ -684,6 +684,11 @@ export function SettingsModal({
   }, [open, initialTab, isAdmin]);
 
   useEffect(() => {
+    if (!open || !settings) return;
+    applyLlmFields(settings);
+  }, [open, settings]);
+
+  useEffect(() => {
     if (!open) return;
     setError(null);
     setNotice(null);
@@ -695,9 +700,6 @@ export function SettingsModal({
     if (!isAdmin) {
       setLoadingAll(false);
       return;
-    }
-    if (settings) {
-      applyLlmFields(settings);
     }
     let cancelled = false;
     setLoadingAll(true);
@@ -737,7 +739,7 @@ export function SettingsModal({
     return () => {
       cancelled = true;
     };
-  }, [open, settings]);
+  }, [open, isAdmin]);
 
   useEffect(() => {
     if (!open) return;
