@@ -58,6 +58,7 @@ import type {
   HealthStatus,
   LLMSettings,
   LibraryEntry,
+  TurnIntent,
 } from "./types";
 
 type RightTab = "character" | "campaign" | "library";
@@ -478,6 +479,7 @@ export function App() {
             libraryAdded: [],
             warnings: [],
             overclock: Boolean(data.overclock),
+            turnIntent: data.turn_intent,
             truncateFromId: data.truncate_from_id,
             startedAt: Date.now(),
           };
@@ -646,6 +648,7 @@ export function App() {
     ) => Promise<void>,
     truncateFromId?: string,
     targetCampaignId?: string,
+    turnIntent?: TurnIntent,
   ) => {
     const controller = new AbortController();
     abortRef.current = controller;
@@ -659,6 +662,7 @@ export function App() {
       libraryAdded: [],
       warnings: [],
       overclock,
+      turnIntent,
       truncateFromId,
       startedAt: Date.now(),
     });
@@ -727,24 +731,33 @@ export function App() {
       speakerCharacterId?: string;
       speakerName?: string;
       gmMode?: "auto" | "force_gm" | "hold_gm";
+      turnIntent?: TurnIntent;
     },
   ) => {
     if (!activeCampaignId) return;
-    await runStreamedAction(text, opts.overclock, opts.speakerName, (callbacks, signal) =>
-      streamChatTurn(
-        {
-          campaign_id: activeCampaignId,
-          user_text: text,
-          channel_id: activeChannelId,
-          overclock: opts.overclock,
-          luck_spend: opts.luckSpend || undefined,
-          speaker_character_id: opts.speakerCharacterId,
-          speaker_name: opts.speakerName,
-          gm_mode: opts.gmMode,
-        },
-        callbacks,
-        signal,
-      ),
+    await runStreamedAction(
+      text,
+      opts.overclock,
+      opts.speakerName,
+      (callbacks, signal) =>
+        streamChatTurn(
+          {
+            campaign_id: activeCampaignId,
+            user_text: text,
+            channel_id: activeChannelId,
+            overclock: opts.overclock,
+            luck_spend: opts.luckSpend || undefined,
+            speaker_character_id: opts.speakerCharacterId,
+            speaker_name: opts.speakerName,
+            gm_mode: opts.gmMode,
+            turn_intent: opts.turnIntent,
+          },
+          callbacks,
+          signal,
+        ),
+      undefined,
+      undefined,
+      opts.turnIntent,
     );
   };
 
@@ -755,6 +768,7 @@ export function App() {
     luckSpend?: number,
   ) => {
     if (!activeCampaignId) return;
+    const turnIntent = msg.metadata?.turn_intent;
     await runStreamedAction(
       newText,
       overclock,
@@ -772,11 +786,14 @@ export function App() {
             luck_spend: luckSpend || undefined,
             speaker_character_id: msg.metadata?.speaker_character_id,
             speaker_name: msg.metadata?.speaker_name,
+            turn_intent: turnIntent,
           },
           callbacks,
           signal,
         ),
       msg.id,
+      undefined,
+      turnIntent,
     );
   };
 
@@ -837,7 +854,9 @@ export function App() {
           callbacks,
           signal,
         ),
-      msg.id,
+      msg.role === "assistant" ? msg.id : undefined,
+      undefined,
+      msg.metadata?.turn_intent,
     );
   };
 

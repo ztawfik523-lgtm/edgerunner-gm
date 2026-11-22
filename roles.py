@@ -5,7 +5,8 @@ import copy
 import re
 import secrets
 from typing import Any, Callable
-from mechanics import skill_check
+from mechanics import roll_dice, skill_check
+import rules_eval
 
 ROLES = ("Rockerboy", "Solo", "Netrunner", "Tech", "Medtech", "Media", "Lawman", "Exec", "Fixer", "Nomad")
 SOURCE_ROLES = "Cyberpunk RED Core Rulebook, pp. 142–163"
@@ -50,6 +51,10 @@ def validate_role_choices(role: str, rank: int, choices: Any):
         recipes = choices.get("recipes", []) if isinstance(choices, dict) else []
         pharma = allocations.get("Pharmaceuticals", 0)
         if not isinstance(recipes, list) or len(recipes) != pharma or any(x not in PHARMACEUTICALS for x in recipes): raise ValueError("choose one canonical pharmaceutical recipe per Pharmaceuticals point")
+        if len(set(recipes)) != len(recipes): raise ValueError("duplicate Medtech pharmaceutical recipe")
+        cryo_recipes = choices.get("cryo_recipes", []) if isinstance(choices, dict) else []
+        if isinstance(cryo_recipes, list) and len(set(cryo_recipes)) != len(cryo_recipes):
+            raise ValueError("duplicate Medtech cryo recipe")
         out["initial_benefits"] = {"Surgery": allocations.get("Surgery", 0) * 2, "Medical Tech": pharma + allocations.get("Cryosystem Operation", 0), "pharmaceuticals": list(recipes)}
     elif role == "Exec":
         team = choices.get("team_member") if isinstance(choices, dict) else None
@@ -114,7 +119,12 @@ def _role_data(ch):
 
 def _active_rank(ch, role):
     ext, acq = _role_data(ch)
-    return next((x.get("rank", 0) for x in reversed(acq) if x.get("role") == role), 0)
+    found = next((x.get("rank", 0) for x in reversed(acq) if x.get("role") == role), 0)
+    if found:
+        return found
+    if ch.get("role") == role and type(ch.get("role_rank")) is int:
+        return ch["role_rank"]
+    return 0
 
 
 def _ruling(action, reason):
@@ -124,7 +134,38 @@ def _ruling(action, reason):
 def _check(ch, skill_name, bonus, dv, randbelow):
     stats, skills = ch.get("stats", {}), ch.get("skills", {})
     if "TECH" not in stats or skill_name not in skills: raise ValueError("required TECH stat or stored skill is missing")
-    return skill_check(stats["TECH"], skills[skill_name], dv, modifier=bonus, randbelow=randbelow)
+    ctx = rules_eval.effective_check_context(ch, "TECH", skill_name)
+    return skill_check(ctx["stat_value"], skills[skill_name], dv, modifier=bonus + ctx["total_modifier"], randbelow=randbelow)
+
+
+def _price_category_from_cost(cost: int) -> str:
+    if cost <= 10: return "Cheap"
+    if cost <= 20: return "Everyday"
+    if cost <= 50: return "Costly"
+    if cost <= 100: return "Premium"
+    if cost <= 500: return "Expensive"
+    if cost <= 1000: return "Very Expensive"
+    if cost <= 5000: return "Luxury"
+    return "Super Luxury"
+
+
+_ONE_LOWER_MATERIAL_COST = {
+    "Everyday": 10,
+    "Costly": 20,
+    "Premium": 50,
+    "Expensive": 100,
+    "Very Expensive": 500,
+    "Luxury": 1000,
+    "Super Luxury": 5000,
+}
+
+
+def _dict_inventory(ch: dict) -> dict | None:
+    inv = ch.get("inventory")
+    if inv is None or inv == []:
+        inv = {}
+        ch["inventory"] = inv
+    return inv if isinstance(inv, dict) else None
 
 
 def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[int], int] = secrets.randbelow) -> dict:
@@ -137,7 +178,6 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
         ext["ip"] = ext.get("ip", 0) + amount
         result = {"awarded": amount, "reason": reason, "ip": ext["ip"], "source": SOURCE_IP}
     elif action in ("spend_ip_skill", "spend_ip_role"):
-        kind = args.get("kind", "typical")
         if action == "spend_ip_role":
             role = args.get("role")
             if role not in ROLES: raise ValueError("unknown role")
@@ -146,27 +186,127 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
             latest = acquisitions[-1] if acquisitions else None
             if current == 0 and latest and latest.get("rank", 0) < 4: raise ValueError("latest acquired role must reach rank 4 before multiclassing")
             if current == 0 and latest is None: raise ValueError("initial role is created at rank 4 by character creation, not Improvement Point advancement")
+            ip = ext.get("ip", 0)
+            if type(ip) is not int or ip < cost: raise ValueError("insufficient IP")
             choices = args.get("choices", {})
+            found = next((x for x in acquisitions if x.get("role") == role), None) if current > 0 else None
+            prev_choices = copy.deepcopy(found.get("choices", {})) if isinstance(found, dict) and isinstance(found.get("choices"), dict) else {}
+            if role == "Medtech" and current > 0 and isinstance(choices, dict):
+                prev_recipes = set(prev_choices.get("recipes", []))
+                new_recipe = choices.get("new_recipe") or args.get("recipe")
+                if new_recipe and new_recipe in prev_recipes:
+                    raise ValueError("Medtech recipe already known")
             checked = validate_role_choices(role, nxt, choices)
             stored_choices = copy.deepcopy(choices)
-            if role == "Tech" and isinstance(stored_choices, dict): stored_choices["maker_ranks"] = checked["maker_ranks"]
-            if current == 0: acquisitions.append({"role": role, "rank": nxt, "choices": stored_choices})
+            if role == "Tech" and isinstance(stored_choices, dict):
+                stored_choices["maker_ranks"] = checked["maker_ranks"]
+                ext["maker_ranks"] = dict(checked["maker_ranks"])
+            elif role == "Medtech":
+                alloc = choices.get("medicine", {}) if isinstance(choices, dict) else {}
+                prev_alloc = prev_choices.get("medicine", {}) if isinstance(prev_choices, dict) else {}
+                delta_surg = (alloc.get("Surgery", 0) - prev_alloc.get("Surgery", 0)) * 2
+                delta_med = (alloc.get("Pharmaceuticals", 0) + alloc.get("Cryosystem Operation", 0)) - (prev_alloc.get("Pharmaceuticals", 0) + prev_alloc.get("Cryosystem Operation", 0))
+                skills_map = ch.setdefault("skills", {})
+                if delta_surg > 0:
+                    skills_map["Surgery"] = (skills_map.get("Surgery", 0) if type(skills_map.get("Surgery")) is int else 0) + delta_surg
+                if delta_med > 0:
+                    skills_map["Medical Tech"] = (skills_map.get("Medical Tech", 0) if type(skills_map.get("Medical Tech")) is int else 0) + delta_med
+                ext["medtech"] = dict(alloc)
+                ext["medtech_recipes"] = list(checked["initial_benefits"]["pharmaceuticals"])
+                cryo = alloc.get("Cryosystem Operation", 0)
+                ext["medtech_cryo"] = {"cryopumps": 1 if cryo > 0 else 0, "cryotanks": max(0, cryo - 1)}
+            elif role == "Nomad" and checked.get("initial_motorpool"):
+                pool = ext.setdefault("family_motorpool", [])
+                if not isinstance(pool, list):
+                    pool = []
+                    ext["family_motorpool"] = pool
+                existing_ids = {v.get("id") for v in pool if isinstance(v, dict) and v.get("id")}
+                for veh in checked["initial_motorpool"]:
+                    if veh["id"] not in existing_ids:
+                        pool.append(copy.deepcopy(veh))
+                        existing_ids.add(veh["id"])
+                    elif veh.get("upgrades"):
+                        target_v = next((v for v in pool if isinstance(v, dict) and v.get("id") == veh["id"]), None)
+                        if target_v is not None:
+                            target_u = target_v.setdefault("upgrades", [])
+                            for upg in veh["upgrades"]:
+                                if upg not in target_u:
+                                    target_u.append(upg)
+                if checked.get("active_vehicle"):
+                    ext.setdefault("active_vehicle", checked["active_vehicle"])
+            elif role == "Exec":
+                if checked.get("initial_team"):
+                    team = ext.setdefault("team", [])
+                    if not isinstance(team, list):
+                        team = []
+                        ext["team"] = team
+                    existing_names = {m.get("name") for m in team if isinstance(m, dict)}
+                    for member in checked["initial_team"]:
+                        if member.get("name") not in existing_names:
+                            m_copy = copy.deepcopy(member)
+                            existing_m_ids = {m.get("id") for m in team if isinstance(m, dict)}
+                            if m_copy["id"] in existing_m_ids:
+                                m_copy["id"] = f"exec-team-{len(team) + 1}"
+                            team.append(m_copy)
+                ext.setdefault("housing", "corporate")
+            elif role == "Fixer" and isinstance(choices, dict):
+                lang = str(choices.get("language") or "").strip()
+                if lang:
+                    lang_skill = f"Language ({lang})"
+                    skills_map = ch.setdefault("skills", {})
+                    if (skills_map.get(lang_skill) if type(skills_map.get(lang_skill)) is int else 0) < 4:
+                        skills_map[lang_skill] = 4
+                if choices.get("culture"):
+                    ext["fixer_culture"] = choices["culture"]
+            if current == 0:
+                acquisitions.append({"role": role, "rank": nxt, "choices": stored_choices})
             else:
-                found = next(x for x in acquisitions if x.get("role") == role); found["rank"] = nxt; found["choices"] = stored_choices
-            result = {"role": role, "rank": nxt, "cost": cost, "choice_validation": checked}
+                found["rank"] = nxt
+                found["choices"] = stored_choices
+            if ch.get("role") == role:
+                ch["role_rank"] = nxt
+            benefits = {
+                "role_ability": {
+                    "Solo": "Combat Awareness",
+                    "Rockerboy": "Charismatic Impact",
+                    "Netrunner": "Interface",
+                    "Tech": "Maker",
+                    "Medtech": "Medicine",
+                    "Media": "Credibility",
+                    "Lawman": "Backup",
+                    "Exec": "Teamwork",
+                    "Fixer": "Operator",
+                    "Nomad": "Moto",
+                }[role],
+                "rank": nxt,
+            }
+            if "initial_benefits" in checked:
+                benefits.update(checked["initial_benefits"])
+            if "maker_ranks" in checked:
+                benefits["maker_ranks"] = dict(checked["maker_ranks"])
+            result = {"role": role, "rank": nxt, "cost": cost, "choice_validation": checked, "benefits": benefits}
         else:
             skill = args.get("skill")
-            skills = ch.get("skills", {})
-            if not isinstance(skill, str) or skill not in skills: raise ValueError("skill must already exist in the character's skill map")
-            current = skills[skill]
+            if not isinstance(skill, str) or not skill.strip():
+                raise ValueError("skill name is required")
+            skills = ch.setdefault("skills", {})
+            if not isinstance(skills, dict):
+                raise ValueError("skills must be an object")
+            current = skills.get(skill, 0)
             if type(current) is not int or not 0 <= current < 10: raise ValueError("stored skill rank must be 0..9")
             if "current_rank" in args and args["current_rank"] != current: raise ValueError("current_rank does not match stored skill rank")
             nxt = current + 1
             is_difficult = skill in DIFFICULT_SKILLS or skill.split(" (", 1)[0].strip() in DIFFICULT_SKILLS
             expected = "difficult" if is_difficult else "typical"
-            if kind != expected: raise ValueError(f"{skill} uses {expected} skill improvement pricing")
+            kind = args.get("kind")
+            if kind is None:
+                kind = expected
+            elif kind != expected:
+                raise ValueError(f"{skill} uses {expected} skill improvement pricing")
             cost = (DIFFICULT_SKILL_IP_COST if expected == "difficult" else SKILL_IP_COST)[nxt]
-            ch.setdefault("skills", {})[skill] = nxt
+            ip = ext.get("ip", 0)
+            if type(ip) is not int or ip < cost: raise ValueError("insufficient IP")
+            skills[skill] = nxt
             result = {"skill": skill, "rank": nxt, "cost": cost, "kind": kind}
         ip = ext.get("ip", 0)
         if type(ip) is not int or ip < cost: raise ValueError("insufficient IP")
@@ -180,9 +320,12 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
         if not isinstance(alloc, dict) or any(k not in names or type(v) is not int or v < 0 for k, v in alloc.items()): raise ValueError("invalid Combat Awareness allocation")
         costs = dict(damage_deflection=2, fumble_recovery=4, initiative_reaction=1, precision_attack=3, spot_weakness=1, threat_detection=1)
         if alloc.get("fumble_recovery", 0) not in (0, 1): raise ValueError("fumble_recovery is a single 0/1 allocation")
-        if sum(costs[k] * v for k, v in alloc.items()) > rank: raise ValueError("allocation exceeds Combat Awareness rank")
+        spent = sum(costs[k] * v for k, v in alloc.items())
+        if spent > rank: raise ValueError("allocation exceeds Combat Awareness rank")
+        combat_awareness = {k: costs[k] * v for k, v in alloc.items() if v > 0}
         ext["solo_allocation"] = dict(alloc)
-        result = {"allocation": dict(alloc), "spent": sum(costs[k]*v for k,v in alloc.items()), "source": "Cyberpunk RED Core Rulebook, pp. 146–147"}
+        ext["combat_awareness"] = combat_awareness
+        result = {"allocation": dict(alloc), "combat_awareness": dict(combat_awareness), "spent": spent, "remaining": rank - spent, "source": "Cyberpunk RED Core Rulebook, pp. 146–147"}
     elif action in ("rocker_favor", "rocker_convert"):
         rank = _active_rank(ch, "Rockerboy")
         if not rank: raise ValueError("character has no Rockerboy rank")
@@ -204,9 +347,9 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
                 if type(now) is not int or now < 0: raise ValueError("favor requires a monotonic now_minutes value")
                 until = locks.get(group_id, 0)
                 if type(until) is int and now < until: raise ValueError("this group is locked from repeat favor requests for one week")
-            roll = rank + _die(randbelow); success = roll > dv
-            result = {"success": success, "total": roll, "dv": dv, "dice": [roll-rank], "source": SOURCE_ROLES}
-            if action == "rocker_favor" and not success: locks[group_id] = now + 10080
+            chk = skill_check(0, rank, dv, randbelow=randbelow)
+            result = {"success": chk["success"], "total": chk["total"], "dv": dv, "dice": chk["dice"], "critical_adjustment": chk["critical_adjustment"], "source": SOURCE_ROLES}
+            if action == "rocker_favor" and not chk["success"]: locks[group_id] = now + 10080
     elif action == "lawman_backup":
         rank = _active_rank(ch, "Lawman")
         if not rank: raise ValueError("character has no Lawman rank")
@@ -229,18 +372,68 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
         member = next((m for m in members if isinstance(m, dict) and m.get("id") == args.get("member_id")), None)
         if member is None: raise ValueError("member_id must identify a saved team member")
         if not isinstance(args.get("task"), str) or not args["task"]: raise ValueError("task is required")
-        die = _die(randbelow)
-        result = {"member_id": member["id"], "task": args["task"], "loyalty": member.get("loyalty"), "die": die, "success": die < member.get("loyalty", 0), "source": "Cyberpunk RED Core Rulebook, pp. 154–155"}
+        if not callable(randbelow): raise TypeError("randbelow must be callable")
+        n = randbelow(6)
+        if type(n) is not int or not 0 <= n <= 5: raise ValueError("randbelow must return integer in [0, 5] for d6")
+        die = n + 1
+        loyalty = member.get("loyalty", 0)
+        success = die < loyalty
+        if die == 1:
+            member["leave_after_job"] = True
+            member["resigned"] = True
+        if loyalty <= 0:
+            member["betrayed"] = True
+            member["resigned"] = True
+        result = {
+            "member_id": member["id"],
+            "task": args["task"],
+            "loyalty": member.get("loyalty"),
+            "die": die,
+            "success": success,
+            "leave_after_job": die == 1 or bool(member.get("leave_after_job")),
+            "resigned": bool(member.get("resigned")),
+            "betrayed": bool(member.get("betrayed")),
+            "source": "Cyberpunk RED Core Rulebook, pp. 154–155",
+        }
     elif action == "exec_change_loyalty":
         if not _active_rank(ch, "Exec"): raise ValueError("character has no Exec rank")
-        table = {"compliment": 1, "bonus_200eb": 4, "support_against_management": 4, "earnings_20_percent": 6, "paid_time_off": 6, "risk_harm": 8, "no_gain_session": -1, "berate": -2, "ignore_contribution": -4}
+        table = {
+            "compliment": 1,
+            "bonus_200eb": 4,
+            "support_against_management": 4,
+            "earnings_20_percent": 6,
+            "paid_time_off": 6,
+            "risk_harm": 8,
+            "no_gain_session": -1,
+            "berate": -2,
+            "ignore_contribution": -4,
+            "fail_to_support": -4,
+            "side_with_management": -4,
+            "endanger": -6,
+            "leave_behind": -6,
+            "abandon": -6,
+            "unnecessary_danger": -6,
+            "betray": -8,
+            "harm": -8,
+            "direct_harm": -8,
+        }
         reason = args.get("reason"); delta = table.get(reason)
         if delta is None: raise ValueError("reason must name a sourced Loyalty table entry")
         member = next((m for m in ext.get("team", []) if isinstance(m, dict) and m.get("id") == args.get("member_id")), None)
         if member is None: raise ValueError("member_id must identify a saved team member")
         member["loyalty"] = member.get("loyalty", 0) + delta
         if args.get("session_end") is True: member["loyalty"] = min(10, member["loyalty"])
-        result = {"member_id": member["id"], "loyalty": member["loyalty"], "adjustment": delta, "source": "Cyberpunk RED Core Rulebook, pp. 154–155"}
+        if member["loyalty"] <= 0:
+            member["betrayed"] = True
+            member["resigned"] = True
+        result = {
+            "member_id": member["id"],
+            "loyalty": member["loyalty"],
+            "adjustment": delta,
+            "betrayed": bool(member.get("betrayed")),
+            "resigned": bool(member.get("resigned")),
+            "source": "Cyberpunk RED Core Rulebook, pp. 154–155",
+        }
     elif action in ("tech_project_begin", "tech_project_work", "tech_project_finish"):
         rank = _active_rank(ch, "Tech")
         if not rank: raise ValueError("character has no Tech rank")
@@ -254,7 +447,15 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
             specialty = {"upgrade": "Upgrade Expertise", "fabricate": "Fabrication Expertise", "invent": "Invention Expertise"}[kind]
             choices = next((r.get("choices", {}) for r in reversed(acquisitions) if r.get("role") == "Tech"), {})
             maker = choices.get("maker", []) if isinstance(choices, dict) else []
-            if not any(specialty in pair if isinstance(pair, list) else pair == specialty for pair in maker): raise ValueError(f"Tech lacks {specialty} specialty")
+            specialty_ranks = choices.get("maker_ranks", {}) if isinstance(choices, dict) else {}
+            if not isinstance(specialty_ranks, dict) or not specialty_ranks:
+                specialty_ranks = ext.get("maker_ranks", {}) if isinstance(ext.get("maker_ranks"), dict) else {}
+            srank = specialty_ranks.get(specialty, 0) if isinstance(specialty_ranks, dict) else 0
+            if (type(srank) is not int or srank <= 0) and maker:
+                flat = [p for elem in maker for p in (elem if isinstance(elem, list) else [elem])]
+                srank = flat.count(specialty)
+            has_specialty = (type(srank) is int and srank > 0) or any(specialty in pair if isinstance(pair, list) else pair == specialty for pair in maker)
+            if not has_specialty: raise ValueError(f"Tech lacks {specialty} specialty")
             catalog = ext.get("catalog_items", {})
             item_id = args.get("item_id")
             item = catalog.get(item_id) if isinstance(catalog, dict) and item_id else None
@@ -263,44 +464,63 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
             elif kind == "invent" and args.get("gm_approved") is not True:
                 result = _ruling(action, "GM must approve and record invention function and price category before work begins.")
             else:
-                category = args.get("category") if kind == "invent" else item.get("category")
-                if category not in PROJECTS: result = _ruling(action, "The canonical item lacks a supported source price category.")
+                if kind == "invent":
+                    category = args.get("price_category") or args.get("category")
+                    if category not in PROJECTS and type(args.get("approved_cost")) is int and args["approved_cost"] >= 0:
+                        category = _price_category_from_cost(args["approved_cost"])
+                else:
+                    category = item.get("price_category") or (item.get("category") if item.get("category") in PROJECTS else None) or args.get("price_category") or (args.get("category") if args.get("category") in PROJECTS else None)
+                    if category not in PROJECTS and type(item.get("cost")) is int and item["cost"] >= 0:
+                        category = _price_category_from_cost(item["cost"])
+                if category not in PROJECTS:
+                    result = _ruling(action, "The canonical item lacks a supported source price category.")
                 elif kind == "invent" and category not in ("Expensive", "Very Expensive", "Luxury", "Super Luxury"):
                     raise ValueError("invented items must be Expensive or higher")
                 else:
-                    specialty_ranks = choices.get("maker_ranks", {}) if isinstance(choices, dict) else {}
-                    srank = specialty_ranks.get(specialty, 0) if isinstance(specialty_ranks, dict) else 0
                     if type(srank) is not int or srank <= 0: raise ValueError("stored Maker specialty rank is required")
-                    repair_skill = item.get("repair_skill") if item is not None else args.get("gm_repair_skill")
+                    repair_skill = (item.get("repair_skill") if item is not None else None) or args.get("repair_skill") or args.get("gm_repair_skill")
                     if not isinstance(repair_skill, str) or repair_skill not in ch.get("skills", {}):
                         result = _ruling(action, "A saved catalog repair skill or GM-approved invention repair skill is required.")
-                    dv, duration = PROJECTS[category]
-                    if category == "Super Luxury":
-                        price = item["cost"] if kind != "invent" else args.get("approved_cost")
-                        if type(price) is not int or price < 10000: raise ValueError("Super Luxury project requires verified cost >= 10000eb")
-                        duration *= (price + 9999) // 10000
-                    materials = 0
-                    if kind == "upgrade":
-                        if item_id in ext.get("upgraded_items", []): raise ValueError("an item may receive only one Upgrade Expertise upgrade")
-                        upgrade_cost = item.get("invented_upgrade_price", 0)
-                        if type(upgrade_cost) is not int or upgrade_cost < 0: result = _ruling(action, "Upgrade price must be a verified saved catalog field.")
-                        else: materials = item["cost"] + upgrade_cost
-                    elif kind == "fabricate":
-                        materials = item.get("fabrication_material_cost")
-                        if category == "Cheap": result = _ruling(action, "The source does not specify a category below Cheap for fabrication materials.")
-                        elif type(materials) is not int or materials < 0: result = _ruling(action, "A source-verified one-category-lower material cost is required.")
-                    if "result" not in locals() or not isinstance(result, dict):
-                        if kind == "invent": materials = 0
-                        money = ch.get("money", 0)
-                        if isinstance(money, dict): money = money.get("eb", 0)
-                        if type(money) is not int or (not restarting and money < materials): raise ValueError("insufficient eb for project materials")
-                        if not restarting: ch["money"] = money - materials
-                        projects = ext.setdefault("projects", {})
-                        projects[project_id] = {"kind": kind, "item_id": item_id, "category": category, "skill": repair_skill, "dv": dv, "duration_minutes": duration, "elapsed_minutes": 0, "materials_cost": materials, "state": "working", "gm_approved": kind == "invent"}
-                        result = {"project_id": project_id, "duration_minutes": duration, "materials_paid": 0 if restarting else materials, "restarted": restarting, "source": "Cyberpunk RED Core Rulebook, pp. 147–149"}
+                    else:
+                        dv, duration = PROJECTS[category]
+                        if category == "Super Luxury":
+                            price = item["cost"] if kind != "invent" else args.get("approved_cost")
+                            if type(price) is not int or price < 10000: raise ValueError("Super Luxury project requires verified cost >= 10000eb")
+                            duration *= (price + 9999) // 10000
+                        materials = 0
+                        if kind == "upgrade":
+                            if item_id in ext.get("upgraded_items", []): raise ValueError("an item may receive only one Upgrade Expertise upgrade")
+                            upgrade_cost = item.get("invented_upgrade_price", 0)
+                            if type(upgrade_cost) is not int or upgrade_cost < 0: result = _ruling(action, "Upgrade price must be a verified saved catalog field.")
+                            else: materials = item["cost"] + upgrade_cost
+                        elif kind == "fabricate":
+                            materials = item.get("fabrication_material_cost")
+                            if (type(materials) is not int or materials < 0) and category in _ONE_LOWER_MATERIAL_COST:
+                                materials = _ONE_LOWER_MATERIAL_COST[category]
+                            if category == "Cheap" and type(materials) is not int:
+                                result = _ruling(action, "The source does not specify a category below Cheap for fabrication materials.")
+                            elif type(materials) is not int or materials < 0:
+                                result = _ruling(action, "A source-verified one-category-lower material cost is required.")
+                        if "result" not in locals() or not isinstance(result, dict):
+                            if kind == "invent": materials = 0
+                            money = ch.get("money", 0)
+                            if isinstance(money, dict): money = money.get("eb", 0)
+                            if type(money) is not int or (not restarting and money < materials): raise ValueError("insufficient eb for project materials")
+                            if not restarting: ch["money"] = money - materials
+                            projects = ext.setdefault("projects", {})
+                            item_name = args.get("item_name") or (item.get("name") if isinstance(item, dict) else None) or item_id or project_id
+                            projects[project_id] = {
+                                "kind": kind, "item_id": item_id, "item_name": item_name,
+                                "category": category, "skill": repair_skill, "dv": dv,
+                                "duration_minutes": duration, "elapsed_minutes": 0,
+                                "materials_cost": materials, "state": "working", "gm_approved": kind == "invent",
+                            }
+                            result = {"project_id": project_id, "category": category, "duration_minutes": duration, "materials_paid": 0 if restarting else materials, "restarted": restarting, "source": "Cyberpunk RED Core Rulebook, pp. 147–149"}
         else:
             project = projects.get(project_id)
             if not isinstance(project, dict) or project.get("kind") != kind: raise ValueError("project_id and project_kind must identify an active project")
+            if project.get("state") != "working":
+                raise ValueError("project must be in working state")
             if action == "tech_project_work":
                 elapsed = args.get("elapsed_minutes")
                 if type(elapsed) is not int or elapsed < 0: raise ValueError("elapsed_minutes must be a nonnegative integer")
@@ -311,11 +531,18 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
                 skill = project.get("skill") or args.get("repair_skill")
                 specialty = {"upgrade": "Upgrade Expertise", "fabricate": "Fabrication Expertise", "invent": "Invention Expertise"}[kind]
                 choices = next((r.get("choices", {}) for r in reversed(acquisitions) if r.get("role") == "Tech"), {})
-                srank = choices.get("maker_ranks", {}).get(specialty, 0)
+                srank = (choices.get("maker_ranks", {}) if isinstance(choices, dict) else {}).get(specialty, 0)
+                if not srank and isinstance(ext.get("maker_ranks"), dict):
+                    srank = ext["maker_ranks"].get(specialty, 0)
                 check = _check(ch, skill, srank, project["dv"], randbelow)
                 project["state"] = "complete" if check["success"] else "failed_restart_required"
                 if check["success"] and kind in ("fabricate", "invent"):
-                    ext.setdefault("inventory", []).append(project["item_id"] if project["item_id"] else {"invention": project_id, "approved": project["gm_approved"], "category": project["category"]})
+                    inv = _dict_inventory(ch)
+                    inv_key = project["item_id"] if project.get("item_id") else (project.get("item_name") or project_id)
+                    if inv is not None:
+                        inv[inv_key] = (inv.get(inv_key, 0) if type(inv.get(inv_key)) is int else 0) + 1
+                    else:
+                        ext.setdefault("inventory", []).append(inv_key)
                 if check["success"] and kind == "upgrade": ext.setdefault("upgraded_items", []).append(project["item_id"])
                 result = {"project_id": project_id, "check": check, "state": project["state"], "source": "Cyberpunk RED Core Rulebook, pp. 147–149"}
     elif action == "medtech_synthesize":
@@ -329,11 +556,18 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
         if type(skill) is not int: raise ValueError("stored Medical Tech skill required")
         money = ch.get("money", 0); money = money.get("eb", 0) if isinstance(money, dict) else money
         if type(money) is not int or money < 200: raise ValueError("synthesis requires 200eb materials")
-        check = skill_check(ch.get("stats", {}).get("TECH"), skill, 13, randbelow=randbelow)
+        ctx = rules_eval.effective_check_context(ch, "TECH", "Medical Tech")
+        check = skill_check(ctx["stat_value"], skill, 13, modifier=ctx["total_modifier"], randbelow=randbelow)
         ch["money"] = money - 200
         doses = skill if check["success"] else 0
         if doses:
             ext.setdefault("pharmaceuticals", {})[recipe] = ext.setdefault("pharmaceuticals", {}).get(recipe, 0) + doses
+            inv = _dict_inventory(ch)
+            if inv is not None:
+                inv_key = f"pharma:{recipe}"
+                inv[inv_key] = (inv.get(inv_key, 0) if type(inv.get(inv_key)) is int else 0) + doses
+        cur_clock = ext.get("clock_minutes", 0)
+        ext["clock_minutes"] = (cur_clock if type(cur_clock) is int else 0) + 60
         result = {"recipe": recipe, "check": check, "doses": doses, "materials_spent": 200, "time_minutes": 60, "source": "Cyberpunk RED Core Rulebook, pp. 149–150"}
     elif action == "fixer_haggle":
         rank = _active_rank(ch, "Fixer")
@@ -369,32 +603,62 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
             vehicle_id = args.get("vehicle_id")
             vehicle = next((v for v in catalog if isinstance(v, dict) and v.get("id") == vehicle_id and v.get("verified") is True), None)
             if vehicle is None: raise ValueError("swap target must be a verified family vehicle")
-            if args.get("family_close") is not True or type(args.get("now_minutes")) is not int: result = _ruling(action, "Family availability and current campaign clock must be confirmed for a motorpool swap.")
+            now_min = args.get("now_minutes")
+            if now_min is not None and (type(now_min) is not int or now_min < 0):
+                raise ValueError("now_minutes must be a nonnegative integer")
+            if args.get("family_close") is not True or type(now_min) is not int: result = _ruling(action, "Family availability and current campaign clock must be confirmed for a motorpool swap.")
             else:
-                ready = args["now_minutes"] + 1440
+                ready = now_min + 1440
                 ext["pending_vehicle_swap"] = {"vehicle_id": vehicle_id, "ready_minutes": ready}
                 result = {"pending_vehicle": vehicle_id, "ready_minutes": ready, "source": "Cyberpunk RED Core Rulebook, pp. 161–162"}
         elif mode == "complete_swap":
             pending = ext.get("pending_vehicle_swap")
             now = args.get("now_minutes")
-            if not isinstance(pending, dict) or type(now) is not int or now < pending.get("ready_minutes", 0): raise ValueError("no completed next-morning family swap is ready")
+            if not isinstance(pending, dict) or type(now) is not int or now < 0 or now < pending.get("ready_minutes", 0): raise ValueError("no completed next-morning family swap is ready")
             ext["active_vehicle"] = pending["vehicle_id"]; del ext["pending_vehicle_swap"]
             result = {"active_vehicle": ext["active_vehicle"], "source": "Cyberpunk RED Core Rulebook, pp. 161–162"}
         elif mode == "repair_destroyed":
             vehicle = next((v for v in catalog if isinstance(v, dict) and v.get("id") == args.get("vehicle_id") and v.get("verified") is True), None)
             if vehicle is None: raise ValueError("repair requires verified family vehicle")
+            now = args.get("now_minutes") if "now_minutes" in args else ext.get("clock_minutes", 0)
+            if type(now) is not int or now < 0: raise ValueError("now_minutes must be a nonnegative integer")
             money = ch.get("money", 0); money = money.get("eb", 0) if isinstance(money, dict) else money
             if type(money) is not int or money < 500: raise ValueError("family repair costs 500eb")
-            ch["money"] = money - 500; vehicle["repair_ready_minutes"] = args.get("now_minutes", 0) + 10080
+            ch["money"] = money - 500; vehicle["repair_ready_minutes"] = now + 10080
             result = {"vehicle_id": vehicle["id"], "cost": 500, "ready_minutes": vehicle["repair_ready_minutes"], "source": "Cyberpunk RED Core Rulebook, p. 162"}
         elif mode == "purchase_upgrade":
             if rank < 10: raise ValueError("purchasing future upgrades at 1,000eb each requires Moto Rank 10")
             upgrade = next((u for u in ext.get("family_upgrades", []) if isinstance(u, dict) and u.get("id") == args.get("upgrade_id") and u.get("verified") is True), None)
             if upgrade is None: raise ValueError("upgrade must be in verified saved family upgrade catalog")
+            target_vid = args.get("vehicle_id") or ext.get("active_vehicle")
+            target_vehicle = next((v for v in catalog if isinstance(v, dict) and v.get("id") == target_vid), None) if target_vid else (catalog[0] if catalog and isinstance(catalog[0], dict) else None)
+            if args.get("vehicle_id") and target_vehicle is None:
+                raise ValueError("target vehicle not found in family_motorpool")
             money = ch.get("money", 0); money = money.get("eb", 0) if isinstance(money, dict) else money
             if type(money) is not int or money < 1000: raise ValueError("upgrade costs 1,000eb")
-            ch["money"] = money - 1000; ext.setdefault("purchased_family_upgrades", []).append(upgrade["id"])
-            result = {"upgrade_id": upgrade["id"], "cost": 1000, "source": "Cyberpunk RED Core Rulebook, p. 162"}
+            ch["money"] = money - 1000
+            ext.setdefault("purchased_family_upgrades", []).append(upgrade["id"])
+            if target_vehicle is not None:
+                v_upgrades = target_vehicle.setdefault("upgrades", [])
+                if isinstance(v_upgrades, list):
+                    v_upgrades.append(upgrade.get("name") or upgrade["id"])
+            result = {"upgrade_id": upgrade["id"], "cost": 1000, **({"vehicle_id": target_vehicle["id"]} if target_vehicle else {}), "source": "Cyberpunk RED Core Rulebook, p. 162"}
+        elif mode in ("attach_upgrade", "install_upgrade"):
+            vehicle_id = args.get("vehicle_id") or ext.get("active_vehicle")
+            vehicle = next((v for v in catalog if isinstance(v, dict) and v.get("id") == vehicle_id), None)
+            if vehicle is None: raise ValueError("target vehicle not found in family_motorpool")
+            upgrade_id = args.get("upgrade_id")
+            if not isinstance(upgrade_id, str) or not upgrade_id.strip():
+                raise ValueError("upgrade_id required")
+            purchased = ext.get("purchased_family_upgrades", [])
+            verified_upg = next((u for u in ext.get("family_upgrades", []) if isinstance(u, dict) and u.get("id") == upgrade_id and u.get("verified") is True), None)
+            if upgrade_id not in purchased and verified_upg is None:
+                raise ValueError("upgrade must be purchased or verified")
+            label = verified_upg.get("name") or verified_upg["id"] if verified_upg else upgrade_id
+            v_upgrades = vehicle.setdefault("upgrades", [])
+            if isinstance(v_upgrades, list):
+                v_upgrades.append(label)
+            result = {"vehicle_id": vehicle["id"], "upgrade_id": upgrade_id, "attached": label, "source": "Cyberpunk RED Core Rulebook, p. 162"}
         else: result = _ruling(action, "Vehicle purchase/upgrade entitlements require a rank-specific saved family catalog choice; this operation is not applicable to unverified entries.")
     elif action == "media_rumor":
         rank = _active_rank(ch, "Media")
@@ -408,29 +672,41 @@ def apply_action(character: dict, action: str, args: dict, randbelow: Callable[[
         key = str(week)
         if checks.get(key, 0) >= 2: raise ValueError("Media passive rumor checks are limited to twice per week")
         checks[key] = checks.get(key, 0) + 1
-        roll = rank + _die(randbelow)
-        result = {"total": roll, "rumor": rumor if roll > passive[rumor] else None, "passive_dv": passive[rumor], "candidate_is_unverified": True, "source": "Cyberpunk RED Core Rulebook, pp. 151–152"}
+        chk = skill_check(0, rank, passive[rumor], randbelow=randbelow)
+        result = {"total": chk["total"], "dice": chk["dice"], "critical_adjustment": chk["critical_adjustment"], "rumor": rumor if chk["success"] else None, "passive_dv": passive[rumor], "candidate_is_unverified": True, "source": "Cyberpunk RED Core Rulebook, pp. 151–152"}
     elif action == "media_publish":
         rank = _active_rank(ch, "Media")
         if not rank: raise ValueError("character has no Media rank")
         topic = args.get("topic")
         if not isinstance(topic, str) or not topic: raise ValueError("topic required")
-        stories = ext.get("published_topics", {})
+        stories = ext.setdefault("published_topics", {})
         if not isinstance(stories, dict): raise ValueError("published_topics must be an object")
+        media_state = ext.setdefault("media", {})
+        if not isinstance(media_state, dict): raise ValueError("media must be an object")
+        pub_stories = media_state.setdefault("published_stories", [])
+        if not isinstance(pub_stories, list): raise ValueError("published_stories must be a list")
         evidence = args.get("evidence_count", 0)
         if type(evidence) is not int or evidence < 0: raise ValueError("evidence_count must be nonnegative")
         if topic in stories and args.get("new_information") is not True: raise ValueError("same topic requires new information")
         chance = min(10, (2 if rank <= 2 else 3 if rank <= 4 else 4 if rank <= 6 else 5 if rank <= 8 else 6 if rank == 9 else 7) + int(evidence >= 1) + 2 * int(evidence > 4))
-        die = _die(randbelow)
+        die = roll_dice(1, 10, randbelow)[0]
         if args.get("evidence_verified") is not True:
             result = {"chance_out_of_10": chance, "die": die, "requires_human_ruling": True, "reason": "GM must verify evidence and determine narrative impact; no publication state recorded.", "source": "Cyberpunk RED Core Rulebook, pp. 152–153"}
         else:
             success = die <= chance
             stories[topic] = {"new_information": args.get("new_information") is True}
+            pub_stories.append({"topic": topic, "believed": success, "chance_out_of_10": chance, "die": die, "new_information": args.get("new_information") is True})
             result = {"chance_out_of_10": chance, "die": die, "believed": success, "impact_requires_human_ruling": True, "reason": "Story impact is GM adjudicated.", "source": "Cyberpunk RED Core Rulebook, pp. 152–153"}
     elif action == "medtech_specialty":
         role = "Medtech"
         if not _active_rank(ch, role): raise ValueError(f"character has no {role} rank")
+        acq = next((r for r in reversed(acquisitions) if r.get("role") == "Medtech"), {})
+        learned = acq.get("choices", {}).get("recipes", []) if isinstance(acq.get("choices"), dict) else []
+        cryo_known = ext.get("cryo_recipes", []) if isinstance(ext.get("cryo_recipes"), list) else []
+        if args.get("recipe") and args.get("recipe") in learned:
+            raise ValueError("Medtech pharmaceutical recipe already known")
+        if args.get("cryo") and args.get("cryo") in cryo_known:
+            raise ValueError("Medtech cryo recipe already known")
         result = _ruling(action, "Required source-derived prerequisites, costs, evidence, or GM adjudication are not fully validated for this operation; no state changed.")
     else: raise ValueError("unknown role action")
     return {"character": ch, "result": result}

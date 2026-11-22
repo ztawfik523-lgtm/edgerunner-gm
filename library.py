@@ -737,31 +737,52 @@ class CampaignLibrary:
         self.rules_path = Path(rules_path).expanduser().resolve() if rules_path else None
         if self.rules_path and self.rules_path == self.store.path.expanduser().resolve():
             raise ValueError("Campaign storage must be separate from the rules index")
-        with closing(self.store._connect()) as conn, conn:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS campaign_library (
-                    id TEXT PRIMARY KEY,
-                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-                    name TEXT NOT NULL,
-                    norm_name TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'homebrew',
-                    created_by TEXT NOT NULL DEFAULT 'user',
-                    summary TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    stats_json TEXT NOT NULL,
-                    tags_json TEXT NOT NULL,
-                    revision INTEGER NOT NULL DEFAULT 1,
-                    operation_id TEXT UNIQUE NOT NULL,
-                    created_at TEXT NOT NULL
+        with closing(self.store._connect()) as conn:
+            existing_tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('campaign_library', 'library_events')"
                 )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_campaign_library_camp ON campaign_library(campaign_id, category, norm_name)"
-            )
+            }
+        if not {"campaign_library", "library_events"}.issubset(existing_tables):
+            with closing(self.store._connect()) as conn, conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS campaign_library (
+                        id TEXT PRIMARY KEY,
+                        campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+                        name TEXT NOT NULL,
+                        norm_name TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'homebrew',
+                        created_by TEXT NOT NULL DEFAULT 'user',
+                        summary TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        stats_json TEXT NOT NULL,
+                        tags_json TEXT NOT NULL,
+                        revision INTEGER NOT NULL DEFAULT 1,
+                        operation_id TEXT UNIQUE NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_campaign_library_camp ON campaign_library(campaign_id, category, norm_name)"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS library_events (
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        campaign_id TEXT NOT NULL,
+                        entry_id TEXT NOT NULL,
+                        operation_id TEXT UNIQUE NOT NULL,
+                        payload TEXT NOT NULL,
+                        result TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
 
     def _reject_cross_table_op(self, conn: sqlite3.Connection, operation_id: str) -> None:
         self.store._reject_roll_id(conn, operation_id)
@@ -843,6 +864,8 @@ class CampaignLibrary:
     ) -> dict[str, Any]:
         if not isinstance(operation_id, str) or not operation_id.strip() or len(operation_id) > 200:
             raise ValueError("operation_id must be a nonempty string of at most 200 characters")
+        has_summary = isinstance(summary, str) and bool(summary.strip())
+        has_description = isinstance(description, str) and bool(description.strip())
         cleaned = validate_entry_payload(
             name=name,
             category=category,
@@ -853,7 +876,15 @@ class CampaignLibrary:
             created_by=created_by,
         )
         action_name = "upsert_homebrew" if upsert else "add_homebrew"
-        payload = _json({"action": action_name, "campaign_id": campaign_id, **cleaned})
+        payload = _json(
+            {
+                "action": action_name,
+                "campaign_id": campaign_id,
+                "has_summary": has_summary,
+                "has_description": has_description,
+                **cleaned,
+            }
+        )
 
         if (
             not allow_variant
@@ -878,6 +909,14 @@ class CampaignLibrary:
         with closing(self.store._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             self._reject_cross_table_op(conn, operation_id)
+            prior_event = conn.execute(
+                "SELECT payload, result FROM library_events WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if prior_event is not None:
+                if prior_event["payload"] != payload:
+                    raise ValueError("operation_id was already used for another library change")
+                return json.loads(prior_event["result"])
             prior = conn.execute("SELECT * FROM campaign_library WHERE operation_id=?", (operation_id,)).fetchone()
             if prior is not None:
                 prior_record = _row_to_entry(prior)
@@ -885,6 +924,8 @@ class CampaignLibrary:
                     {
                         "action": action_name,
                         "campaign_id": prior["campaign_id"],
+                        "has_summary": bool(str(prior["summary"] or "").strip()),
+                        "has_description": bool(str(prior["description"] or "").strip()),
                         "name": prior["name"],
                         "norm_name": prior["norm_name"],
                         "category": prior["category"],
@@ -896,7 +937,7 @@ class CampaignLibrary:
                     }
                 )
                 if prior_payload != payload:
-                    raise ValueError("operation_id was already used for a different homebrew entry")
+                    raise ValueError("operation_id was already used for another library change")
                 return prior_record
             if not conn.execute("SELECT 1 FROM campaigns WHERE id=?", (campaign_id,)).fetchone():
                 raise ValueError(f"campaign not found: {campaign_id}")
@@ -909,6 +950,8 @@ class CampaignLibrary:
                 merged_stats = {**existing_stats, **cleaned["stats"]}
                 existing_tags = json.loads(dup["tags_json"])
                 merged_tags = list(dict.fromkeys([*existing_tags, *cleaned["tags"]]))[:12]
+                next_summary = cleaned["summary"] if (has_summary or not str(dup["summary"] or "").strip()) else dup["summary"]
+                next_desc = cleaned["description"] if (has_description or not str(dup["description"] or "").strip()) else dup["description"]
                 conn.execute(
                     """
                     UPDATE campaign_library
@@ -917,8 +960,8 @@ class CampaignLibrary:
                     """,
                     (
                         cleaned["name"],
-                        cleaned["summary"],
-                        cleaned["description"],
+                        next_summary,
+                        next_desc,
                         _json(merged_stats),
                         _json(merged_tags),
                         operation_id,
@@ -926,7 +969,12 @@ class CampaignLibrary:
                     ),
                 )
                 row = conn.execute("SELECT * FROM campaign_library WHERE id=?", (dup["id"],)).fetchone()
-                return _row_to_entry(row)
+                result = _row_to_entry(row)
+                conn.execute(
+                    "INSERT INTO library_events(campaign_id, entry_id, operation_id, payload, result, created_at) VALUES (?,?,?,?,?,?)",
+                    (campaign_id, result["id"], operation_id, payload, _json(result), now),
+                )
+                return result
             if dup and not allow_variant:
                 raise ValueError(
                     f"Campaign already has homebrew {cleaned['category']} '{cleaned['name']}'"
@@ -962,7 +1010,12 @@ class CampaignLibrary:
                 ),
             )
             row = conn.execute("SELECT * FROM campaign_library WHERE id=?", (entry_id,)).fetchone()
-            return _row_to_entry(row)
+            result = _row_to_entry(row)
+            conn.execute(
+                "INSERT INTO library_events(campaign_id, entry_id, operation_id, payload, result, created_at) VALUES (?,?,?,?,?,?)",
+                (campaign_id, result["id"], operation_id, payload, _json(result), now),
+            )
+            return result
 
     def list_entries(self, campaign_id: str, *, category: str | None = None) -> list[dict[str, Any]]:
         clean_cat = normalize_category(category)
@@ -998,6 +1051,71 @@ class CampaignLibrary:
             return cur.rowcount > 0
 
 
+def _is_materialized_for_current_sha(conn: sqlite3.Connection) -> bool:
+    if not _table_exists(conn, "rule_entries"):
+        return False
+    meta_row = (
+        conn.execute("SELECT value FROM metadata WHERE key='source_sha256'").fetchone()
+        if _table_exists(conn, "metadata")
+        else None
+    )
+    digest = meta_row[0] if meta_row else ""
+    if digest:
+        return conn.execute("SELECT 1 FROM rule_entries WHERE source_sha256=? LIMIT 1", (digest,)).fetchone() is not None
+    return conn.execute("SELECT 1 FROM rule_entries LIMIT 1").fetchone() is not None
+
+
+def _read_campaign_homebrew_entries(
+    campaign_path: str | Path,
+    campaign_id: str,
+    *,
+    category: str | None = None,
+) -> list[dict[str, Any]]:
+    camp_resolved = Path(campaign_path).expanduser().resolve()
+    if not camp_resolved.is_file():
+        return []
+    conn = sqlite3.connect(camp_resolved.as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "campaign_library"):
+            return []
+        if category:
+            rows = conn.execute(
+                "SELECT * FROM campaign_library WHERE campaign_id=? AND category=? ORDER BY name COLLATE NOCASE, id",
+                (campaign_id, category),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM campaign_library WHERE campaign_id=? ORDER BY category, name COLLATE NOCASE, id",
+                (campaign_id,),
+            ).fetchall()
+        return [_row_to_entry(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _read_campaign_homebrew_entry(
+    campaign_path: str | Path,
+    campaign_id: str,
+    entry_id: str,
+) -> dict[str, Any] | None:
+    camp_resolved = Path(campaign_path).expanduser().resolve()
+    if not camp_resolved.is_file():
+        return None
+    conn = sqlite3.connect(camp_resolved.as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "campaign_library"):
+            return None
+        row = conn.execute(
+            "SELECT * FROM campaign_library WHERE campaign_id=? AND id=?",
+            (campaign_id, entry_id),
+        ).fetchone()
+        return _row_to_entry(row) if row else None
+    finally:
+        conn.close()
+
+
 def search_library(
     rules_path: str | Path | None,
     *,
@@ -1026,10 +1144,7 @@ def search_library(
             conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             try:
-                has_entries = (
-                    _table_exists(conn, "rule_entries")
-                    and conn.execute("SELECT 1 FROM rule_entries LIMIT 1").fetchone() is not None
-                )
+                has_entries = _is_materialized_for_current_sha(conn)
                 if has_entries:
                     if query and _table_exists(conn, "rule_entries_fts"):
                         fts = (
@@ -1087,8 +1202,7 @@ def search_library(
                 conn.close()
 
     if include_homebrew and campaign_path is not None and campaign_id:
-        lib = CampaignLibrary(campaign_path, rules_path=rules_path)
-        for item in lib.list_entries(campaign_id, category=clean_cat):
+        for item in _read_campaign_homebrew_entries(campaign_path, campaign_id, category=clean_cat):
             if tokens:
                 hay = _entry_haystack(item)
                 if not any(tok in hay for tok in tokens):
@@ -1132,10 +1246,7 @@ def get_library_entry(
         conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
-            has_entries = (
-                _table_exists(conn, "rule_entries")
-                and conn.execute("SELECT 1 FROM rule_entries LIMIT 1").fetchone() is not None
-            )
+            has_entries = _is_materialized_for_current_sha(conn)
             if has_entries:
                 row = conn.execute("SELECT * FROM rule_entries WHERE id=?", (entry_id,)).fetchone()
                 return _row_to_entry(row) if row else None
@@ -1146,5 +1257,5 @@ def get_library_entry(
             conn.close()
         return None
     if campaign_path is not None and campaign_id:
-        return CampaignLibrary(campaign_path, rules_path=rules_path).get_entry(campaign_id, entry_id)
+        return _read_campaign_homebrew_entry(campaign_path, campaign_id, entry_id)
     return None

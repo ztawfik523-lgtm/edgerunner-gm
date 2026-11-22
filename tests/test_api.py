@@ -461,4 +461,257 @@ def test_expanded_campaign_bootstrap_rename_library_clocks_and_session_zero(tmp_
     asyncio.run(run())
 
 
+def test_update_character_profile_does_not_leak_hidden_real_name_into_handle(tmp_path: Path):
+    from campaign import CampaignStore
+
+    store = CampaignStore(tmp_path / "camp.sqlite")
+    stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+    char = store.create_character("Shade", stats, detail={"handle": "Shade"})
+    updated = store.update_character_profile(
+        char["id"],
+        char["revision"],
+        {"handle": None, "real_name": "Marcus Cole", "real_name_hidden": True},
+        "Hide legal identity",
+        "op-hide-1",
+    )
+    assert updated["name"] == "Shade"
+    assert updated["detail"]["real_name"] == "Marcus Cole"
+    assert updated["detail"]["real_name_hidden"] is True
+
+
+def test_server_side_player_redaction_across_tree_sse_coop_and_game(tmp_path: Path, monkeypatch):
+    import asyncio
+    import json
+    import httpx
+    from server.redaction import (
+        redact_campaign_context,
+        redact_character,
+        redact_chat_message,
+        redact_chat_tree,
+        redact_sse_event,
+        redact_state_patch,
+    )
+    from tests.test_library import _create_rules_db
+    from turnloop import LLMConfig
+
+    # 1. Unit tests for redaction helpers
+    sample_patch = {
+        "target": "campaign",
+        "before": {"discoveries": {"__npc_identities": "{}", "Clue": "A"}, "unresolved": {"Mole": "X"}, "gm_secrets": {"S": "1"}},
+        "after": {"discoveries": {"__campaign_meta": "{}", "Clue": "B"}, "unresolved": {"Mole": "Y"}},
+    }
+    red_patch = redact_state_patch(sample_patch, is_gm=False)
+    assert "__npc_identities" not in red_patch["before"]["discoveries"]
+    assert "__campaign_meta" not in red_patch["after"]["discoveries"]
+    assert red_patch["before"]["discoveries"]["Clue"] == "A"
+    assert "unresolved" not in red_patch["before"]
+    assert "gm_secrets" not in red_patch["before"]
+
+    sample_msg = {
+        "id": "m1",
+        "channel_id": "main",
+        "role": "assistant",
+        "content": "Visible prose",
+        "raw_content": "<think>secret GM reasoning</think>Visible prose",
+        "model": "gpt-secret",
+        "metadata": {
+            "model": "gpt-secret",
+            "generation_stats": {"elapsed_seconds": 1.2},
+            "guidance": "Secret director note",
+            "citation_cards": [{"id": "c1", "name": "Rule"}],
+            "warnings": ["GM warning"],
+            "library_added": ["lib-1"],
+            "patches": [sample_patch],
+        },
+    }
+    red_msg = redact_chat_message(sample_msg, is_gm=False)
+    assert "raw_content" not in red_msg
+    assert "model" not in red_msg
+    for gm_k in ("model", "generation_stats", "guidance", "citation_cards", "warnings", "library_added"):
+        assert gm_k not in red_msg["metadata"]
+    assert "__campaign_meta" not in red_msg["metadata"]["patches"][0]["after"]["discoveries"]
+
+    assert redact_sse_event("rule_citation", {"id": "c1"}, is_gm=False) is None
+    assert redact_sse_event("warning", {"message": "warn"}, is_gm=False) is None
+    assert redact_sse_event("library_added", {"id": "l1"}, is_gm=False) is None
+    assert redact_sse_event("peer_stream", {"event": "rule_citation", "data": {"id": "c1"}}, is_gm=False) is None
+
+    red_tree = redact_chat_tree(
+        {
+            "channels": ["main", "bob-chan"],
+            "nodes": [sample_msg, {**sample_msg, "id": "m2", "channel_id": "bob-chan"}],
+            "active_branch": [sample_msg],
+        },
+        is_gm=False,
+        allowed_channels={"main"},
+    )
+    assert red_tree["channels"] == ["main"]
+    assert [n["id"] for n in red_tree["nodes"]] == ["m1"]
+
+    bob_char = {
+        "id": "c-bob",
+        "name": "Hammer",
+        "detail": {
+            "handle": "Hammer",
+            "real_name": "Robert Vance",
+            "real_name_hidden": True,
+            "owner_username": "bob",
+            "appearance": "Chrome arm",
+            "backstory": {"summary": "Secret spy", "appearance": "Chrome arm", "private": True},
+        },
+    }
+    assert redact_character(bob_char, is_gm=False, viewer_username="alice")["detail"]["real_name"] == ""
+    assert "summary" not in redact_character(bob_char, is_gm=False, viewer_username="alice")["detail"]["backstory"]
+    assert redact_character(bob_char, is_gm=False, viewer_username="alice")["detail"]["appearance"] == "Chrome arm"
+    assert redact_character(bob_char, is_gm=False, viewer_username="bob")["detail"]["real_name"] == "Robert Vance"
+
+    # 2. Full HTTP integration test across /v1/chat/turn SSE, /v1/chat/tree, /v1/game, and split channels
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    camp_db = tmp_path / "camp.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    class RedactionTestLLM:
+        def __init__(self):
+            self.config = LLMConfig(model="secret-gm-model", mode="two_pass")
+
+        async def complete(self, messages, **_kwargs):
+            system = messages[0]["content"] if messages else ""
+            if "Chronicler" in system or "continuity" in system.lower():
+                return json.dumps({
+                    "campaign_updates": {
+                        "discoveries": {"Public Clue": "Keycard on desk"},
+                        "unresolved": {"Hidden Bomb": "Armed in basement"},
+                    },
+                    "gm_secrets": {"Mastermind": "Arasaka exec"},
+                })
+            return json.dumps({
+                "checks": [],
+                "citations": ["Skill Checks"],
+                "gm_notes": "Secret GM note",
+            })
+
+        async def stream(self, messages, **_kwargs):
+            yield "<think>Internal GM thought</think>Rain falls over Watson."
+
+    async def run():
+        app = redkb.make_api(rules_db, (), camp_db, settings_path=settings_path, llm=RedactionTestLLM())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            boot = await client.post(
+                "/v1/auth/setup",
+                json={
+                    "admin_username": "gm",
+                    "admin_password": "gm-password-1",
+                    "allow_self_signup": True,
+                    "bootstrap_token": "test-bootstrap-token-" + ("a" * 40),
+                },
+            )
+            admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+            client.cookies.clear()
+            alice_headers = {"X-RedGM-Token": (await client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})).json()["token"]}
+            client.cookies.clear()
+            bob_headers = {"X-RedGM-Token": (await client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"})).json()["token"]}
+            client.cookies.clear()
+
+            camp = (await client.post("/v1/game", headers=admin_headers, json={"action": "create_campaign", "arguments": {"name": "Redaction Run", "operation_id": "red-c1"}})).json()["result"]
+            camp_id = camp["id"]
+            stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+            alice_pc = (await client.post(
+                "/v1/game",
+                headers=alice_headers,
+                json={"action": "create_character", "arguments": {"name": "Ghost", "stats": stats, "detail": {"handle": "Ghost", "real_name": "Alice Secret", "real_name_hidden": True}, "operation_id": "red-a1"}},
+            )).json()["result"]
+            bob_pc = (await client.post(
+                "/v1/game",
+                headers=bob_headers,
+                json={"action": "create_character", "arguments": {"name": "Brick", "stats": stats, "detail": {"handle": "Brick", "real_name": "Bob Secret", "real_name_hidden": True, "backstory": {"summary": "Secret spy", "private": True}}, "operation_id": "red-b1"}},
+            )).json()["result"]
+
+            await client.post(f"/v1/campaigns/{camp_id}/bootstrap", headers=admin_headers, json={
+                "scene": "Watson alley",
+                "unresolved": {"Mole": "Fixer is traitor"},
+                "gm_secrets": {"Secret": "Hidden lab"},
+                "npc_identities": {"Fixer": {"handle": "Fixer", "real_name": "Viktor K", "real_name_hidden": True}},
+                "clocks": [
+                    {"name": "Public Heat", "segments": 4, "filled": 1, "visibility": "public"},
+                    {"name": "Secret Trap", "segments": 4, "filled": 2, "visibility": "secret"},
+                ],
+                "attach_character_ids": [alice_pc["id"], bob_pc["id"]],
+            })
+
+            # Alice runs a turn and receives redacted SSE stream (no rule_citation/warning/library_added, no raw_content/guidance/citation_cards).
+            turn_res = await client.post(
+                "/v1/chat/turn",
+                headers=alice_headers,
+                json={"campaign_id": camp_id, "speaker_character_id": alice_pc["id"], "user_text": "I inspect the desk.", "gm_mode": "force_gm"},
+            )
+            assert turn_res.status_code == 200
+            assert "event: rule_citation" not in turn_res.text
+            assert "event: warning" not in turn_res.text
+            assert "event: library_added" not in turn_res.text
+            assert "Internal GM thought" not in turn_res.text
+            assert "Hidden Bomb" not in turn_res.text
+
+            # /v1/chat/tree: Admin sees raw_content & citation_cards; Alice does not.
+            gm_tree = (await client.get("/v1/chat/tree", params={"campaign_id": camp_id}, headers=admin_headers)).json()
+            alice_tree = (await client.get("/v1/chat/tree", params={"campaign_id": camp_id}, headers=alice_headers)).json()
+            gm_asst = gm_tree["active_branch"][-1]
+            alice_asst = alice_tree["active_branch"][-1]
+            assert "Internal GM thought" in gm_asst["raw_content"]
+            assert "raw_content" not in alice_asst
+            assert "model" not in alice_asst
+            assert "generation_stats" not in alice_asst["metadata"]
+            assert "citation_cards" not in alice_asst["metadata"]
+
+            # /v1/game reads: campaign_context, get_campaign, get_character, list_characters redacted for Alice.
+            alice_ctx = (await client.post("/v1/game", headers=alice_headers, json={"action": "campaign_context", "campaign_id": camp_id, "arguments": {"campaign_id": camp_id}})).json()["result"]
+            assert "gm_secrets" not in alice_ctx
+            assert alice_ctx["campaign"]["state"]["unresolved"] == {}
+            assert not any(k.startswith("__") for k in alice_ctx["campaign"]["state"]["discoveries"])
+            assert [c["name"] for c in alice_ctx["clocks"]] == ["Public Heat"]
+            assert "real_name" not in alice_ctx["npc_profiles"]["Fixer"]
+            alice_view_of_self = next(c for c in alice_ctx["characters"] if c["id"] == alice_pc["id"])
+            alice_view_of_bob = next(c for c in alice_ctx["characters"] if c["id"] == bob_pc["id"])
+            assert alice_view_of_self["detail"]["real_name"] == "Alice Secret"
+            assert alice_view_of_bob["detail"]["real_name"] == ""
+            assert "summary" not in (alice_view_of_bob["detail"].get("backstory") or {})
+
+            alice_get_camp = (await client.post("/v1/game", headers=alice_headers, json={"action": "get_campaign", "arguments": {"campaign_id": camp_id}})).json()["result"]
+            assert alice_get_camp["state"]["unresolved"] == {}
+            assert not any(k.startswith("__") for k in alice_get_camp["state"]["discoveries"])
+
+            alice_get_bob = (await client.post("/v1/game", headers=alice_headers, json={"action": "get_character", "arguments": {"character_id": bob_pc["id"]}})).json()["result"]
+            assert alice_get_bob["detail"]["real_name"] == ""
+
+            alice_list_chars = (await client.post("/v1/game", headers=alice_headers, json={"action": "list_characters", "campaign_id": camp_id, "arguments": {}})).json()["result"]
+            listed_bob = next(c for c in alice_list_chars if c["id"] == bob_pc["id"])
+            assert listed_bob["detail"]["real_name"] == ""
+
+            # Split party: Bob gets his own private channel; Alice cannot post to or read Bob's channel.
+            split = (await client.post(f"/v1/campaigns/{camp_id}/party-location", headers=admin_headers, json={
+                "pc_locations": {alice_pc["id"]: "Dock 7", bob_pc["id"]: "Penthouse"},
+            })).json()
+            bob_chan = split["party_grouping"]["char_channel_map"][bob_pc["id"]]
+            await client.post("/v1/chat/turn", headers=bob_headers, json={
+                "campaign_id": camp_id,
+                "channel_id": bob_chan,
+                "speaker_character_id": bob_pc["id"],
+                "user_text": "Bob whispers to the mole.",
+                "gm_mode": "force_gm",
+            })
+
+            alice_peek = (await client.get("/v1/chat/tree", params={"campaign_id": camp_id, "channel_id": bob_chan}, headers=alice_headers)).json()
+            assert alice_peek["nodes"] == []
+            assert bob_chan not in alice_peek["channels"]
+            assert (await client.post("/v1/chat/turn", headers=alice_headers, json={
+                "campaign_id": camp_id,
+                "channel_id": bob_chan,
+                "speaker_character_id": alice_pc["id"],
+                "user_text": "Spy on Bob",
+            })).status_code == 403
+
+    asyncio.run(run())
+
+
 

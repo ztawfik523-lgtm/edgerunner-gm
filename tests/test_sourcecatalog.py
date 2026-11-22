@@ -96,7 +96,7 @@ def test_items_supplemental_rows_and_package_role_evidence(tmp_path):
     result = package(db, "Rockerboy", "outfit")
     assert len(result["sections"]) == 1
     assert result["sections"][0]["printed_page"] == 103
-    assert "Nomad style" in result["sections"][0]["extracted_tokens"]
+    assert "Rockerboy | Nomad style" in result["sections"][0]["extracted_tokens"]
     assert package(db, "Solo", "outfit")["sections"] == []
 
 

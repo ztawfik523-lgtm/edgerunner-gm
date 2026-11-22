@@ -24,6 +24,7 @@ import {
   assistCharacterCreation,
   fetchCampaignClocks,
   mutateCampaignClock,
+  saveCampaignBanner,
   undoCampaignChange,
   updateCampaignState,
   updateNpcIdentity,
@@ -100,13 +101,18 @@ export function CampaignPanel({
   const [subTab, setSubTab] = useState<CampaignSubTab>("briefing");
   const [scene, setScene] = useState(campaign?.state.scene ?? "");
   const [summary, setSummary] = useState(campaign?.state.summary ?? "");
+  const contextBannerUrl = (context as { banner_url?: string } | null)?.banner_url ?? "";
   const [bannerUrl, setBannerUrl] = useState(
-    campaign?.state.discoveries?.["__banner_url"] ?? campaign?.state.discoveries?.["Banner URL"] ?? "",
+    contextBannerUrl ||
+      campaign?.state.discoveries?.["__banner_url"] ||
+      campaign?.state.discoveries?.["Banner URL"] ||
+      "",
   );
   const [clocks, setClocks] = useState<WorldClock[]>([]);
   const [newClockName, setNewClockName] = useState("");
   const [newClockMax, setNewClockMax] = useState("4");
   const [newClockTrigger, setNewClockTrigger] = useState("");
+  const [newClockVisibility, setNewClockVisibility] = useState<"public" | "secret">("public");
   const [draftKey, setDraftKey] = useState<Record<SectionKey, string>>({
     npcs: "",
     objectives: "",
@@ -134,7 +140,10 @@ export function CampaignPanel({
     setScene(campaign?.state.scene ?? "");
     setSummary(campaign?.state.summary ?? "");
     setBannerUrl(
-      campaign?.state.discoveries?.["__banner_url"] ?? campaign?.state.discoveries?.["Banner URL"] ?? "",
+      contextBannerUrl ||
+        campaign?.state.discoveries?.["__banner_url"] ||
+        campaign?.state.discoveries?.["Banner URL"] ||
+        "",
     );
     setConfirmRemove(null);
     const locs: Record<string, string> = {};
@@ -152,7 +161,7 @@ export function CampaignPanel({
   ]);
 
   useEffect(() => {
-    if (!campaign || !isAdmin) {
+    if (!campaign) {
       setClocks([]);
       return;
     }
@@ -175,11 +184,8 @@ export function CampaignPanel({
     setBusy(true);
     try {
       const nextDiscoveries = { ...(campaign.state.discoveries ?? {}) };
-      if (bannerUrl.trim()) {
-        nextDiscoveries["__banner_url"] = bannerUrl.trim();
-      } else {
-        delete nextDiscoveries["__banner_url"];
-      }
+      delete nextDiscoveries["__banner_url"];
+      await saveCampaignBanner(campaign.id, bannerUrl.trim());
       await updateCampaignState(
         campaign.id,
         campaign.revision,
@@ -295,16 +301,20 @@ export function CampaignPanel({
 
   const handleRemoveEntry = async (section: SectionKey, key: string) => {
     if (!campaign || !isAdmin || busy) return;
-    const nextMap = { ...campaign.state[section] };
-    delete nextMap[key];
     setBusy(true);
     try {
-      await updateCampaignState(
-        campaign.id,
-        campaign.revision,
-        { [section]: nextMap },
-        `Remove ${section} entry: ${key}`,
-      );
+      if (section === "npcs") {
+        await updateNpcIdentity(campaign.id, { handle: key, delete: true });
+      } else {
+        const nextMap = { ...campaign.state[section] };
+        delete nextMap[key];
+        await updateCampaignState(
+          campaign.id,
+          campaign.revision,
+          { [section]: nextMap },
+          `Remove ${section} entry: ${key}`,
+        );
+      }
       await onRefresh();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Failed to remove entry");
@@ -335,6 +345,7 @@ export function CampaignPanel({
     segments?: number;
     delta?: number;
     category?: string;
+    visibility?: "public" | "secret";
     note?: string;
   }) => {
     if (!campaign || !isAdmin || busy) return;
@@ -356,10 +367,20 @@ export function CampaignPanel({
     if (!campaign || !isAdmin || aiBusy || busy) return;
     setAiBusyMode(assistMode === "scratch" ? "regen" : "improve");
     try {
+      const meta = context?.campaign_meta;
       const res = await assistCharacterCreation({
         target: "campaign",
         mode: assistMode,
-        campaign: { name: campaign.name },
+        campaign: {
+          name: campaign.name,
+          lock_choices: true,
+          ...(meta?.district ? { district: meta.district } : {}),
+          ...(meta?.threat_rating ? { threat_rating: meta.threat_rating } : {}),
+          ...(meta?.caper_style ? { caper_style: meta.caper_style } : {}),
+          ...(meta?.factions?.length ? { factions: meta.factions } : {}),
+          ...(meta?.screamsheet_hook ? { screamsheet_hook: meta.screamsheet_hook } : {}),
+          ...(meta ? { campaign_meta: meta } : {}),
+        } as Parameters<typeof assistCharacterCreation>[0]["campaign"],
         current: {
           summary: summary.trim() || undefined,
           opening_scene: scene.trim() || undefined,
@@ -398,7 +419,9 @@ export function CampaignPanel({
   };
 
   const activeEncounter = solo?.runtime.encounter?.active ? solo.runtime.encounter : null;
-  const activeRuns = Object.entries(solo?.runtime.runs ?? {}).filter(([, r]) => r.connected);
+  const activeRuns = Object.entries(solo?.runtime.runs ?? {})
+    .map(([runId, runEntry]) => [runId, runEntry?.run ?? runEntry] as const)
+    .filter(([, r]) => Boolean(r?.connected));
   const totalMins = Math.max(0, solo?.runtime.clock_minutes ?? 0);
   const clockDay = Math.floor(totalMins / 1440) + 1;
   const hourNum = Math.floor((totalMins % 1440) / 60);
@@ -716,7 +739,7 @@ export function CampaignPanel({
                         Active NET Run
                       </span>
                       <span className="font-mono">
-                        Actions: {run.actions_remaining ?? 0} · Floor: {run.current_floor_id ?? "root"}
+                        Actions: {run.actions_remaining ?? 0} · Floor: {run.floor_id ?? run.current_floor_id ?? "root"}
                       </span>
                     </div>
                   ))}
@@ -741,7 +764,63 @@ export function CampaignPanel({
                 </div>
               </div>
 
-              {/* Read-only Objectives, Contacts, Discoveries (no Unresolved Threads or Clocks) */}
+              {/* Read-only Public World Clocks for Players */}
+              {clocks.length > 0 && (
+                <div className="space-y-2 rounded-lg border border-slate-800 bg-[#111726] p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      <Clock className="h-3.5 w-3.5 text-amber-400" />
+                      World Clocks &amp; Heat
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-500">
+                      Day {clockDay} · {clockHour}:{clockMin}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {clocks.map((clock) => {
+                      const segments = Math.max(1, Math.min(12, clock.segments || 4));
+                      const filled = Math.max(0, Math.min(segments, clock.filled || 0));
+                      const isFull = filled >= segments;
+                      return (
+                        <div
+                          key={clock.id}
+                          className="rounded border border-slate-800/80 bg-slate-950/70 px-2.5 py-2 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className={`font-semibold ${isFull ? "text-rose-300" : "text-slate-200"}`}>
+                                {clock.name}
+                              </span>
+                              {clock.note && (
+                                <p className="truncate text-[10px] text-slate-400">{clock.note}</p>
+                              )}
+                            </div>
+                            <span className="shrink-0 font-mono text-[11px] text-amber-300">
+                              {filled}/{segments}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 flex gap-1">
+                            {Array.from({ length: segments }).map((_, idx) => (
+                              <div
+                                key={idx}
+                                className={`h-1.5 flex-1 rounded-sm ${
+                                  idx < filled
+                                    ? isFull
+                                      ? "bg-rose-500"
+                                      : "bg-amber-400"
+                                    : "bg-slate-800"
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Read-only Objectives, Contacts, Discoveries (no Unresolved Threads) */}
               {SECTION_LABELS.filter((s) => !s.adminOnly).map(({ key, title }) => {
                 const entries = Object.entries((campaign.state as CampaignNarrativeState)[key] ?? {}).filter(
                   ([k]) => !k.startsWith("__"),
@@ -883,7 +962,7 @@ export function CampaignPanel({
                         Active NET Run
                       </span>
                       <span className="font-mono">
-                        Actions: {run.actions_remaining ?? 0} · Floor: {run.current_floor_id ?? "root"}
+                        Actions: {run.actions_remaining ?? 0} · Floor: {run.floor_id ?? run.current_floor_id ?? "root"}
                       </span>
                     </div>
                   ))}
@@ -1065,6 +1144,42 @@ export function CampaignPanel({
                             <div className="flex items-center gap-1 shrink-0">
                               <button
                                 type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void handleClockAction({
+                                    action: "upsert",
+                                    id: clock.id,
+                                    name: clock.name,
+                                    segments: clock.segments,
+                                    filled: clock.filled,
+                                    note: clock.note,
+                                    visibility: clock.visibility === "secret" ? "public" : "secret",
+                                  })
+                                }
+                                title={
+                                  clock.visibility === "secret"
+                                    ? "Secret clock (GM only) — click to make Public"
+                                    : "Public clock (visible to players) — click to make Secret"
+                                }
+                                aria-label={`Toggle visibility for ${clock.name}`}
+                                className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 font-mono text-[9px] disabled:opacity-40 ${
+                                  clock.visibility === "secret"
+                                    ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                                    : "border-slate-700 bg-slate-900 text-slate-400 hover:border-cyan-400"
+                                }`}
+                              >
+                                {clock.visibility === "secret" ? (
+                                  <>
+                                    <EyeOff className="h-2.5 w-2.5" /> Secret
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye className="h-2.5 w-2.5" /> Public
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
                                 disabled={busy || filled <= 0}
                                 onClick={() => void handleClockAction({ action: "tick", id: clock.id, delta: -1 })}
                                 aria-label={`Decrement ${clock.name}`}
@@ -1128,6 +1243,7 @@ export function CampaignPanel({
                       action: "upsert",
                       name,
                       segments: maxVal,
+                      visibility: newClockVisibility,
                       note: trig || undefined,
                     });
                   }}
@@ -1156,6 +1272,33 @@ export function CampaignPanel({
                     placeholder="Trigger (optional)"
                     className="w-28 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
                   />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewClockVisibility((v) => (v === "secret" ? "public" : "secret"))
+                    }
+                    title={
+                      newClockVisibility === "secret"
+                        ? "New clock will be Secret (GM only)"
+                        : "New clock will be Public (visible to players)"
+                    }
+                    aria-label="New clock visibility"
+                    className={`inline-flex items-center gap-1 rounded border px-2 py-1 font-mono text-[10px] ${
+                      newClockVisibility === "secret"
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                        : "border-slate-700 bg-slate-900 text-slate-300"
+                    }`}
+                  >
+                    {newClockVisibility === "secret" ? (
+                      <>
+                        <EyeOff className="h-3 w-3" /> Secret
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3 w-3" /> Public
+                      </>
+                    )}
+                  </button>
                   <button
                     type="submit"
                     disabled={busy || !newClockName.trim()}

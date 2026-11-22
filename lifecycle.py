@@ -14,6 +14,44 @@ from contextlib import closing
 from campaign import _json, _integer
 
 
+def advance_campaign_clock(
+    state: dict,
+    after_clock: int | None = None,
+    randbelow=secrets.randbelow,
+    *,
+    elapsed_minutes: int = 0,
+) -> list[dict]:
+    """Sync runtime and character clocks forward and resolve any expired street drugs."""
+    from substances import process_expirations
+
+    runtime = state.setdefault("runtime", {})
+    chars = state.setdefault("characters", {})
+    base_runtime = int(runtime.get("clock_minutes") or 0)
+    new_clock = max(base_runtime, int(after_clock or 0))
+    for ch in chars.values():
+        d = ch.get("detail") if isinstance(ch.get("detail"), dict) else {}
+        ch_clock = int(d.get("clock_minutes") or 0)
+        new_clock = max(new_clock, ch_clock + elapsed_minutes if elapsed_minutes else ch_clock)
+    runtime["clock_minutes"] = new_clock
+    expired: list[dict] = []
+    for cid, ch in chars.items():
+        d = ch.setdefault("detail", {})
+        prev_c = int(d.get("clock_minutes") or 0)
+        target_c = max(new_clock, prev_c + elapsed_minutes if elapsed_minutes else prev_c)
+        d["clock_minutes"] = target_c
+        for chk in process_expirations(ch, target_c, randbelow=randbelow, prev_minutes=prev_c):
+            expired.append({"character_id": cid, "character": ch.get("name") or cid, **chk})
+    return expired
+
+
+def _sync_chars_to_runtime_clock(chars: dict, runtime: dict) -> None:
+    runtime_clock = int(runtime.get("clock_minutes") or 0)
+    for ch in chars.values():
+        d = ch.setdefault("detail", {})
+        if int(d.get("clock_minutes") or 0) < runtime_clock:
+            d["clock_minutes"] = runtime_clock
+
+
 class SoloService:
     def __init__(self, gameplay):
         self.gameplay = gameplay
@@ -163,26 +201,77 @@ class SoloService:
             chars[c["id"]] = c
             return {"character_id": c["id"], "creation": c["detail"]}
         if action == "start_encounter":
-            from encounters import start_encounter
+            from encounters import build_npc_combatant, start_encounter
             if runtime["encounter"] and runtime["encounter"].get("active"):
                 raise ValueError("An encounter is already active")
             ids = args.pop("character_ids", None)
-            if args or not isinstance(ids, list) or not ids or len(ids) != len(set(ids)) or any(i not in chars for i in ids):
+            raw_npcs = args.pop("npcs", None)
+            if args:
+                raise ValueError("start_encounter takes only character_ids and optional npcs")
+            if ids is None:
+                ids = []
+            if not isinstance(ids, list) or len(ids) != len(set(ids)) or any(i not in chars for i in ids):
                 raise ValueError("character_ids must name distinct campaign members")
-            runtime["encounter"] = start_encounter([chars[i] for i in ids], randbelow)
-            self._begin_turn(state, runtime["encounter"]["queue"][0], randbelow)
+            if raw_npcs is not None and not isinstance(raw_npcs, list):
+                raise ValueError("npcs must be a list")
+            npc_specs = raw_npcs or []
+            if not ids and not npc_specs:
+                raise ValueError("character_ids must name distinct campaign members")
+            existing_ids = set(str(i) for i in ids) | set(str(k) for k in chars)
+            built_npcs = []
+            npc_map = {}
+            for spec in npc_specs:
+                npc_sheet = build_npc_combatant(spec, existing_ids=existing_ids)
+                existing_ids.add(npc_sheet["id"])
+                built_npcs.append(npc_sheet)
+                npc_map[npc_sheet["id"]] = copy.deepcopy(npc_sheet)
+            combatants = [chars[i] for i in ids] + built_npcs
+            enc = start_encounter(combatants, randbelow)
+            enc["npcs"] = npc_map
+            runtime["encounter"] = enc
+            start_actor = enc["queue"][enc["turn_index"]]
+            start_res = self._begin_turn(state, start_actor, randbelow)
+            if start_res["dead"]:
+                self._next_turn(state, randbelow)
             return runtime["encounter"]
         if action == "encounter_action":
             from encounters import apply_action
             if not runtime["encounter"] or not runtime["encounter"].get("active"):
                 raise ValueError("No active encounter")
-            if args["action"] == "next_turn":
-                encounter = runtime["encounter"]
+            encounter = runtime["encounter"]
+            sub_action = args["action"]
+            if sub_action == "next_turn":
                 if encounter["queue"][encounter["turn_index"]] != args["actor_id"]:
                     raise ValueError("Only the current actor can finish its turn")
                 return self._next_turn(state, randbelow)
-            result = apply_action(runtime["encounter"], chars, args["actor_id"], args["action"], args.get("arguments", {}), randbelow)
-            runtime["encounter"], state["characters"] = result["encounter"], result["characters"]
+            pc_ids = set(chars.keys())
+            npcs_before = copy.deepcopy(encounter.get("npcs") or {})
+            combined = {**chars, **npcs_before}
+            actor_id = args.get("actor_id")
+            if sub_action in {"add_npc", "remove_npc"} and actor_id is None:
+                actor_id = encounter["queue"][encounter["turn_index"]]
+            prev_active = encounter["queue"][encounter["turn_index"]] if encounter.get("queue") else None
+            result = apply_action(encounter, combined, actor_id, sub_action, args.get("arguments", {}), randbelow)
+            updated_enc = result["encounter"]
+            updated_all = result["characters"]
+            for cid in pc_ids:
+                if cid in updated_all:
+                    chars[cid] = updated_all[cid]
+            if isinstance(updated_enc.get("npcs"), dict):
+                for nid in list(updated_enc["npcs"].keys()):
+                    if nid in updated_all:
+                        updated_enc["npcs"][nid] = updated_all[nid]
+            else:
+                updated_enc["npcs"] = {
+                    nid: updated_all[nid]
+                    for nid in npcs_before
+                    if nid in updated_all and nid not in pc_ids
+                }
+            runtime["encounter"] = updated_enc
+            if sub_action == "remove_npc" and updated_enc.get("active") and updated_enc.get("queue"):
+                new_active = updated_enc["queue"][updated_enc["turn_index"]]
+                if new_active != prev_active:
+                    self._begin_turn(state, new_active, randbelow)
             return result["result"]
         if action == "end_encounter":
             if args: raise ValueError("end_encounter takes no extra arguments")
@@ -195,25 +284,33 @@ class SoloService:
                 raise ValueError("elapsed_minutes must be an integer between 0 and 43200")
             before_clock = int(runtime.get("clock_minutes") or 0)
             after_clock = before_clock + elapsed
-            runtime["clock_minutes"] = after_clock
-            for ch in chars.values():
-                d = ch.setdefault("detail", {})
-                d["clock_minutes"] = max(after_clock, int(d.get("clock_minutes") or 0) + elapsed)
-            return {"before_minutes": before_clock, "after_minutes": after_clock, "elapsed_minutes": elapsed}
+            expired = advance_campaign_clock(state, after_clock=after_clock, randbelow=randbelow, elapsed_minutes=elapsed)
+            out = {"before_minutes": before_clock, "after_minutes": runtime["clock_minutes"], "elapsed_minutes": elapsed}
+            if expired:
+                out["expired_drug_checks"] = expired
+            return out
         if action == "health_action":
             from health import apply_action
+            _sync_chars_to_runtime_clock(chars, runtime)
             result = apply_action(chars, args["actor_id"], args["action"], args.get("arguments", {}), randbelow)
             state["characters"] = result["characters"]
-            max_clock = max([int(c.get("detail", {}).get("clock_minutes") or 0) for c in state["characters"].values()], default=0)
-            runtime["clock_minutes"] = max(int(runtime.get("clock_minutes") or 0), max_clock)
-            return result["result"]
+            expired = advance_campaign_clock(state, randbelow=randbelow)
+            res = result["result"]
+            if expired and isinstance(res, dict) and not res.get("requires_human_ruling"):
+                res["expired_drug_checks"] = expired
+            return res
         if action == "role_action":
             from roles import apply_action
             char_id = args["character_id"]
             if char_id not in chars: raise ValueError("Character is not in this campaign")
+            _sync_chars_to_runtime_clock(chars, runtime)
             result = apply_action(chars[char_id], args["action"], args.get("arguments", {}), randbelow)
             chars[char_id] = result["character"]
-            return result["result"]
+            expired = advance_campaign_clock(state, randbelow=randbelow)
+            res = result["result"]
+            if expired and isinstance(res, dict) and not res.get("requires_human_ruling"):
+                res["expired_drug_checks"] = expired
+            return res
         if action in {"gear_action", "economy_action"}:
             char_id = args["character_id"]
             if char_id not in chars: raise ValueError("Character is not in this campaign")
@@ -221,18 +318,32 @@ class SoloService:
                 from gear import apply_action
                 if not self.gameplay.rules_path: raise ValueError("A source index is required")
                 result = apply_action(chars[char_id], args["action"], args.get("arguments", {}), self.gameplay.rules_path, randbelow)
+                chars[char_id] = result["character"]
             else:
                 from economy import apply_action
+                _sync_chars_to_runtime_clock(chars, runtime)
                 result = apply_action(chars[char_id], args["action"], args.get("arguments", {}), randbelow)
-                max_clock = max([int(c.get("detail", {}).get("clock_minutes") or 0) for c in chars.values()], default=0)
-                runtime["clock_minutes"] = max(int(runtime.get("clock_minutes") or 0), max_clock)
-            chars[char_id] = result["character"]
+                chars[char_id] = result["character"]
+                expired = advance_campaign_clock(state, randbelow=randbelow)
+                res = result["result"]
+                if expired and isinstance(res, dict):
+                    res["expired_drug_checks"] = expired
+                return res
             return result["result"]
         if action == "substance_action":
             from substances import apply_action
+            _sync_chars_to_runtime_clock(chars, runtime)
             result = apply_action(chars, args["actor_id"], args["action"], args.get("arguments", {}), randbelow)
             state["characters"] = result["characters"]
-            return result["result"]
+            expired = advance_campaign_clock(state, randbelow=randbelow)
+            res = result["result"]
+            if expired and isinstance(res, dict):
+                existing = res.get("expired_drug_checks")
+                if isinstance(existing, list):
+                    existing.extend(expired)
+                else:
+                    res["expired_drug_checks"] = expired
+            return res
         if action == "create_architecture":
             from netrunning import create_architecture
             ident = str(uuid.uuid4())
@@ -264,40 +375,53 @@ class SoloService:
 
     @staticmethod
     def _begin_turn(state, char_id, randbelow):
-        from encounters import _begin_turn
-        from combat import death_save
-        char = state["characters"][char_id]
-        _begin_turn(char)
-        detail = char["detail"]
-        if char["hp"] <= 0 and not detail.get("dead"):
-            death_body = int((detail.get("creation") or {}).get("effective_body") or detail.get("death_save") or char["stats"]["BODY"])
-            check = death_save(death_body, detail.get("death_save_penalty", 0), randbelow)
-            detail["death_save_penalty"] = check["next_penalty"]
-            detail["dead"] = check["dead"]
-            detail["last_death_save"] = check
-        from netrunning import apply_action
-        for run_id, run in state["runtime"]["runs"].items():
-            if run["character_id"] == char_id:
-                arch = state["runtime"]["architectures"][run["architecture_id"]]
-                updated = apply_action(run, arch, "new_turn", {}, randbelow)
-                state["runtime"]["runs"][run_id] = updated["run"]
+        from encounters import resolve_start_of_turn
+        encounter = state["runtime"].get("encounter") or {}
+        npcs = encounter.get("npcs") if isinstance(encounter.get("npcs"), dict) else {}
+        actor = state["characters"].get(char_id) or npcs.get(char_id)
+        if actor is None:
+            raise ValueError(f"Unknown combatant: {char_id}")
+        start_res = resolve_start_of_turn(actor, randbelow=randbelow)
+        if char_id in state["characters"]:
+            from netrunning import apply_action
+            for run_id, run in state["runtime"]["runs"].items():
+                if run["character_id"] == char_id:
+                    arch = state["runtime"]["architectures"][run["architecture_id"]]
+                    updated = apply_action(run, arch, "new_turn", {}, randbelow)
+                    state["runtime"]["runs"][run_id] = updated["run"]
+        return start_res
 
     def _next_turn(self, state, randbelow):
+        from encounters import _is_dead, resolve_end_of_turn
         encounter, chars = state["runtime"]["encounter"], state["characters"]
+        npcs = encounter.setdefault("npcs", {})
         current = encounter["queue"][encounter["turn_index"]]
-        if current in chars and chars[current]["detail"].get("conditions", {}).get("burning"):
-            chars[current]["hp"] -= 2
+        outgoing = chars.get(current) or npcs.get(current)
+        end_of_turn_effects = resolve_end_of_turn(outgoing) if outgoing is not None else []
         resolved = []
+        eliminated = []
         for _ in range(len(encounter["queue"]) + 1):
             encounter["turn_index"] = (encounter["turn_index"] + 1) % len(encounter["queue"])
-            if encounter["turn_index"] == 0: encounter["round"] += 1
-            actor = encounter["queue"][encounter["turn_index"]]
-            if actor in chars:
-                self._begin_turn(state, actor, randbelow)
-                if not chars[actor]["detail"].get("dead"):
-                    return {"actor_id": actor, "round": encounter["round"], "net_turns": resolved}
+            if encounter["turn_index"] == 0:
+                encounter["round"] += 1
+            actor_id = encounter["queue"][encounter["turn_index"]]
+            actor = chars.get(actor_id) or npcs.get(actor_id)
+            if actor is not None:
+                if _is_dead(actor):
+                    continue
+                start_res = self._begin_turn(state, actor_id, randbelow)
+                if not start_res["dead"]:
+                    return {
+                        "actor_id": actor_id,
+                        "round": encounter["round"],
+                        "death_save": start_res["death_save"],
+                        "end_of_turn_effects": end_of_turn_effects,
+                        **({"eliminated": eliminated} if eliminated else {}),
+                        "net_turns": resolved,
+                    }
+                eliminated.append({"actor_id": actor_id, "death_save": start_res["death_save"]})
             else:
-                ice = encounter.get("net_actors", {}).get(actor)
+                ice = encounter.get("net_actors", {}).get(actor_id)
                 if ice:
                     run = state["runtime"]["runs"][ice["run_id"]]
                     arch = state["runtime"]["architectures"][run["architecture_id"]]
@@ -305,7 +429,13 @@ class SoloService:
                     if run["connected"] and floor["ice"]["rezzed"] and floor["ice"].get("pursuing"):
                         resolved.append(self._net_step(state, ice["run_id"], "ice_turn", {"ice_floor_id": ice["floor_id"]}, randbelow, internal=True))
         encounter["active"] = False
-        return {"ended": True, "reason": "No living participants remain", "net_turns": resolved}
+        return {
+            "ended": True,
+            "reason": "No living participants remain",
+            "end_of_turn_effects": end_of_turn_effects,
+            **({"death_save": eliminated[-1]["death_save"], "eliminated": eliminated} if eliminated else {}),
+            "net_turns": resolved,
+        }
 
     def _net_step(self, state, run_id, action, arguments, randbelow, internal=False):
         from netrunning import apply_action, public_view, _unsafe
@@ -334,12 +464,18 @@ class SoloService:
                 name = effect["name"]
                 target = None
                 if name in {"Dragon", "Killer", "Sabertooth"}:
-                    candidates = [p for p in r["deck"]["programs"] if p["active"] and p["rez"]>0 and not p["destroyed"]]
-                    if not candidates: return {"requires_human_ruling": True, "reason": "Anti-program ICE has no valid target"}
+                    candidates = [
+                        p for p in r.get("deck", {}).get("programs", [])
+                        if p.get("active") and int(p.get("rez", 0) or 0) > 0 and not p.get("destroyed")
+                    ]
+                    if not candidates:
+                        continue
                     n = randbelow(len(candidates))
                     if type(n) is not int or not 0 <= n < len(candidates): raise ValueError("Invalid RNG outcome")
                     target = candidates[n]["instance_id"]
                 resolved = resolve_effect(name, r, target_program_id=target, randbelow=randbelow)
+                if resolved.get("requires_human_ruling"):
+                    continue
                 r = resolved["run"]; effect_dice.extend(resolved["dice"]); pending.extend(resolved["character_effects"])
                 if resolved["forced_exit"] and r["connected"]:
                     pending.extend(_unsafe(r, arch, name if resolved["forced_exit"].get("exclude_self") else None))

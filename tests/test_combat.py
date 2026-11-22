@@ -13,14 +13,23 @@ def fixed(*values):
 
 def test_initiative_plain_d10_and_validation():
     assert initiative(8, randbelow=fixed(9))["total"] == 18
+    assert initiative(8, bonus=-3, randbelow=fixed(9))["total"] == 15
     with pytest.raises(TypeError):
         initiative(True, randbelow=fixed(0))
+    with pytest.raises(ValueError):
+        initiative(8, bonus=-101, randbelow=fixed(0))
 
 
 def test_wound_thresholds():
-    assert wound_state(5, 10, 6)["name"] == "serious"
+    # Per Corebook p. 221: Light at >= 1/2 max HP, Serious at < 1/2 max HP
+    assert wound_state(5, 10, 6)["name"] == "light"   # exactly half = light
+    assert wound_state(4, 10, 6)["name"] == "serious"  # below half = serious
     assert wound_state(0, 10, 6) == {
         "name": "mortal", "action_penalty": -4, "move": 1,
+        "source": "Cyberpunk RED Core Rulebook, p. 221",
+    }
+    assert wound_state(0, 10, 0) == {
+        "name": "mortal", "action_penalty": -4, "move": 0,
         "source": "Cyberpunk RED Core Rulebook, p. 221",
     }
 
@@ -30,34 +39,48 @@ def test_attack_check_uses_standard_skill_check():
     assert result["total"] == 16 and result["success"]
 
 
-def test_melee_armor_rounds_sp_down_and_does_not_mutate():
+def test_melee_and_martial_arts_armor_round_sp_up_and_do_not_mutate():
     armor = [{"id": "vest", "sp": 11}]
-    out = damage_and_armor([6], armor, melee=True)
-    assert out["effective_sp"] == 5
+    blocked = damage_and_armor([6], armor, melee=True)
+    assert blocked["effective_sp"] == 6
+    assert blocked["penetration"] == 0 and blocked["armor_after"][0]["sp"] == 11
+    out = damage_and_armor([6, 1], armor, melee=True)
+    assert out["effective_sp"] == 6
     assert out["penetration"] == 1 and out["armor_after"][0]["sp"] == 10
+    ma = damage_and_armor([6, 2], armor, martial_arts=True)
+    assert ma["effective_sp"] == 6
+    assert ma["penetration"] == 2 and ma["armor_after"][0]["sp"] == 10
     assert armor[0]["sp"] == 11
 
 
-def test_highest_armor_only_head_and_critical_bonus():
+def test_all_layer_armor_ablation_head_and_critical_bonus():
     out = damage_and_armor([6, 6], [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}], location="head")
-    assert out["critical_trigger"] and out["hp_damage"] == 9
-    assert out["armor_after"] == [{"id": "a", "sp": 4}, {"id": "b", "sp": 7}]
+    # Head shot: penetration (12-8=4) * 2 = 8, critical bonus +5 = 13; all layers ablate together
+    assert out["critical_trigger"] and out["hp_damage"] == 13
+    assert out["armor_after"] == [{"id": "a", "sp": 3}, {"id": "b", "sp": 7}]
+    no_pen = damage_and_armor([4, 4], [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}], location="head")
+    assert no_pen["penetration"] == 0
+    assert no_pen["armor_after"] == [{"id": "a", "sp": 4}, {"id": "b", "sp": 8}]
 
 
-def test_autofire_and_brawling_armoring():
-    out = damage_and_armor([3, 4], [], brawling=True, autofire_margin=4, autofire_cap=3)
+def test_autofire_raw_damage_and_brawling_dice():
+    # Autofire: 2 dice, margin 4, cap 3 -> min(4,3)=3 hits, raw = (3+4)*3 = 21
+    out = damage_and_armor([3, 4], [], autofire_margin=4, autofire_cap=3)
     assert out["raw"] == 21
+    # Brawling dice by BODY
     assert brawling_dice(4, cyberarm=True) == 2
     assert brawling_dice(11, martial_arts=True) == 4
 
 
 def test_death_save_natural_ten_fails_and_penalty_increments():
-    result = death_save(2, randbelow=fixed(9))
+    result = death_save(body=2, penalty=2, randbelow=fixed(9))
     assert result["dead"] and result["next_penalty"] == 3
 
 
 def test_stabilization_dv_and_rest_healing():
-    assert stabilize_check(10, 2, "serious", randbelow=fixed(0))["dv"] == 13
+    # skill_check rolls 1d10, then on 1 or 10 rolls again for critical adjustment.
+    # fixed(0, 0) provides two values: initial=0->roll=1, further=0->adjustment=-1
+    assert stabilize_check(10, 2, "serious", randbelow=fixed(0, 0))["dv"] == 13
     assert daily_heal(5, 20, 4, True, True)["new_hp"] == 9
     assert daily_heal(5, 20, 4, False, True)["new_hp"] == 5
 

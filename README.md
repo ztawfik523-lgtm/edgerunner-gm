@@ -25,6 +25,7 @@ Requires [Docker](https://docs.docker.com/get-docker/) and Docker Compose.
 git clone https://github.com/ztawfik523-lgtm/edgerunner-gm.git
 cd edgerunner-gm
 cp .env.example .env
+# Set REDGM_BOOTSTRAP_TOKEN in .env to a random value of at least 32 characters.
 docker compose up -d --build
 ```
 
@@ -51,6 +52,8 @@ python -m venv .venv
 npm --prefix ui install
 npm --prefix ui run build
 
+# Generate a one-time browser setup token (keep it private).
+export REDGM_BOOTSTRAP_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 .venv/bin/python redkb.py serve
 ```
 
@@ -80,4 +83,3 @@ All architecture details, CLI commands, HTTP API endpoints, environment variable
 
 - **Source Code:** Licensed under the **[MIT License](LICENSE)** — free to use, modify, self-host, and distribute as long as credit and the copyright notice are preserved.
 - **Tabletop IP Notice:** *Edgerunner GM is unofficial content provided under the Homebrew Content Policy of R. Talsorian Games and is not approved or endorsed by RTG. This content references materials that are the property of R. Talsorian Games and its licensees. No copyrighted Corebook text or PDF is included in this repository.*
-

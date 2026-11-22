@@ -21,9 +21,9 @@ import type {
   LibraryEntry,
   NetworkInfo,
   PromptSettings,
-  PublicSettingsResponse,
   RuntimeServerInfo,
   ServerSettings,
+  TurnIntent,
   TurnStreamCallbacks,
   WorldClock,
 } from "./types";
@@ -200,6 +200,7 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
 }
 
 export async function setupInitialAuth(payload: {
+  bootstrap_token: string;
   admin_username: string;
   admin_password: string;
   user_username?: string;
@@ -301,10 +302,6 @@ export async function deleteAuthAccount(username: string): Promise<{
   user_passcode_configured: boolean;
 }> {
   return jsonFetch(`/v1/auth/accounts/${encodeURIComponent(username)}`, { method: "DELETE" });
-}
-
-export async function fetchPublicSettings(): Promise<PublicSettingsResponse> {
-  return jsonFetch<PublicSettingsResponse>("/v1/settings/public");
 }
 
 export async function fetchAllSettings(): Promise<AllSettingsResponse> {
@@ -935,6 +932,7 @@ export interface PeerStreamEventPayload {
   speaker_portrait_url?: string;
   user_text?: string;
   overclock?: boolean;
+  turn_intent?: TurnIntent;
   truncate_from_id?: string;
   event: string;
   data: Record<string, unknown>;
@@ -960,9 +958,7 @@ export function subscribeCampaignEvents(
   if (typeof EventSource === "undefined") return () => {};
   const params = new URLSearchParams();
   const pin = getStoredRoomPin();
-  const token = getStoredAuthToken();
   if (pin) params.set("pin", pin);
-  if (token) params.set("token", token);
   const qs = params.toString() ? `?${params.toString()}` : "";
   const es = new EventSource(`/v1/campaigns/${encodeURIComponent(campaignId)}/events${qs}`);
   es.addEventListener("presence", (ev) => {
@@ -1154,11 +1150,25 @@ export async function mutateCampaignClock(
     segments?: number;
     delta?: number;
     category?: string;
+    visibility?: "public" | "secret";
     note?: string;
     leaf_id?: string | null;
   },
 ): Promise<{ campaign_id: string; clocks: WorldClock[] }> {
   return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/clocks`, payload);
+}
+
+export async function fetchCampaignBanner(
+  campaignId: string,
+): Promise<{ campaign_id: string; banner_url: string }> {
+  return jsonFetch(`/v1/campaigns/${encodeURIComponent(campaignId)}/banner`);
+}
+
+export async function saveCampaignBanner(
+  campaignId: string,
+  bannerUrl: string,
+): Promise<{ campaign_id: string; banner_url: string }> {
+  return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/banner`, { banner_url: bannerUrl });
 }
 
 export async function streamChatTurn(
@@ -1176,6 +1186,7 @@ export async function streamChatTurn(
     speaker_name?: string;
     is_intro?: boolean;
     gm_mode?: "auto" | "force_gm" | "hold_gm";
+    turn_intent?: TurnIntent;
   },
   callbacks: TurnStreamCallbacks,
   signal?: AbortSignal,

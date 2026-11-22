@@ -27,6 +27,7 @@ export function AuthGateModal({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [setupAdminUser, setSetupAdminUser] = useState("");
   const [setupAdminPass, setSetupAdminPass] = useState("");
   const [setupPlayerUser, setSetupPlayerUser] = useState("");
@@ -42,6 +43,7 @@ export function AuthGateModal({
     setError(null);
     setPassword("");
     setConfirmPassword("");
+    setBootstrapToken("");
     if (authStatus?.can_bootstrap) {
       setTab("setup");
     } else if (authStatus?.role === "user") {
@@ -96,6 +98,7 @@ export function AuthGateModal({
         return;
       }
       await setupInitialAuth({
+        bootstrap_token: bootstrapToken,
         admin_username: adminUname,
         admin_password: setupAdminPass,
         user_username: setupPlayerPass.trim() ? (setupPlayerUser.trim() || "player") : "",
@@ -104,6 +107,7 @@ export function AuthGateModal({
         allow_guest_users: allowGuests,
         allow_self_signup: allowSelfSignup,
       });
+      setBootstrapToken("");
       setSetupAdminPass("");
       setSetupPlayerPass("");
       setSetupRoomPasscode("");
@@ -272,6 +276,24 @@ export function AuthGateModal({
 
         {tab === "setup" ? (
           <form onSubmit={handleSetup} className="space-y-3">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-slate-300">
+                One-time Admin bootstrap token (provided by the server operator)
+              </span>
+              <input
+                type="password"
+                required
+                minLength={32}
+                autoComplete="off"
+                value={bootstrapToken}
+                onChange={(e) => setBootstrapToken(e.target.value)}
+                placeholder="Server bootstrap token"
+                className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none"
+              />
+              <span className="mt-1 block text-[10px] text-slate-500">
+                The operator must configure REDGM_BOOTSTRAP_TOKEN before first setup.
+              </span>
+            </label>
             <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-slate-300">Admin username</span>

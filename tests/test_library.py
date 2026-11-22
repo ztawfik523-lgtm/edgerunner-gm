@@ -396,13 +396,115 @@ def test_corebook_curated_catalogs_indexed_for_ai_search(tmp_path: Path):
     mal = library.search_library(rules_db, q="Malorian Arms 3516", category="weapon")
     assert mal and mal[0]["name"] == "Malorian Arms 3516"
 
-    lace = library.search_library(rules_db, q="Black Lace", category="gear")
+    lace = library.search_library(rules_db, q="Black Lace", category="drug")
     assert any("Black Lace" in x["name"] for x in lace)
 
-    bike = library.search_library(rules_db, q="Superbike", category="gear")
+    bike = library.search_library(rules_db, q="Superbike", category="vehicle")
     assert any(x["name"] == "Superbike" for x in bike)
 
     net = library.search_library(rules_db, q="Netrunner", category="role")
     assert net and net[0]["name"] == "Netrunner"
+
+
+def test_upsert_preserves_existing_fields_and_library_events_idempotency(tmp_path: Path):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
+    lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
+
+    created = lib.upsert_entry(
+        camp_id,
+        name="Mirek",
+        category="npc",
+        summary="Ripperdoc in Kabuki",
+        description="Runs an off-grid basement clinic behind a noodle stall.",
+        stats={"role": "Medtech", "disposition": 0},
+        tags=["npc", "kabuki"],
+        created_by="ai",
+        operation_id="lib-op-1",
+    )
+
+    # Empty description/summary defaults preserve existing rich text, stats, and tags
+    updated = lib.upsert_entry(
+        camp_id,
+        name="Mirek",
+        category="npc",
+        summary="",
+        description="",
+        stats={"disposition": 2},
+        tags=[],
+        created_by="ai",
+        operation_id="lib-op-2",
+    )
+    assert updated["id"] == created["id"]
+    assert updated["summary"] == "Ripperdoc in Kabuki"
+    assert updated["description"] == "Runs an off-grid basement clinic behind a noodle stall."
+    assert updated["stats"] == {"role": "Medtech", "disposition": 2}
+    assert updated["tags"] == ["npc", "kabuki"]
+
+    # Replaying op-1 after op-2 still returns op-1's recorded result and rejects mismatched payloads
+    replay = lib.upsert_entry(
+        camp_id,
+        name="Mirek",
+        category="npc",
+        summary="Ripperdoc in Kabuki",
+        description="Runs an off-grid basement clinic behind a noodle stall.",
+        stats={"role": "Medtech", "disposition": 0},
+        tags=["npc", "kabuki"],
+        created_by="ai",
+        operation_id="lib-op-1",
+    )
+    assert replay == created
+
+    with pytest.raises(ValueError, match="operation_id was already used for another library change"):
+        lib.upsert_entry(
+            camp_id,
+            name="Mirek",
+            category="npc",
+            summary="Different summary",
+            description="",
+            stats={"disposition": -1},
+            tags=[],
+            created_by="ai",
+            operation_id="lib-op-1",
+        )
+
+
+def test_search_and_get_library_entry_readonly_no_write_lock(tmp_path: Path):
+    import os
+
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
+    lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
+    entry = lib.add_entry(
+        camp_id,
+        name="Kestrel Data Shard",
+        category="gear",
+        description="Encrypted shard from the dockyard.",
+        operation_id="ro-hb-1",
+    )
+
+    # Make both SQLite files read-only; read-only search & get_library_entry must succeed without BEGIN IMMEDIATE
+    os.chmod(rules_db, 0o444)
+    os.chmod(camp_db, 0o444)
+    try:
+        hits = library.search_library(
+            rules_db,
+            q="Kestrel",
+            campaign_path=camp_db,
+            campaign_id=camp_id,
+            limit=10,
+        )
+        assert any(h["id"] == entry["id"] for h in hits)
+        fetched = library.get_library_entry(
+            entry["id"],
+            rules_path=rules_db,
+            campaign_path=camp_db,
+            campaign_id=camp_id,
+        )
+        assert fetched is not None and fetched["name"] == "Kestrel Data Shard"
+    finally:
+        os.chmod(rules_db, 0o600)
+        os.chmod(camp_db, 0o600)
+
 
 

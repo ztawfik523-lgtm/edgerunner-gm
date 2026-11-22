@@ -59,8 +59,15 @@ def test_toc_sections_preserve_structured_source_and_pagination(tmp_path):
     assert result["pages"][0]["tables"][0]["bbox"] == [1, 2, 30, 40]
     assert result["pages"][0]["tables"][0]["cells"] == [["Alpha", "Beta"], ["1", "2"]]
     assert knowledge.pages(path, [10])["pages"][0]["pdf_page"] == 2
-    with pytest.raises(ValueError, match="ambiguous"):
+    with pytest.raises(ValueError, match="Page 99 not found"):
         knowledge.pages(path, [10, 99])
+    # Test ambiguous: insert another page with printed_page=10
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO pages VALUES(?,?,?,?)", (5, 10, "Header", "Page 5"))
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="ambiguous"):
+        knowledge.pages(path, [10])
 
 
 def test_contents_resolves_only_explicit_printed_page_values(tmp_path):

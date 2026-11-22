@@ -318,3 +318,164 @@ def test_creation_catalog_reexports():
     assert hasattr(cc, "CRITICAL_INJURIES_TABLE")
     assert hasattr(cc, "BEAT_CHART_63")
     assert hasattr(cc, "PLAYSTYLE_IP_TABLE")
+
+
+def test_strip_json_fences_think_and_balanced_json():
+    import json
+
+    raw_with_think = (
+        "<think>Maybe return {\"wrong\": true} or ```json\n{\"bad\": 1}\n```</think>\n"
+        "Here is the output:\n```json\n{\"concept\": \"Streetwise Medtech\"}\n```\nTrailing {note}."
+    )
+    assert json.loads(cc._strip_json_fences(raw_with_think)) == {"concept": "Streetwise Medtech"}
+
+    raw_unclosed_think = "{\"concept\": \"Nightrunner\"}\n<think>unfinished reasoning {oops"
+    assert json.loads(cc._strip_json_fences(raw_unclosed_think)) == {"concept": "Nightrunner"}
+
+    raw_braces_around = "Note {ignore me} -> {\"value\": \"Updated hook\"} trailing {ignore}"
+    assert json.loads(cc._strip_json_fences(raw_braces_around)) == {"value": "Updated hook"}
+
+
+def test_build_library_corebook_entries_categories_and_pdf_page():
+    rows = cc.build_library_corebook_entries("deadbeef")
+    by_name = {r["name"]: r for r in rows}
+
+    assert by_name["Roadbike"]["category"] == "vehicle"
+    assert by_name["Black Lace (Street Drug)"]["category"] == "drug"
+    assert by_name["Speedheal (Medtech Pharmaceutical)"]["category"] == "drug"
+
+    for row in rows:
+        assert row["pdf_page"] is None
+
+
+def test_generate_creation_ai_assist_repair_retry_and_thinking_mode(tmp_path: Path):
+    import asyncio
+    import json
+    from turn_engine.settings import save_llm_settings
+
+    settings_file = tmp_path / "settings.json"
+    save_llm_settings({"gm_thinking_mode": "balanced"}, settings_file)
+
+    calls: list[dict] = []
+
+    class RepairLLM:
+        async def complete(self, messages, *, json_mode=False, temperature=None, enable_thinking=None):
+            calls.append({"messages": messages, "enable_thinking": enable_thinking, "temperature": temperature})
+            if len(calls) == 1:
+                return "{not valid json"
+            return json.dumps({"concept": "Repaired Concept", "summary": "S", "established_history": "H", "appearance": "A"})
+
+    res = asyncio.run(
+        cc.generate_creation_ai_assist(
+            None,
+            RepairLLM(),
+            {"target": "bio", "mode": "scratch", "character": {"role": "Solo"}},
+            settings_path=settings_file,
+        )
+    )
+    assert res["concept"] == "Repaired Concept"
+    assert len(calls) == 2
+    assert calls[0]["enable_thinking"] is False
+    assert calls[1]["enable_thinking"] is False
+
+    # LLM without enable_thinking param should still work without TypeError
+    class NoThinkLLM:
+        async def complete(self, messages, *, json_mode=False, temperature=None):
+            return json.dumps({"concept": "NoThink", "summary": "S", "established_history": "H", "appearance": "A"})
+
+    res2 = asyncio.run(
+        cc.generate_creation_ai_assist(
+            None,
+            NoThinkLLM(),
+            {"target": "bio", "mode": "scratch", "character": {"role": "Solo"}},
+            settings_path=settings_file,
+        )
+    )
+    assert res2["concept"] == "NoThink"
+
+
+def test_generate_creation_ai_assist_hides_real_name_and_preserves_entry_index(tmp_path: Path, monkeypatch):
+    import asyncio
+    import json
+
+    seen_payloads: list[dict] = []
+
+    class CaptureLLM:
+        async def complete(self, messages, *, json_mode=False, temperature=None, **_kwargs):
+            seen_payloads.append(json.loads(messages[1]["content"]))
+            return json.dumps({"value": "Updated Fixer note"})
+
+    # 1. real_name_hidden via detail.real_name_hidden
+    asyncio.run(
+        cc.generate_creation_ai_assist(
+            None,
+            CaptureLLM(),
+            {
+                "target": "bio",
+                "mode": "expand",
+                "field": "concept",
+                "character": {
+                    "handle": "Zero",
+                    "real_name": "Secret Bob",
+                    "detail": {"real_name_hidden": True},
+                    "role": "Netrunner",
+                },
+            },
+        )
+    )
+    brief = seen_payloads[-1]["sheet"]
+    assert "real_name" not in brief
+    assert "Secret Bob" not in json.dumps(brief)
+
+    # 2. Ordered [{key, val}] array with empty slot at index 0 preserves entry_index=1
+    res = asyncio.run(
+        cc.generate_creation_ai_assist(
+            None,
+            CaptureLLM(),
+            {
+                "target": "campaign",
+                "mode": "expand",
+                "field": "npcs",
+                "entry_index": 1,
+                "sub_field": "val",
+                "current": {
+                    "npcs": [
+                        {"key": "", "val": ""},
+                        {"key": "Marek", "val": "Old fixer"},
+                    ]
+                },
+            },
+        )
+    )
+    assert res["entry_index"] == 1
+    assert res["value"] == "Updated Fixer note"
+    assert seen_payloads[-1]["target_entry"]["key"] == "Marek"
+    assert seen_payloads[-1]["target_entry"]["val"] == "Old fixer"
+
+    # 3. Full district name passed to RAG instead of district.split()[0]
+    fake_db = tmp_path / "rules.sqlite"
+    fake_db.write_bytes(b"")
+    seen_queries: list[str] = []
+
+    import library as lib_mod
+    import redkb as redkb_mod
+
+    monkeypatch.setattr(lib_mod, "search_library", lambda _p, q="", limit=2: seen_queries.append(q) or [])
+    monkeypatch.setattr(redkb_mod, "search_pages", lambda _p, q, limit=2: [])
+
+    asyncio.run(
+        cc.generate_creation_ai_assist(
+            fake_db,
+            CaptureLLM(),
+            {
+                "target": "campaign",
+                "mode": "scratch",
+                "campaign": {
+                    "district": "Night City University",
+                    "lock_choices": True,
+                },
+            },
+        )
+    )
+    assert "Night City University" in seen_queries
+    assert "Night" not in seen_queries

@@ -12,14 +12,18 @@ from pathlib import Path
 import secrets
 import threading
 import time
+import uuid
 from typing import Any
 
-from turnloop import default_settings_path, read_settings_doc, write_settings_doc
+from index_lock import index_lock
+from turnloop import _SETTINGS_LOCK, default_settings_path, read_settings_doc, write_settings_doc
 
 _TOKEN_TTL_SECONDS = 7 * 24 * 3600
 _MAX_LOGIN_FAILURES = 12
 _LOGIN_WINDOW_SECONDS = 60.0
-_AUTH_LOCK = threading.RLock()
+_MAX_PIN_FAILURES = 20
+_PIN_WINDOW_SECONDS = 60.0
+_MAX_RATE_LIMIT_BUCKETS = 4096
 
 
 class AuthError(ValueError):
@@ -72,6 +76,8 @@ class AuthManager:
         self.room_pin = (room_pin or "").strip()
         self._failures: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
+        self._pin_failures: dict[str, deque[float]] = {}
+        self._pin_rate_lock = threading.Lock()
 
     @property
     def settings_path(self) -> Path:
@@ -97,13 +103,16 @@ class AuthManager:
         return dict(raw) if isinstance(raw, dict) else {}
 
     def _update_auth_section(self, mutator) -> dict[str, Any]:
-        with _AUTH_LOCK:
-            doc = read_settings_doc(self.settings_path)
-            auth = dict(doc.get("auth")) if isinstance(doc.get("auth"), dict) else {}
-            next_auth = mutator(auth)
-            doc["auth"] = next_auth
-            write_settings_doc(doc, self.settings_path)
-            return next_auth
+        with _SETTINGS_LOCK:
+            path = self.settings_path
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with index_lock(path):
+                doc = read_settings_doc(path)
+                auth = dict(doc.get("auth")) if isinstance(doc.get("auth"), dict) else {}
+                next_auth = mutator(auth)
+                doc["auth"] = next_auth
+                write_settings_doc(doc, path)
+                return next_auth
 
     def _ensure_secret_and_version(self) -> tuple[str, int]:
         auth = self._read_auth_section()
@@ -174,6 +183,10 @@ class AuthManager:
     def _check_rate_limit(self, bucket: str) -> None:
         now = time.monotonic()
         with self._rate_lock:
+            if bucket not in self._failures and len(self._failures) >= _MAX_RATE_LIMIT_BUCKETS:
+                # Evict the oldest bucket (empty buckets have timestamp 0)
+                oldest = min(self._failures, key=lambda key: self._failures[key][0] if self._failures[key] else 0)
+                self._failures.pop(oldest, None)
             q = self._failures.setdefault(bucket, deque())
             while q and now - q[0] > _LOGIN_WINDOW_SECONDS:
                 q.popleft()
@@ -183,6 +196,9 @@ class AuthManager:
     def _record_failure(self, bucket: str) -> None:
         now = time.monotonic()
         with self._rate_lock:
+            if bucket not in self._failures and len(self._failures) >= _MAX_RATE_LIMIT_BUCKETS:
+                oldest = min(self._failures, key=lambda key: self._failures[key][0] if self._failures[key] else 0)
+                self._failures.pop(oldest, None)
             q = self._failures.setdefault(bucket, deque())
             while q and now - q[0] > _LOGIN_WINDOW_SECONDS:
                 q.popleft()
@@ -192,14 +208,61 @@ class AuthManager:
         with self._rate_lock:
             self._failures.pop(bucket, None)
 
-    def issue_token(self, username: str, role: str) -> str:
+    def _check_pin_rate_limit(self, bucket: str) -> None:
+        now = time.monotonic()
+        with self._pin_rate_lock:
+            if bucket not in self._pin_failures and len(self._pin_failures) >= _MAX_RATE_LIMIT_BUCKETS:
+                oldest = min(self._pin_failures, key=lambda key: self._pin_failures[key][0] if self._pin_failures[key] else 0)
+                self._pin_failures.pop(oldest, None)
+            q = self._pin_failures.setdefault(bucket, deque())
+            while q and now - q[0] > _PIN_WINDOW_SECONDS:
+                q.popleft()
+            if len(q) >= _MAX_PIN_FAILURES:
+                raise AuthRateLimitError("Too many PIN attempts; wait 60 seconds and try again.")
+
+    def _record_pin_failure(self, bucket: str) -> None:
+        now = time.monotonic()
+        with self._pin_rate_lock:
+            if bucket not in self._pin_failures and len(self._pin_failures) >= _MAX_RATE_LIMIT_BUCKETS:
+                oldest = min(self._pin_failures, key=lambda key: self._pin_failures[key][0] if self._pin_failures[key] else 0)
+                self._pin_failures.pop(oldest, None)
+            q = self._pin_failures.setdefault(bucket, deque())
+            while q and now - q[0] > _PIN_WINDOW_SECONDS:
+                q.popleft()
+            q.append(now)
+
+    def _clear_pin_failures(self, bucket: str) -> None:
+        with self._pin_rate_lock:
+            self._pin_failures.pop(bucket, None)
+
+    def issue_token(
+        self,
+        username: str,
+        role: str,
+        *,
+        token_kind: str,
+        account_version: int | None = None,
+        credential_binding: str | None = None,
+        account_id: str | None = None,
+    ) -> str:
         secret, version = self._ensure_secret_and_version()
         payload = {
             "sub": username,
             "role": role,
             "v": version,
+            "kind": token_kind,
             "exp": int(time.time()) + _TOKEN_TTL_SECONDS,
         }
+        if token_kind == "account":
+            payload["av"] = account_version
+            if account_id:
+                payload["aid"] = account_id
+        elif token_kind in {"environment", "shared"}:
+            if not isinstance(credential_binding, str) or not credential_binding:
+                raise AuthError("Credential binding is required for this token kind")
+            payload["cb"] = hmac.new(
+                secret.encode("utf-8"), credential_binding.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
         body = _b64e(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
         sig = _b64e(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
         return f"{body}.{sig}"
@@ -223,11 +286,72 @@ class AuthManager:
             role = payload.get("role")
             if role not in {"admin", "user"}:
                 return None
-            return {"username": str(payload.get("sub") or role), "role": role}
+            username = str(payload.get("sub") or role)
+            token_kind = payload.get("kind")
+            if token_kind == "account":
+                account = self._saved_accounts(self._read_auth_section()).get(username.strip().lower())
+                account_version = payload.get("av")
+                token_account_id = payload.get("aid")
+                if (
+                    account is None
+                    or account.get("role") != role
+                    or type(account_version) is not int
+                    or type(account.get("token_version", 1)) is not int
+                    or account.get("token_version", 1) != account_version
+                    or not isinstance(token_account_id, str)
+                    or not token_account_id
+                    or account.get("account_id") != token_account_id
+                ):
+                    return None
+            elif token_kind == "environment":
+                configured_match = next((
+                    (configured, configured_role)
+                    for configured, configured_role in (
+                        (self._env_admin(), "admin"),
+                        (self._env_user(), "user"),
+                    )
+                    if configured is not None
+                    and configured[0].casefold() == username.casefold()
+                    and configured_role == role
+                ), None)
+                if (
+                    configured_match is None
+                    or not hmac.compare_digest(
+                        str(payload.get("cb") or ""),
+                        hmac.new(
+                            secret.encode("utf-8"),
+                            f"environment:{configured_match[0][1]}".encode("utf-8"),
+                            hashlib.sha256,
+                        ).hexdigest(),
+                    )
+                ):
+                    return None
+            elif token_kind == "shared":
+                if role != "user":
+                    return None
+                auth = self._read_auth_section()
+                bindings = []
+                if isinstance(auth.get("user_passcode_hash"), str):
+                    bindings.append(f"passcode:{auth['user_passcode_hash']}")
+                if self.room_pin:
+                    bindings.append(f"room-pin:{self.room_pin}")
+                if not any(
+                    hmac.compare_digest(
+                        str(payload.get("cb") or ""),
+                        hmac.new(secret.encode("utf-8"), binding.encode("utf-8"), hashlib.sha256).hexdigest(),
+                    )
+                    for binding in bindings
+                ):
+                    return None
+            else:
+                # Reject legacy untyped tokens so deleted or changed accounts'
+                # pre-upgrade sessions cannot evade per-account revocation.
+                return None
+            return {"username": username, "role": role}
         except (ValueError, json.JSONDecodeError, TypeError):
             return None
 
-    def resolve_session(self, token: str | None = None, pin: str | None = None) -> dict[str, Any]:
+    def resolve_session(self, token: str | None = None, pin: str | None = None, pin_bucket: str | None = None) -> dict[str, Any]:
         verified = self.verify_token(token)
         auth = self._read_auth_section()
         pin_only = self.is_pin_only_mode()
@@ -250,7 +374,26 @@ class AuthManager:
 
         supplied_pin = (pin or "").strip()
         if supplied_pin:
+            bucket = pin_bucket or "pin"
+            try:
+                self._check_pin_rate_limit(bucket)
+            except AuthRateLimitError as exc:
+                return {
+                    "auth_enabled": enabled,
+                    "pin_only_mode": pin_only,
+                    "authenticated": False,
+                    "role": "anon",
+                    "username": None,
+                    "admin_configured": self.is_admin_configured(),
+                    "user_configured": self.is_user_configured(),
+                    "user_passcode_configured": bool(auth.get("user_passcode_hash") or self.room_pin),
+                    "allow_guest_users": self.allow_guest_users(),
+                    "allow_self_signup": self.allow_self_signup(),
+                    "can_bootstrap": self.can_bootstrap(),
+                    "detail": str(exc),
+                }
             if self.room_pin and hmac.compare_digest(supplied_pin, self.room_pin):
+                self._clear_pin_failures(bucket)
                 return {
                     "auth_enabled": enabled,
                     "pin_only_mode": pin_only,
@@ -266,6 +409,7 @@ class AuthManager:
                 }
             passcode_hash = auth.get("user_passcode_hash")
             if isinstance(passcode_hash, str) and verify_password(supplied_pin, passcode_hash):
+                self._clear_pin_failures(bucket)
                 return {
                     "auth_enabled": enabled,
                     "pin_only_mode": pin_only,
@@ -279,6 +423,7 @@ class AuthManager:
                     "allow_self_signup": self.allow_self_signup(),
                     "can_bootstrap": self.can_bootstrap(),
                 }
+            self._record_pin_failure(bucket)
 
         if not enabled:
             role = "open"
@@ -335,14 +480,42 @@ class AuthManager:
             adm_u, adm_p = env_admin
             if (not uname_low or uname_low == adm_u.lower()) and hmac.compare_digest(pw, adm_p):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(adm_u, "admin"), "role": "admin", "username": adm_u, "expires_in": _TOKEN_TTL_SECONDS}
+                return {"token": self.issue_token(adm_u, "admin", token_kind="environment",
+                                                  credential_binding=f"environment:{adm_p}"),
+                        "role": "admin", "username": adm_u, "expires_in": _TOKEN_TTL_SECONDS}
 
         env_user = self._env_user()
         if env_user is not None and mode_clean in {"auto", "user"}:
             usr_u, usr_p = env_user
             if (not uname_low or uname_low == usr_u.lower()) and hmac.compare_digest(pw, usr_p):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(usr_u, "user"), "role": "user", "username": usr_u, "expires_in": _TOKEN_TTL_SECONDS}
+                return {"token": self.issue_token(usr_u, "user", token_kind="environment",
+                                                  credential_binding=f"environment:{usr_p}"),
+                        "role": "user", "username": usr_u, "expires_in": _TOKEN_TTL_SECONDS}
+
+        def _ensure_account_id(account_key: str, acc_entry: dict[str, Any]) -> str:
+            existing_id = acc_entry.get("account_id")
+            if isinstance(existing_id, str) and existing_id:
+                return existing_id
+            assigned: dict[str, str] = {}
+
+            def _backfill(cur: dict[str, Any]) -> dict[str, Any]:
+                accs = self._saved_accounts(cur)
+                target = accs.get(account_key)
+                if isinstance(target, dict):
+                    cur_id = target.get("account_id")
+                    if isinstance(cur_id, str) and cur_id:
+                        assigned["id"] = cur_id
+                    else:
+                        new_id = uuid.uuid4().hex
+                        target["account_id"] = new_id
+                        accs[account_key] = target
+                        cur["accounts"] = accs
+                        assigned["id"] = new_id
+                return cur
+
+            self._update_auth_section(_backfill)
+            return assigned.get("id") or uuid.uuid4().hex
 
         # 2. Check saved named accounts.
         if uname_low and uname_low in accounts:
@@ -350,20 +523,26 @@ class AuthManager:
             acc_role = acc["role"]
             if mode_clean in {"auto", acc_role} and verify_password(pw, acc["password_hash"]):
                 self._clear_failures(bucket)
+                account_id = _ensure_account_id(uname_low, acc)
                 return {
-                    "token": self.issue_token(acc["username"], acc_role),
+                    "token": self.issue_token(acc["username"], acc_role, token_kind="account",
+                                              account_version=acc.get("token_version", 1),
+                                              account_id=account_id),
                     "role": acc_role,
                     "username": acc["username"],
                     "expires_in": _TOKEN_TTL_SECONDS,
                 }
         elif not uname_low:
             # Allow password-only Admin login when only one saved admin account exists.
-            admin_accs = [a for a in accounts.values() if a["role"] == "admin"]
-            if mode_clean == "admin" and len(admin_accs) == 1 and verify_password(pw, admin_accs[0]["password_hash"]):
-                acc = admin_accs[0]
+            admin_accs = [(k, a) for k, a in accounts.items() if a["role"] == "admin"]
+            if mode_clean == "admin" and len(admin_accs) == 1 and verify_password(pw, admin_accs[0][1]["password_hash"]):
+                acc_key, acc = admin_accs[0]
                 self._clear_failures(bucket)
+                account_id = _ensure_account_id(acc_key, acc)
                 return {
-                    "token": self.issue_token(acc["username"], "admin"),
+                    "token": self.issue_token(acc["username"], "admin", token_kind="account",
+                                              account_version=acc.get("token_version", 1),
+                                              account_id=account_id),
                     "role": "admin",
                     "username": acc["username"],
                     "expires_in": _TOKEN_TTL_SECONDS,
@@ -375,10 +554,14 @@ class AuthManager:
             label = uname or "player"
             if isinstance(passcode_hash, str) and verify_password(pw, passcode_hash):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(label, "user"), "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
+                return {"token": self.issue_token(label, "user", token_kind="shared",
+                                                  credential_binding=f"passcode:{passcode_hash}"),
+                        "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
             if self.room_pin and hmac.compare_digest(pw, self.room_pin):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(label, "user"), "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
+                return {"token": self.issue_token(label, "user", token_kind="shared",
+                                                  credential_binding=f"room-pin:{self.room_pin}"),
+                        "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
 
         self._record_failure(bucket)
         raise AuthError("Invalid username or password")
@@ -394,8 +577,6 @@ class AuthManager:
         allow_guest_users: bool = False,
         allow_self_signup: bool = True,
     ) -> dict[str, Any]:
-        if self.is_admin_configured():
-            raise AuthError("Admin is already configured; sign in as Admin to manage access.")
         adm_name = (admin_username or "admin").strip()
         if not adm_name or len(adm_name) > 40:
             raise AuthError("Admin username must be 1-40 characters")
@@ -407,22 +588,34 @@ class AuthManager:
         passcode_hash = hash_password(user_passcode) if user_passcode else None
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        created_meta: dict[str, str] = {}
+
         def _write(cur: dict[str, Any]) -> dict[str, Any]:
+            if self._env_admin() is not None or any(
+                account.get("role") == "admin" for account in self._saved_accounts(cur).values()
+            ):
+                raise AuthError("Admin is already configured; sign in as Admin to manage access.")
             if not isinstance(cur.get("secret"), str) or len(cur["secret"]) < 32:
                 cur["secret"] = secrets.token_hex(32)
             cur["token_version"] = int(cur.get("token_version") or 1)
             accs = self._saved_accounts(cur)
+            adm_id = uuid.uuid4().hex
             accs[adm_name.lower()] = {
                 "username": adm_name,
                 "role": "admin",
                 "password_hash": adm_hash,
+                "token_version": 1,
+                "account_id": adm_id,
                 "created_at": now_iso,
             }
             if usr_hash and usr_name.lower() != adm_name.lower():
+                usr_id = uuid.uuid4().hex
                 accs[usr_name.lower()] = {
                     "username": usr_name,
                     "role": "user",
                     "password_hash": usr_hash,
+                    "token_version": 1,
+                    "account_id": usr_id,
                     "created_at": now_iso,
                 }
             cur["accounts"] = accs
@@ -430,11 +623,13 @@ class AuthManager:
                 cur["user_passcode_hash"] = passcode_hash
             cur["allow_guest_users"] = bool(allow_guest_users)
             cur["allow_self_signup"] = bool(allow_self_signup)
+            created_meta["adm_id"] = adm_id
             return cur
 
         self._update_auth_section(_write)
+        adm_id = created_meta["adm_id"]
         return {
-            "token": self.issue_token(adm_name, "admin"),
+            "token": self.issue_token(adm_name, "admin", token_kind="account", account_version=1, account_id=adm_id),
             "role": "admin",
             "username": adm_name,
             "expires_in": _TOKEN_TTL_SECONDS,
@@ -483,6 +678,11 @@ class AuthManager:
                 cur["secret"] = secrets.token_hex(32)
             cur["token_version"] = int(cur.get("token_version") or 1)
             accs = self._saved_accounts(cur)
+            shared_credential_changed = False
+            if clear_passcode and cur.get("user_passcode_hash"):
+                shared_credential_changed = True
+            elif isinstance(user_passcode, str) and user_passcode.strip():
+                shared_credential_changed = True
             if username:
                 if len(username) > 40:
                     raise AuthError("Username must be at most 40 characters")
@@ -496,16 +696,23 @@ class AuthManager:
                     other_admins = [k for k, v in accs.items() if k != key and v.get("role") == "admin"]
                     if not other_admins and self._env_admin() is None:
                         raise AuthError("Cannot demote the last admin account")
+                account_security_changed = bool(existing and existing.get("role") != target_role)
                 if password:
                     pw_hash = hash_password(str(password))
+                    account_security_changed = account_security_changed or existing is not None
                 elif existing:
                     pw_hash = existing["password_hash"]
                 else:
                     raise AuthError("Password is required when creating a new account")
+                account_version = int(existing.get("token_version", 1)) if existing else 1
+                if account_security_changed:
+                    account_version += 1
                 accs[key] = {
                     "username": existing["username"] if existing else username,
                     "role": target_role,
                     "password_hash": pw_hash,
+                    "token_version": account_version,
+                    "account_id": existing.get("account_id") if existing else uuid.uuid4().hex,
                     "created_at": existing.get("created_at", now_iso) if existing else now_iso,
                 }
                 cur["accounts"] = accs
@@ -517,7 +724,7 @@ class AuthManager:
                 cur["allow_guest_users"] = bool(payload["allow_guest_users"])
             if has_signup:
                 cur["allow_self_signup"] = bool(payload["allow_self_signup"])
-            if revoke_sessions:
+            if revoke_sessions or shared_credential_changed:
                 cur["secret"] = secrets.token_hex(32)
                 cur["token_version"] = int(cur.get("token_version") or 1) + 1
             return cur
@@ -565,23 +772,30 @@ class AuthManager:
         pw_hash = hash_password(password)
         now_iso = datetime.now(timezone.utc).isoformat()
 
+        created_meta: dict[str, str] = {}
+
         def _create(cur: dict[str, Any]) -> dict[str, Any]:
             accs = self._saved_accounts(cur)
             if key in accs:
                 raise AuthError("That username is already taken.")
+            new_account_id = uuid.uuid4().hex
             accs[key] = {
                 "username": uname,
                 "role": "user",
                 "password_hash": pw_hash,
+                "token_version": 1,
+                "account_id": new_account_id,
                 "created_at": now_iso,
             }
             cur["accounts"] = accs
+            created_meta["account_id"] = new_account_id
             return cur
 
         self._update_auth_section(_create)
+        new_account_id = created_meta["account_id"]
         self._clear_failures(bucket)
         return {
-            "token": self.issue_token(uname, "user"),
+            "token": self.issue_token(uname, "user", token_kind="account", account_version=1, account_id=new_account_id),
             "role": "user",
             "username": uname,
             "expires_in": _TOKEN_TTL_SECONDS,
@@ -636,19 +850,25 @@ class AuthManager:
             next_entry["username"] = target_name
             if change_pw:
                 next_entry["password_hash"] = hash_password(str(new_password))
+            next_entry["token_version"] = int(entry.get("token_version", 1)) + 1
             if target_key != cur_key:
+                next_entry["account_id"] = uuid.uuid4().hex
                 del accs[cur_key]
             accs[target_key] = next_entry
             cur["accounts"] = accs
             updated_meta["username"] = target_name
             updated_meta["role"] = str(next_entry["role"])
+            updated_meta["token_version"] = int(next_entry["token_version"])
+            updated_meta["account_id"] = next_entry.get("account_id")
             return cur
 
         self._update_auth_section(_apply)
         final_user = updated_meta["username"]
         final_role = updated_meta["role"]
         return {
-            "token": self.issue_token(final_user, final_role),
+            "token": self.issue_token(final_user, final_role, token_kind="account",
+                                      account_version=updated_meta["token_version"],
+                                      account_id=updated_meta.get("account_id")),
             "role": final_role,
             "username": final_user,
             "previous_username": cur_name,

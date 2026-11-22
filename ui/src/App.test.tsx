@@ -3095,14 +3095,12 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getByDisplayValue("Corpo Hit")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /World Builder Extras/i }));
     expect(screen.getByDisplayValue("Existing Gig")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Afterlife")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Watson Reborn" } });
     fireEvent.change(screen.getByPlaceholderText(/Gig Title \(e\.g\. Kabuki Cold Drop\)/i), { target: { value: "Kabuki Cold Drop" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     fireEvent.change(screen.getByPlaceholderText(/Lines & Veils/i), { target: { value: "Keep it PG-13" } });
 
     fireEvent.click(screen.getByRole("button", { name: /^Clock$/i }));
@@ -3125,7 +3123,6 @@ describe("Cyberpunk RED GM UI", () => {
     // Create flow also allows attaching unattached PCs cleanly
     fireEvent.click(screen.getByRole("button", { name: /New Campaign/i }));
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), { target: { value: "Crew Start" } });
-    fireEvent.click(screen.getByRole("button", { name: /Session Zero Dials/i }));
     const chromeCheckbox = await screen.findByLabelText("Chrome Vex");
     fireEvent.click(chromeCheckbox);
     fireEvent.change(screen.getByPlaceholderText(/Core stakes/i), { target: { value: "Run jobs out of Watson." } });
@@ -3289,9 +3286,8 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
     fireEvent.click(screen.getByRole("button", { name: /Freeform \/ Custom Sheet/i }));
 
-    // Step 4: Street Reputation & Starting Hooks
+    // Step 4: Street Reputation & Starting Hooks (expanded by default)
     fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Street Reputation & Starting Hooks/i }));
     fireEvent.change(screen.getByLabelText("Starting Reputation"), { target: { value: "4" } });
     fireEvent.change(screen.getByPlaceholderText(/Owes 500 eb to a Kabuki ripperdoc/i), { target: { value: "Owes 500 eb to Chromanticore" } });
 
@@ -3334,6 +3330,391 @@ describe("Cyberpunk RED GM UI", () => {
     expect(detail?.backstory?.starting_hooks?.debt).toContain("Chromanticore");
     expect(detail?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
     expect(detail?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
+  });
+
+  it("supports /think toggle, slash command, validation, auto-reset, and THINK message badges", async () => {
+    const campaign = {
+      id: "camp-think",
+      name: "Think Test",
+      revision: 1,
+      session_number: 1,
+      character_ids: ["char-think"],
+      state: { scene: "Afterlife Booth", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const char = {
+      id: "char-think",
+      name: "Vee Mercer",
+      stats: { INT: 7, REF: 6, DEX: 6, TECH: 6, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Perception: 6 },
+      hp: 40,
+      max_hp: 40,
+      humanity: 60,
+      luck_remaining: 6,
+      money: 200,
+      inventory: {},
+      revision: 1,
+      detail: { handle: "Vee Mercer" },
+    };
+    const turnBodies: Array<Record<string, unknown>> = [];
+    let branchState: {
+      campaign_id: string;
+      nodes: unknown[];
+      active_branch: unknown[];
+      active_leaf_id: string | null;
+      current_revisions: { campaign_revision: number; solo_revision: number };
+      revision_mismatch: boolean;
+    } = {
+      campaign_id: campaign.id,
+      nodes: [],
+      active_branch: [],
+      active_leaf_id: null,
+      current_revisions: { campaign_revision: 1, solo_revision: 0 },
+      revision_mismatch: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) return jsonResponse(branchState);
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [char],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      if (url === "/v1/chat/turn") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        turnBodies.push(body);
+        const idx = turnBodies.length;
+        const userMsg = {
+          id: `u-think-${idx}`,
+          campaign_id: campaign.id,
+          parent_id: branchState.active_leaf_id,
+          role: "user",
+          content: String(body.user_text ?? ""),
+          raw_content: String(body.user_text ?? ""),
+          model: "",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: { speaker_name: "Vee Mercer", turn_intent: body.turn_intent ?? "action" },
+          is_active: true,
+          created_at: "2026-11-22T00:00:00Z",
+        };
+        const asstMsg = {
+          id: `a-think-${idx}`,
+          campaign_id: campaign.id,
+          parent_id: userMsg.id,
+          role: "assistant",
+          content: "You notice a scarred Militech datashard under his cuff.",
+          raw_content: "You notice a scarred Militech datashard under his cuff.",
+          model: "llama3",
+          campaign_revision: 1,
+          solo_revision: 0,
+          metadata: { turn_intent: body.turn_intent ?? "action" },
+          is_active: true,
+          created_at: "2026-11-22T00:00:01Z",
+        };
+        branchState = {
+          ...branchState,
+          nodes: [...branchState.nodes, userMsg, asstMsg],
+          active_branch: [...branchState.active_branch, userMsg, asstMsg],
+          active_leaf_id: asstMsg.id,
+        };
+        return sseResponse([
+          { event: "text_delta", data: { delta: asstMsg.content } },
+          {
+            event: "turn_done",
+            data: {
+              turn_id: `t-think-${idx}`,
+              user_message: userMsg,
+              assistant_message: asstMsg,
+              citations: [],
+              rolls: [],
+              state_patches: [],
+              library_added: [],
+              warnings: [],
+              compression_recommended: false,
+            },
+          },
+        ]);
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    const thinkBtn = await screen.findByRole("button", { name: /^Think$/i });
+    expect(thinkBtn).toHaveAttribute("aria-pressed", "false");
+
+    // 1. Toggle Think on -> placeholder updates; submitting empty shows validation warning
+    fireEvent.click(thinkBtn);
+    expect(thinkBtn).toHaveAttribute("aria-pressed", "true");
+    const thinkBox = screen.getByPlaceholderText(/Ask the GM what you notice, recall, or deduce \(0 time\)/i);
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    expect(await screen.findByText(/Enter a thought or observation question after \/think\./i)).toBeInTheDocument();
+    expect(turnBodies.length).toBe(0);
+
+    // 2. Submit question with Think toggled on -> sends turn_intent: "think", resets toggle, renders THINK badges
+    fireEvent.change(thinkBox, { target: { value: "What is tucked in his sleeve?" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+
+    await waitFor(() => expect(turnBodies.length).toBe(1));
+    expect(turnBodies[0].turn_intent).toBe("think");
+    expect(turnBodies[0].user_text).toBe("What is tucked in his sleeve?");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Think$/i })).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.getAllByText(/^THINK$/i).length).toBeGreaterThanOrEqual(2);
+
+    // 3. Typing /think with nothing after it blocks send with validation warning
+    const actionBox = screen.getByPlaceholderText(/Describe your action/i);
+    fireEvent.change(actionBox, { target: { value: "/think   " } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    expect(turnBodies.length).toBe(1);
+
+    // 4. Typing /think <question> strips prefix and sends turn_intent: "think"
+    fireEvent.change(actionBox, { target: { value: "/think Are there cameras above the door?" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send$/i }));
+    await waitFor(() => expect(turnBodies.length).toBe(2));
+    expect(turnBodies[1].turn_intent).toBe("think");
+    expect(turnBodies[1].user_text).toBe("Are there cameras above the door?");
+  });
+
+  it("routes handleSpendIpSkill & handleTherapy through /v1/game, hides hidden Real Name from non-owners, and renders Admin/Player clocks", async () => {
+    const campaign = {
+      id: "camp-4c-ui",
+      name: "Watson",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "Dock 14", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const char = {
+      id: "pc-4c",
+      name: "Vee",
+      stats: { INT: 6, REF: 8, DEX: 6, TECH: 7, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
+      skills: { Handgun: 4, "Medical Tech": 4 },
+      hp: 30,
+      max_hp: 40,
+      humanity: 40,
+      luck_remaining: 6,
+      money: 2000,
+      inventory: [],
+      revision: 3,
+      detail: {
+        handle: "Vee",
+        real_name: "Valerie Mercer",
+        real_name_hidden: true,
+        roles: [{ role: "Medtech", rank: 4 }],
+        role_ext: { ip: 120 },
+      },
+    };
+    const gameCalls: Array<Record<string, unknown>> = [];
+    const clockPosts: Array<Record<string, unknown>> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/auth/status") {
+        return jsonResponse({ auth_enabled: true, authenticated: true, username: "alice", role: "user", can_bootstrap: false });
+      }
+      if (url === "/v1/settings/llm") {
+        return jsonResponse({
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "llama3",
+          has_api_key: false,
+          api_key_masked: "",
+          temperature: 0.4,
+          max_tokens: 1200,
+          timeout_s: 60,
+          mode: "two_pass",
+        });
+      }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: [],
+          active_branch: [],
+          active_leaf_id: null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url.startsWith(`/v1/campaigns/${campaign.id}/clocks`)) {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body ?? "{}"));
+          clockPosts.push(body);
+          return jsonResponse({
+            campaign_id: campaign.id,
+            clocks: [{ id: "clk-1", name: "NCPD Heat", filled: 1, segments: 4, visibility: "public" }],
+          });
+        }
+        return jsonResponse({
+          campaign_id: campaign.id,
+          clocks: [{ id: "clk-1", name: "NCPD Heat", filled: 1, segments: 4, visibility: "public" }],
+        });
+      }
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        gameCalls.push(body);
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [char],
+              solo: { revision: 2, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+        if (body.action === "role_action") {
+          return jsonResponse({
+            action: "role_action",
+            result: { committed: true, revision: 3, result: { skill: "Handgun", rank: 5, cost: 60, ip: 60 } },
+          });
+        }
+        if (body.action === "health_action") {
+          return jsonResponse({
+            action: "health_action",
+            result: { committed: true, revision: 4, result: { therapy: "standard", success: true, cost: 500, humanity: 47 } },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    // Non-admin non-owner ("alice" viewing "bob"'s PC) must NOT see hidden real_name
+    await screen.findByText("Vee");
+    expect(screen.queryByText(/Valerie Mercer/i)).not.toBeInTheDocument();
+
+    // Spend IP skill routes through role_action with expected_revision, reason, operation_id, auto_revision: true
+    fireEvent.click(await screen.findByRole("button", { name: /^Handgun/i }));
+    const spendIpBtn = await screen.findByRole("button", { name: /Upgrade \+1 \(100 IP\)/i });
+    fireEvent.click(spendIpBtn);
+    await waitFor(() => expect(gameCalls.some((c) => c.action === "role_action")).toBe(true));
+    const roleCall = gameCalls.find((c) => c.action === "role_action")!;
+    expect(roleCall.auto_revision).toBe(true);
+    expect((roleCall.arguments as Record<string, unknown>).expected_revision).toBe(3);
+    expect((roleCall.arguments as Record<string, unknown>).operation_id).toBeTruthy();
+    expect(await screen.findByText(/Upgraded Handgun to \+5 \(60 IP spent\)\./i)).toBeInTheDocument();
+
+    // Therapy routes through health_action
+    const therapyBtn = screen.getByRole("button", { name: /Therapy 500eb/i });
+    fireEvent.click(therapyBtn);
+    await waitFor(() => expect(gameCalls.some((c) => c.action === "health_action")).toBe(true));
+    const healthCall = gameCalls.find((c) => c.action === "health_action")!;
+    expect(healthCall.auto_revision).toBe(true);
+    expect((healthCall.arguments as Record<string, unknown>).action).toBe("therapy");
+    expect(((healthCall.arguments as Record<string, unknown>).arguments as Record<string, unknown>).therapy).toBe("standard");
+    expect(await screen.findByText(/Completed standard Therapy \(Humanity 47, -500 eb\)\./i)).toBeInTheDocument();
+
+    // Player sees read-only public clock in Campaign tab (no Add clock form)
+    fireEvent.click(screen.getByRole("button", { name: /^Campaign$/i }));
+    expect(await screen.findByText("NCPD Heat")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add world clock")).not.toBeInTheDocument();
+  });
+
+  it("preserves unsaved prompt edits in SettingsModal when toggling Chronicler inline", async () => {
+    const campaign = {
+      id: "camp-4c-set",
+      name: "Watson",
+      revision: 1,
+      session_number: 1,
+      state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const llmCfg = {
+      base_url: "http://127.0.0.1:11434/v1",
+      model: "llama3",
+      has_api_key: false,
+      api_key_masked: "",
+      temperature: 0.4,
+      max_tokens: 1200,
+      timeout_s: 60,
+      mode: "two_pass",
+      enable_chronicler: true,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/settings/llm") {
+        if (init?.method === "POST") {
+          const patch = JSON.parse(String(init.body ?? "{}"));
+          return jsonResponse({ ...llmCfg, ...patch });
+        }
+        return jsonResponse(llmCfg);
+      }
+      if (url === "/v1/settings/all") {
+        return jsonResponse({
+          llm: llmCfg,
+          prompts: { narrator_extra: "Original server note" },
+          prompt_defaults: { narrator_extra: "" },
+          server: { bind_host: "127.0.0.1", port: 8765, allowed_origins: [] },
+          runtime: { bind_host: "127.0.0.1", port: 8765, lan_ips: [], tls: false, restarting: false },
+          auth_policy: { accounts: [], allow_guest_users: true, allow_self_signup: true, user_passcode_configured: false },
+        });
+      }
+      if (url === "/v1/corebook/status") return jsonResponse({ rules_indexed: true, indexed_pages: 456 });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        return jsonResponse({
+          campaign_id: campaign.id,
+          nodes: [],
+          active_branch: [],
+          active_leaf_id: null,
+          current_revisions: { campaign_revision: 1, solo_revision: 0 },
+          revision_mismatch: false,
+        });
+      }
+      if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [],
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Settings$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Prompts$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Extra Storytelling & Prose Notes/i }));
+    const narratorField = (await screen.findAllByDisplayValue("Original server note"))[0] as HTMLTextAreaElement;
+    fireEvent.change(narratorField, { target: { value: "Unsaved custom draft" } });
+    expect(narratorField.value).toBe("Unsaved custom draft");
+
+    const toggleBtn = await screen.findByRole("button", { name: /Chronicler:\s*ON/i });
+    fireEvent.click(toggleBtn);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Chronicler:\s*OFF/i })).toBeInTheDocument());
+    expect(narratorField.value).toBe("Unsaved custom draft");
   });
 });
 

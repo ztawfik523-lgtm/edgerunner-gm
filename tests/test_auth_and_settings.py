@@ -1,7 +1,9 @@
 """Tests for Admin/User authentication, exposed turn options, prompt customization, and server settings."""
 from __future__ import annotations
 
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 
@@ -60,6 +62,16 @@ class RecordingLLM:
         yield "Neon static hangs over the street."
 
 
+_TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-" + ("a" * 40)
+
+
+def _bootstrap(client: TestClient, payload: dict):
+    return client.post(
+        "/v1/auth/setup",
+        json={**payload, "bootstrap_token": _TEST_BOOTSTRAP_TOKEN},
+    )
+
+
 def test_password_hashing_and_auth_manager_lifecycle(tmp_path: Path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
@@ -112,6 +124,153 @@ def test_password_hashing_and_auth_manager_lifecycle(tmp_path: Path, monkeypatch
         mgr.authenticate(mode="admin", username="boss", password="wrong", bucket="10.0.0.5")
 
 
+def test_account_security_changes_revoke_existing_sessions(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+    boot = mgr.setup_initial(admin_username="boss", admin_password="boss-password")
+    mgr.update_access({"username": "runner", "password": "runner-password"})
+    user_token = mgr.authenticate(mode="user", username="runner", password="runner-password")["token"]
+    assert mgr.resolve_session(user_token)["authenticated"]
+
+    mgr.update_access({"username": "runner", "role": "admin"})
+    assert not mgr.resolve_session(user_token)["authenticated"]
+
+    replacement = mgr.authenticate(mode="admin", username="runner", password="runner-password")["token"]
+    mgr.update_access({"username": "runner", "password": "new-runner-password"})
+    assert not mgr.resolve_session(replacement)["authenticated"]
+    replacement = mgr.authenticate(
+        mode="admin", username="runner", password="new-runner-password"
+    )["token"]
+    mgr.delete_account("runner")
+    assert not mgr.resolve_session(replacement)["authenticated"]
+    assert mgr.resolve_session(boot["token"])["authenticated"]
+
+
+def test_deleted_account_token_rejected_on_recreate(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+    mgr.setup_initial(admin_username="admin", admin_password="admin-pass")
+    mgr.update_access({"username": "target", "password": "pass1", "role": "user"})
+    token = mgr.authenticate(mode="user", username="target", password="pass1")["token"]
+    assert mgr.resolve_session(token)["authenticated"]
+
+    mgr.delete_account("target")
+    assert not mgr.resolve_session(token)["authenticated"]
+
+    # Recreate account with same username and password
+    mgr.update_access({"username": "target", "password": "pass1", "role": "user"})
+    # Old token should still be invalid (different account_id)
+    assert not mgr.resolve_session(token)["authenticated"]
+    # New login should work
+    new_token = mgr.authenticate(mode="user", username="target", password="pass1")["token"]
+    assert mgr.resolve_session(new_token)["authenticated"]
+
+
+def test_environment_account_tokens_follow_current_environment(tmp_path: Path, monkeypatch):
+    settings = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings))
+    monkeypatch.setenv("REDGM_ADMIN_USER", "env-admin")
+    monkeypatch.setenv("REDGM_ADMIN_PASS", "env-password")
+    mgr = AuthManager(settings)
+    mgr.update_access({"username": "saved-user", "password": "saved-password"})
+    token = mgr.authenticate(mode="admin", username="env-admin", password="env-password")["token"]
+    assert mgr.resolve_session(token)["role"] == "admin"
+    monkeypatch.delenv("REDGM_ADMIN_PASS")
+    assert not mgr.resolve_session(token)["authenticated"]
+
+
+def test_initial_admin_setup_is_atomic_and_rate_limit_buckets_are_bounded(tmp_path: Path):
+    mgr = AuthManager(tmp_path / "settings.json")
+
+    def setup(username):
+        try:
+            return mgr.setup_initial(admin_username=username, admin_password="strong-password")
+        except AuthError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(setup, ("first", "second")))
+    assert sum(result is not None for result in results) == 1
+
+    limiter = AuthManager(tmp_path / "other-settings.json")
+    for i in range(5000):
+        limiter._check_rate_limit(f"client-{i}")
+    assert len(limiter._failures) <= 4096
+
+
+def test_pin_is_player_only_and_json_bodies_are_bounded(tmp_path: Path, monkeypatch):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+    app = redkb.make_api(
+        rules_db, (), tmp_path / "campaign.sqlite", settings_path=settings_path,
+        room_pin="table-pin", server_host="127.0.0.1", server_port=8765,
+    )
+    client = TestClient(app)
+    pin_headers = {"X-RedGM-Pin": "table-pin"}
+
+    assert client.get("/v1/library").status_code == 401
+    assert client.get("/v1/library", headers=pin_headers).status_code == 200
+    assert client.get("/v1/settings/public", headers=pin_headers).status_code == 200
+    assert client.get("/v1/settings/all", headers=pin_headers).status_code == 403
+
+    bootstrap_payload = {
+        "admin_username": "first-admin",
+        "admin_password": "a-strong-admin-password",
+        "bootstrap_token": _TEST_BOOTSTRAP_TOKEN,
+    }
+    monkeypatch.delenv("REDGM_BOOTSTRAP_TOKEN")
+    assert client.post("/v1/auth/setup", json=bootstrap_payload).status_code == 503
+    monkeypatch.setenv("REDGM_BOOTSTRAP_TOKEN", _TEST_BOOTSTRAP_TOKEN)
+    wrong_token = {**bootstrap_payload, "bootstrap_token": "wrong-token"}
+    assert client.post("/v1/auth/setup", json=wrong_token).status_code == 403
+    assert client.post("/v1/auth/setup", json=bootstrap_payload).status_code == 200
+    client.cookies.clear()
+    assert client.get("/v1/settings/all", headers=pin_headers).status_code == 403
+
+    monkeypatch.setattr(redkb, "_AUTH_JSON_MAX_BYTES", 128)
+    oversized_auth = '{"username":"runner","password":"' + ("x" * 200) + '"}'
+    assert client.post(
+        "/v1/auth/login", content=oversized_auth,
+        headers={"Content-Type": "application/json"},
+    ).status_code == 413
+
+    monkeypatch.setattr(redkb, "_JSON_MAX_BYTES", 128)
+    oversized_json = '{"value":"' + ("x" * 200) + '"}'
+    assert client.post(
+        "/v1/chat/branch", content=oversized_json,
+        headers={"Content-Type": "application/json", **pin_headers},
+    ).status_code == 413
+
+    async def verify_chunked_body_limit():
+        reached_app = False
+        messages = iter((
+            {"type": "http.request", "body": b"x" * 100, "more_body": True},
+            {"type": "http.request", "body": b"y" * 60, "more_body": False},
+        ))
+        sent = []
+
+        async def receive():
+            return next(messages)
+
+        async def send(message):
+            sent.append(message)
+
+        async def inner_app(_scope, _receive, _send):
+            nonlocal reached_app
+            reached_app = True
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/chat/turn",
+            "headers": [(b"content-type", b"application/json")],
+        }
+        await redkb._JsonBodyLimitMiddleware(inner_app)(scope, receive, send)
+        assert sent[0]["status"] == 413
+        assert not reached_app
+
+    asyncio.run(verify_chunked_body_limit())
+
+
 def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     campaign_db = tmp_path / "campaign.sqlite"
@@ -127,9 +286,9 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     assert status_open["role"] == "open"
     assert status_open["can_bootstrap"] is True
 
-    boot_resp = client.post(
-        "/v1/auth/setup",
-        json={
+    boot_resp = _bootstrap(
+        client,
+        {
             "admin_username": "netwatch",
             "admin_password": "admin-secret-99",
             "user_username": "edge",
@@ -400,9 +559,9 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
+    setup = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
     )
     assert setup.status_code == 200
     admin_token = setup.json()["token"]
@@ -452,9 +611,9 @@ def test_delete_character_requires_claim_or_admin(tmp_path, monkeypatch):
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
+    setup = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
     )
     admin_headers = {"X-RedGM-Token": setup.json()["token"]}
     client.cookies.clear()
@@ -583,9 +742,8 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
     client = TestClient(app)
 
-    setup = client.post(
-        "/v1/auth/setup",
-        json={"admin_username": "admin", "admin_password": "admin-password-1"},
+    setup = _bootstrap(
+        client, {"admin_username": "admin", "admin_password": "admin-password-1"}
     )
     assert setup.status_code == 200
     admin_headers = {"X-RedGM-Token": setup.json()["token"]}
@@ -696,3 +854,487 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     assert planner_user == "<<Vee>> Look around"
     assert narrator_user == "<<Vee>> Look around"
     assert "Visual UI flair" not in narrator_sys
+
+
+def test_legacy_account_id_backfill_no_temp_keys_and_auth_body_limit(tmp_path, monkeypatch):
+    import json
+    from auth import AuthManager, hash_password
+    from turnloop import read_settings_doc, write_settings_doc
+
+    rules_db = tmp_path / "rules.sqlite"
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    # Pre-seed a legacy account without account_id
+    auth = AuthManager(settings_path=settings_path)
+    write_settings_doc(
+        {
+            "auth": {
+                "secret": "s" * 64,
+                "token_version": 1,
+                "allow_self_signup": True,
+                "accounts": {
+                    "legacyuser": {
+                        "username": "legacyuser",
+                        "role": "user",
+                        "password_hash": hash_password("legacy-pass-1"),
+                        "token_version": 1,
+                    },
+                    "admin": {
+                        "username": "admin",
+                        "role": "admin",
+                        "password_hash": hash_password("admin-pass-1"),
+                        "token_version": 1,
+                        "account_id": "adm-1",
+                    },
+                },
+            }
+        },
+        settings_path,
+    )
+
+    # Logging in backfills account_id and issues a verifiable token
+    login_res = auth.authenticate(username="legacyuser", password="legacy-pass-1")
+    assert auth.verify_token(login_res["token"]) == {"username": "legacyuser", "role": "user"}
+    saved_doc = read_settings_doc(settings_path)
+    assert saved_doc["auth"]["accounts"]["legacyuser"].get("account_id")
+
+    # Deleting and recreating the same username invalidates the old token
+    auth.delete_account("legacyuser")
+    auth.register_user(username="legacyuser", password="legacy-pass-2")
+    assert auth.verify_token(login_res["token"]) is None
+
+    # Registering a new user does not leave _create_account_id in settings.json
+    reg_res = auth.register_user(username="newuser", password="newuser-pass-1")
+    assert auth.verify_token(reg_res["token"]) == {"username": "newuser", "role": "user"}
+    saved_auth = read_settings_doc(settings_path)["auth"]
+    assert "_create_account_id" not in saved_auth
+    assert "_setup_adm_id" not in saved_auth
+
+    # _JsonBodyLimitMiddleware enforces 64 KiB on /v1/auth/* even with non-JSON Content-Type
+    app = redkb.make_api(rules_db, (), camp_db, server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+    oversized = json.dumps({"username": "a", "password": "x" * (65 * 1024)}).encode("utf-8")
+    res = client.post(
+        "/v1/auth/login",
+        headers={"Content-Type": "text/plain"},
+        content=oversized,
+    )
+    assert res.status_code == 413
+
+
+def test_llm_override_hardening_and_origin_key_stripping(tmp_path: Path, monkeypatch):
+    from fastapi import FastAPI
+    from server.coop import _CoopHub
+    from server.security import ServerContext, create_server_context
+
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    save_llm_settings(
+        {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-admin-secret",
+        },
+        settings_path,
+    )
+
+    dummy_app = FastAPI()
+    ctx = create_server_context(dummy_app, rules_db, campaign_path=camp_db, settings_path=settings_path)
+    assert ctx.filter_llm_override_for_role({"base_url": "http://evil:9999"}, eff_role="user") is None
+    assert ctx.filter_llm_override_for_role({"base_url": "http://evil:9999"}, eff_role=None) is None
+    assert ctx.filter_llm_override_for_role({"model": "x"}, eff_role="admin") == {"model": "x"}
+
+    with pytest.raises(PermissionError):
+        ctx.resolve_active_llm({"base_url": "http://evil:9999"}, eff_role="user")
+
+    # Admin overriding base_url to a different origin without api_key strips saved key.
+    diff_origin_llm = ctx.resolve_active_llm(
+        {"base_url": "https://attacker.example/v1", "model": "other"},
+        eff_role="admin",
+    )
+    assert diff_origin_llm.config.base_url == "https://attacker.example/v1"
+    assert diff_origin_llm.config.api_key == ""
+
+    # Admin overriding path on the SAME origin preserves saved api_key.
+    same_origin_llm = ctx.resolve_active_llm(
+        {"base_url": "https://api.openai.com/v1/custom", "model": "other"},
+        eff_role="admin",
+    )
+    assert same_origin_llm.config.api_key == "sk-admin-secret"
+
+    # Admin supplying explicit api_key on new origin uses the supplied key.
+    explicit_llm = ctx.resolve_active_llm(
+        {"base_url": "https://other.example/v1", "api_key": "sk-explicit"},
+        eff_role="admin",
+    )
+    assert explicit_llm.config.api_key == "sk-explicit"
+
+    # End-to-end HTTP checks on /v1/chat/turn, /v1/chat/regenerate, /v1/creation/ai-assist.
+    app = redkb.make_api(rules_db, (), camp_db, settings_path=settings_path, llm=RecordingLLM(), server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+    boot = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "gm-password-1", "allow_self_signup": True},
+    )
+    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    client.cookies.clear()
+    reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
+    alice_headers = {"X-RedGM-Token": reg.json()["token"]}
+
+    camp = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_campaign", "arguments": {"name": "LLM Gate", "operation_id": "llm-c1"}},
+    ).json()["result"]
+    stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+    pc = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "create_character", "arguments": {"name": "Vee", "stats": stats, "operation_id": "llm-pc1"}},
+    ).json()["result"]
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "attach_character", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": pc["id"], "expected_revision": 1, "reason": "attach", "operation_id": "llm-att1"}},
+    )
+
+    r_turn = client.post(
+        "/v1/chat/turn",
+        headers=alice_headers,
+        json={
+            "campaign_id": camp["id"],
+            "user_text": "Look around",
+            "speaker_character_id": pc["id"],
+            "llm_config": {"base_url": "http://127.0.0.1:9999/v1"},
+        },
+    )
+    assert r_turn.status_code == 403
+
+    r_assist = client.post(
+        "/v1/creation/ai-assist",
+        headers=alice_headers,
+        json={"target": "bio", "mode": "scratch", "llm": {"base_url": "http://127.0.0.1:9999/v1"}},
+    )
+    assert r_assist.status_code == 403
+
+    # Admin can still send a normal turn, then non-admin cannot override llm_config on regenerate.
+    ok_turn = client.post(
+        "/v1/chat/turn",
+        headers=admin_headers,
+        json={"campaign_id": camp["id"], "user_text": "Open the gate", "gm_mode": "force_gm"},
+    )
+    assert ok_turn.status_code == 200
+    tree = client.get("/v1/chat/tree", params={"campaign_id": camp["id"]}, headers=admin_headers).json()
+    asst_id = tree["active_branch"][-1]["id"]
+    r_regen = client.post(
+        "/v1/chat/regenerate",
+        headers=alice_headers,
+        json={"campaign_id": camp["id"], "message_id": asst_id, "llm_config": {"model": "hijack"}},
+    )
+    assert r_regen.status_code == 403
+
+
+def test_admin_and_pin_only_permission_gates(tmp_path: Path, monkeypatch):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    app = redkb.make_api(rules_db, (), camp_db, settings_path=settings_path, llm=RecordingLLM(), server_host="127.0.0.1", server_port=8765)
+    client = TestClient(app)
+    boot = _bootstrap(
+        client,
+        {"admin_username": "gm", "admin_password": "gm-password-1", "allow_self_signup": True},
+    )
+    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    client.cookies.clear()
+    reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
+    alice_headers = {"X-RedGM-Token": reg.json()["token"]}
+
+    camp = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_campaign", "arguments": {"name": "Gate Run", "operation_id": "g-c1"}},
+    ).json()["result"]
+    stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+    pc = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "create_character", "arguments": {"name": "Nyx", "stats": stats, "operation_id": "g-pc1"}},
+    ).json()["result"]
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "attach_character", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": pc["id"], "expected_revision": 1, "reason": "attach", "operation_id": "g-att1"}},
+    )
+
+    # Admin creates initial message for regenerate/guidance checks.
+    t_res = client.post(
+        "/v1/chat/turn",
+        headers=admin_headers,
+        json={"campaign_id": camp["id"], "user_text": "Start", "gm_mode": "force_gm"},
+    )
+    assert t_res.status_code == 200
+    asst_id = client.get("/v1/chat/tree", params={"campaign_id": camp["id"]}, headers=admin_headers).json()["active_branch"][-1]["id"]
+
+    # Non-admin user receives 403 on all GM/Admin endpoints and mutations.
+    assert client.post("/v1/chat/turn", headers=alice_headers, json={"campaign_id": camp["id"], "user_text": "Intro", "is_intro": True}).status_code == 403
+    assert client.post("/v1/chat/turn", headers=alice_headers, json={"campaign_id": camp["id"], "user_text": "Hi", "speaker_character_id": pc["id"], "guidance": "GM secret"}).status_code == 403
+    assert client.post("/v1/chat/regenerate", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": asst_id, "guidance": "Make boss die"}).status_code == 403
+    assert client.post("/v1/chat/compress", headers=alice_headers, json={"campaign_id": camp["id"]}).status_code == 403
+    assert client.post(f"/v1/campaigns/{camp['id']}/npc-identity", headers=alice_headers, json={"handle": "Fixer", "real_name": "Secret", "real_name_hidden": True}).status_code == 403
+    assert client.post(f"/v1/campaigns/{camp['id']}/clocks", headers=alice_headers, json={"action": "upsert", "name": "Heat"}).status_code == 403
+    assert client.post(f"/v1/campaigns/{camp['id']}/bootstrap", headers=alice_headers, json={"scene": "Hacked"}).status_code == 403
+    assert client.get("/v1/chat/export", params={"campaign_id": camp["id"]}, headers=alice_headers).status_code == 403
+
+    for action_name, action_args in (
+        ("attach_character", {"character_id": pc["id"], "expected_revision": 1, "reason": "x", "operation_id": "u-att"}),
+        ("start_encounter", {"character_ids": [pc["id"]], "expected_revision": 1, "reason": "x", "operation_id": "u-enc"}),
+        ("end_encounter", {"expected_revision": 1, "reason": "x", "operation_id": "u-eenc"}),
+        ("create_architecture", {"floors": [], "access_points": [], "expected_revision": 1, "reason": "x", "operation_id": "u-arch"}),
+        ("start_netrun", {"character_id": pc["id"], "architecture_id": "x", "access_point_id": "a", "distance": 1, "expected_revision": 1, "reason": "x", "operation_id": "u-net"}),
+        ("advance_time", {"elapsed_minutes": 30, "expected_revision": 1, "reason": "x", "operation_id": "u-time"}),
+        ("encounter_action", {"action": "add_npc", "arguments": {"name": "Mook"}, "expected_revision": 1, "reason": "x", "operation_id": "u-npc"}),
+    ):
+        resp = client.post(
+            "/v1/game",
+            headers=alice_headers,
+            json={"action": action_name, "campaign_id": camp["id"], "arguments": action_args},
+        )
+        assert resp.status_code == 403, f"Expected 403 for {action_name}, got {resp.status_code}"
+
+    # Legacy pin_only_mode (no admin configured) allows GM actions unless X-RedGM-View-Role: user is set.
+    pin_settings = tmp_path / "pin_settings.json"
+    pin_camp_db = tmp_path / "pin_campaign.sqlite"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(pin_settings))
+    pin_app = redkb.make_api(
+        rules_db, (), pin_camp_db, settings_path=pin_settings, room_pin="4321",
+        llm=RecordingLLM(), server_host="127.0.0.1", server_port=8765,
+    )
+    pin_client = TestClient(pin_app)
+    pin_hdr = {"X-RedGM-Pin": "4321"}
+    pin_view_user = {"X-RedGM-Pin": "4321", "X-RedGM-View-Role": "user"}
+
+    pcamp_res = pin_client.post(
+        "/v1/game",
+        headers=pin_hdr,
+        json={"action": "create_campaign", "arguments": {"name": "PIN Run", "operation_id": "pin-c1"}},
+    )
+    assert pcamp_res.status_code == 200
+    pcamp_id = pcamp_res.json()["result"]["id"]
+
+    assert pin_client.post(f"/v1/campaigns/{pcamp_id}/bootstrap", headers=pin_hdr, json={"scene": "Alley", "gm_secrets": "Mole"}).status_code == 200
+    assert pin_client.post(f"/v1/campaigns/{pcamp_id}/clocks", headers=pin_hdr, json={"action": "upsert", "name": "Heat"}).status_code == 200
+    assert pin_client.post(f"/v1/campaigns/{pcamp_id}/npc-identity", headers=pin_hdr, json={"handle": "Fixer", "real_name": "J. Doe", "real_name_hidden": True}).status_code == 200
+    assert pin_client.get("/v1/chat/export", params={"campaign_id": pcamp_id}, headers=pin_hdr).status_code == 200
+    assert pin_client.post("/v1/chat/turn", headers=pin_hdr, json={"campaign_id": pcamp_id, "user_text": "Intro", "is_intro": True}).status_code == 200
+
+    # With X-RedGM-View-Role: user, pin_only_mode acts as non-GM player and blocks GM mutations.
+    assert pin_client.post(f"/v1/campaigns/{pcamp_id}/clocks", headers=pin_view_user, json={"action": "upsert", "name": "Heat2"}).status_code == 403
+    assert pin_client.post(f"/v1/campaigns/{pcamp_id}/bootstrap", headers=pin_view_user, json={"scene": "Hacked"}).status_code == 403
+    assert pin_client.get("/v1/chat/export", params={"campaign_id": pcamp_id}, headers=pin_view_user).status_code == 403
+    assert pin_client.post("/v1/chat/turn", headers=pin_view_user, json={"campaign_id": pcamp_id, "user_text": "Intro", "is_intro": True}).status_code == 403
+
+
+def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monkeypatch):
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    camp_db = tmp_path / "campaign.sqlite"
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
+
+    app = redkb.make_api(
+        rules_db,
+        ("http://localhost:5173",),
+        camp_db,
+        settings_path=settings_path,
+        llm=RecordingLLM(),
+        server_host="127.0.0.1",
+        server_port=8765,
+    )
+    client = TestClient(app)
+
+    # Verify CORS preflight allows X-RedGM-View-Role and X-Filename.
+    cors_pre = client.options(
+        "/v1/chat/tree",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-RedGM-View-Role, X-Filename",
+        },
+    )
+    allow_hdrs = (cors_pre.headers.get("access-control-allow-headers") or "").lower()
+    assert "x-redgm-view-role" in allow_hdrs
+    assert "x-filename" in allow_hdrs
+
+    boot = _bootstrap(
+        client,
+        {
+            "admin_username": "gm",
+            "admin_password": "gm-password-1",
+            "allow_self_signup": True,
+            "allow_guest_users": True,
+        },
+    )
+    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    client.cookies.clear()
+    alice_headers = {"X-RedGM-Token": client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"}).json()["token"]}
+    client.cookies.clear()
+    bob_headers = {"X-RedGM-Token": client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"}).json()["token"]}
+    client.cookies.clear()
+
+    camp = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_campaign", "arguments": {"name": "Ownership Run", "operation_id": "own-c1"}},
+    ).json()["result"]
+    stats = {s: 6 for s in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")}
+    alice_pc = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "create_character", "arguments": {"name": "AlicePC", "stats": stats, "operation_id": "own-a1"}},
+    ).json()["result"]
+    bob_pc = client.post(
+        "/v1/game",
+        headers=bob_headers,
+        json={"action": "create_character", "arguments": {"name": "BobPC", "stats": stats, "operation_id": "own-b1"}},
+    ).json()["result"]
+    unclaimed_pc = client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "create_character", "arguments": {"name": "SharedPC", "stats": stats, "operation_id": "own-s1"}},
+    ).json()["result"]
+    client.post(
+        "/v1/game",
+        headers=admin_headers,
+        json={"action": "update_character_profile", "auto_revision": True, "arguments": {"character_id": unclaimed_pc["id"], "expected_revision": 1, "profile": {"owner_username": None}, "reason": "unclaim", "operation_id": "own-uncl"}},
+    )
+    for idx, cid in enumerate((alice_pc["id"], bob_pc["id"], unclaimed_pc["id"]), start=1):
+        client.post(
+            "/v1/game",
+            headers=admin_headers,
+            json={"action": "attach_character", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": cid, "expected_revision": 1, "reason": "att", "operation_id": f"own-att-{idx}"}},
+        )
+
+    # 1. Guest (no token, empty uname) cannot modify, speak as, or roll for Alice's owned PC.
+    assert client.post("/v1/game", json={"action": "update_character", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": alice_pc["id"], "expected_revision": 1, "changes": {"money": 999}, "reason": "steal", "operation_id": "gst-1"}}).status_code == 403
+    assert client.post("/v1/game", json={"action": "substance_action", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"actor_id": alice_pc["id"], "action": "use_drug", "arguments": {"drug": "Synthcoke"}, "expected_revision": 1, "reason": "dose", "operation_id": "gst-2"}}).status_code == 403
+    assert client.post("/v1/chat/turn", json={"campaign_id": camp["id"], "user_text": "Impersonate", "speaker_character_id": alice_pc["id"]}).status_code == 403
+    assert client.post("/v1/chat/roll", json={"campaign_id": camp["id"], "character_id": alice_pc["id"], "stat": "REF", "skill": "Handgun", "dv": 13}).status_code == 403
+
+    # 2. Alice cannot target Bob's PC via health_action / substance_action actor_id or target_id.
+    assert client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={
+            "action": "health_action",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {"actor_id": alice_pc["id"], "action": "first_aid", "arguments": {"target_id": bob_pc["id"]}, "expected_revision": 1, "reason": "heal", "operation_id": "hl-1"},
+        },
+    ).status_code == 403
+    assert client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={
+            "action": "substance_action",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {"actor_id": bob_pc["id"], "action": "use_drug", "arguments": {"drug": "Synthcoke"}, "expected_revision": 1, "reason": "dose", "operation_id": "sub-1"},
+        },
+    ).status_code == 403
+
+    # 3. Non-admin cannot overwrite owner_username on owned PC or claim unclaimed PC for another user.
+    assert client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "update_character_profile", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": alice_pc["id"], "expected_revision": 1, "profile": {"owner_username": "bob"}, "reason": "reassign", "operation_id": "reown-1"}},
+    ).status_code == 403
+    assert client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "update_character_profile", "campaign_id": camp["id"], "auto_revision": True, "arguments": {"character_id": unclaimed_pc["id"], "expected_revision": 1, "profile": {"owner_username": "bob"}, "reason": "claim-other", "operation_id": "reown-2"}},
+    ).status_code == 403
+
+    # 4. create_player_character stamps owner_username from signed-in user at top level.
+    import sqlite3
+    values = [(r, 6, 7, 7, 3, 8, 6, 5, 5, 6, 5) for r in range(1, 11)]
+    solo_text = "▶Solo\nRoll\nINT\nREF\nDEX\nTECH\nCOOL\nWILL\nLUCK\nMOVE\nBODY\nEMP\n" + "\n".join(str(n) for row in values for n in row)
+    skills_tbl = "| Media |  | Lawman |  | Exec |  | Fixer |  | Nomad |  | Rockerboy |  | Solo |  | Netrunner |  | Tech |  | Medtech |\n"
+    skills_tbl += "| Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl |\n"
+    skills_tbl += "\n".join(f"| Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 |" for i in range(20))
+    basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
+    defs = "\n".join(f"{name}........INT" for name in basics + [f"Skill {i}" + (" (x2)" if i == 0 else "") for i in range(20)])
+    p74_txt = solo_text + "\n" + skills_tbl
+    with sqlite3.connect(rules_db) as rconn:
+        rconn.execute(
+            "INSERT OR REPLACE INTO pages(pdf_page, printed_page, header, text, chars) VALUES(74, 73, '', ?, ?)",
+            (p74_txt, len(p74_txt)),
+        )
+        rconn.execute(
+            "INSERT OR REPLACE INTO pages(pdf_page, printed_page, header, text, chars) VALUES(83, 82, '', ?, ?)",
+            (defs, len(defs)),
+        )
+
+    created_pc_res = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={
+            "action": "create_player_character",
+            "campaign_id": camp["id"],
+            "auto_revision": True,
+            "arguments": {
+                "name": "CreatedSolo",
+                "role": "Solo",
+                "method": "streetrat",
+                "handle": "CreatedSolo",
+                "lifepath": {},
+                "expected_revision": 0,
+                "reason": "new pc",
+                "operation_id": "cpc-alice-1",
+            },
+        },
+    )
+    assert created_pc_res.status_code == 200, created_pc_res.text
+    created_cid = created_pc_res.json()["result"]["result"]["character_id"]
+    fetched_created = client.post(
+        "/v1/game",
+        headers=alice_headers,
+        json={"action": "get_character", "arguments": {"character_id": created_cid}},
+    ).json()["result"]
+    assert fetched_created["detail"]["owner_username"] == "alice"
+
+    # 5. Message authorship stamping & edit/delete ownership enforcement.
+    turn_res = client.post(
+        "/v1/chat/turn",
+        headers=alice_headers,
+        json={"campaign_id": camp["id"], "user_text": "Alice checks the door", "speaker_character_id": alice_pc["id"], "gm_mode": "force_gm"},
+    )
+    assert turn_res.status_code == 200
+    roll_res = client.post(
+        "/v1/chat/roll",
+        headers=alice_headers,
+        json={"campaign_id": camp["id"], "character_id": alice_pc["id"], "stat": "INT", "skill": "Perception", "dv": 13},
+    )
+    assert roll_res.status_code == 200
+    assert roll_res.json()["message"]["metadata"]["author_username"] == "alice"
+
+    tree = client.get("/v1/chat/tree", params={"campaign_id": camp["id"]}, headers=alice_headers).json()
+    alice_user_msg = next(m for m in tree["active_branch"] if m["role"] == "user" and "Alice checks the door" in m["content"])
+    asst_msg = next(m for m in tree["active_branch"] if m["role"] == "assistant")
+    assert alice_user_msg["metadata"]["author_username"] == "alice"
+
+    # Bob cannot update or delete Alice's message; Alice cannot edit/delete GM assistant message.
+    assert client.post("/v1/chat/message/update", headers=bob_headers, json={"campaign_id": camp["id"], "message_id": alice_user_msg["id"], "content": "Hacked"}).status_code == 403
+    assert client.post("/v1/chat/delete", headers=bob_headers, json={"campaign_id": camp["id"], "message_id": alice_user_msg["id"]}).status_code == 403
+    assert client.post("/v1/chat/message/update", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": asst_msg["id"], "content": "Hacked GM"}).status_code == 403
+    assert client.post("/v1/chat/delete", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": asst_msg["id"]}).status_code == 403
+
+    # Alice can update and delete her own message; Admin can edit/delete any message.
+    assert client.post("/v1/chat/message/update", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": alice_user_msg["id"], "content": "Alice edits her action"}).status_code == 200
+    assert client.post("/v1/chat/message/update", headers=admin_headers, json={"campaign_id": camp["id"], "message_id": asst_msg["id"], "content": "GM edited"}).status_code == 200
+    assert client.post("/v1/chat/delete", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": roll_res.json()["message"]["id"]}).status_code == 200

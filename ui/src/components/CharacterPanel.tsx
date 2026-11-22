@@ -33,6 +33,7 @@ import {
   deleteCharacter,
   fetchCharacterHistory,
   gameAction,
+  makeOpId,
   postManualChatRoll,
   runSkillCheck,
   undoCharacterChange,
@@ -460,13 +461,16 @@ export function CharacterPanel({
     if (!active || busy) return;
     setBusy(true);
     try {
-      let rollRes: {
-        total: number;
-        success: boolean;
-        die: number;
-        explosion: number;
-        wound_modifier: number;
+      type RawRollResult = {
+        total?: number;
+        success?: boolean;
+        die?: number | null;
+        dice?: number[];
+        explosion?: number;
+        critical_adjustment?: number;
+        wound_modifier?: number;
       };
+      let rollRes: RawRollResult;
       try {
         const chatRoll = await postManualChatRoll({
           campaign_id: campaignId,
@@ -480,7 +484,11 @@ export function CharacterPanel({
           channel_id: activeChannelId,
         });
         rollRes = chatRoll.result;
-      } catch {
+      } catch (err) {
+        const status = (err as { status?: unknown } | null)?.status;
+        if (status !== 404 && status !== 501) {
+          throw err;
+        }
         rollRes = await runSkillCheck(campaignId, {
           character_id: active.id,
           expected_revision: active.revision,
@@ -492,7 +500,15 @@ export function CharacterPanel({
           reason: checkReason.trim() || "Manual check",
         });
       }
-      setLastRoll(rollRes);
+      const toFinite = (val: unknown, fallback = 0): number =>
+        typeof val === "number" && Number.isFinite(val) ? val : fallback;
+      setLastRoll({
+        total: toFinite(rollRes.total, 0),
+        success: Boolean(rollRes.success),
+        die: toFinite(rollRes.die ?? rollRes.dice?.[0] ?? 0, 0),
+        explosion: toFinite(rollRes.explosion ?? rollRes.critical_adjustment ?? 0, 0),
+        wound_modifier: toFinite(rollRes.wound_modifier ?? 0, 0),
+      });
       setCheckLuck(0);
       await onRefresh();
     } catch (err) {
@@ -534,17 +550,27 @@ export function CharacterPanel({
     const kind = isDifficultSkill(skillName) ? "difficult" : "typical";
     setBusy(true);
     try {
-      const res = await gameAction<{ skill?: string; rank?: number; cost?: number; ip?: number }>(
+      const res = await gameAction<{
+        result?: { skill?: string; rank?: number; cost?: number; ip?: number };
+        skill?: string;
+        rank?: number;
+        cost?: number;
+        ip?: number;
+      }>(
         "role_action",
         {
           character_id: active.id,
+          expected_revision: active.revision,
           action: "spend_ip_skill",
           arguments: { skill: skillName, current_rank: currentRank, kind },
+          reason: `Spend IP to upgrade ${skillName}`,
+          operation_id: makeOpId("ip-skill"),
         },
         campaignId,
       );
+      const inner = res?.result ?? res;
       await onRefresh();
-      onNotify(`Upgraded ${res.skill ?? skillName} to +${res.rank ?? currentRank + 1} (${res.cost ?? ""} IP spent).`);
+      onNotify(`Upgraded ${inner?.skill ?? skillName} to +${inner?.rank ?? currentRank + 1} (${inner?.cost ?? ""} IP spent).`);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "IP upgrade failed");
     } finally {
@@ -552,32 +578,44 @@ export function CharacterPanel({
     }
   };
 
-  const handleTherapy = async (tier: "standard" | "extreme") => {
+  const handleTherapy = async (tier: "standard" | "extreme" | "addiction") => {
     if (!active || busy) return;
-    const cost = tier === "extreme" ? 1000 : 500;
-    const diceCount = tier === "extreme" ? 4 : 2;
+    const cost = tier === "standard" ? 500 : 1000;
     if (active.money < cost) {
-      onNotify(`Insufficient eddies: ${tier === "extreme" ? "Extreme" : "Standard"} Therapy costs ${cost} eb (p. 230).`);
+      onNotify(`Insufficient eddies: ${tier === "extreme" ? "Extreme" : tier === "addiction" ? "Addiction" : "Standard"} Therapy costs ${cost} eb.`);
       return;
     }
     const maxHum = maxHumanity;
-    if (active.humanity >= maxHum) {
+    if (tier !== "addiction" && active.humanity >= maxHum) {
       onNotify("Humanity is already at maximum.");
       return;
     }
-    const rolled = Array.from({ length: diceCount }, () => Math.floor(Math.random() * 6) + 1).reduce((a, b) => a + b, 0);
-    const nextHum = Math.min(maxHum, active.humanity + rolled);
     setBusy(true);
     try {
-      await updateCharacterState(
+      const res = await gameAction<{
+        result?: { therapy?: string; success?: boolean; cost?: number; humanity?: number; check?: { total?: number; dv?: number } };
+        therapy?: string;
+        success?: boolean;
+        cost?: number;
+        humanity?: number;
+      }>(
+        "health_action",
+        {
+          actor_id: active.id,
+          action: "therapy",
+          arguments: { therapy: tier, target_id: active.id },
+          reason: `${tier === "extreme" ? "Extreme" : tier === "addiction" ? "Addiction" : "Standard"} Therapy`,
+          operation_id: makeOpId("therapy"),
+        },
         campaignId,
-        active.id,
-        active.revision,
-        { humanity: nextHum, money: active.money - cost },
-        `${tier === "extreme" ? "Extreme" : "Standard"} Therapy (-${cost}eb, +${nextHum - active.humanity} Humanity, p. 230)`,
       );
+      const outcome = res?.result ?? res;
       await onRefresh();
-      onNotify(`Completed ${tier} Therapy (+${nextHum - active.humanity} Humanity, -${cost} eb).`);
+      if (outcome?.success === false) {
+        onNotify(`Therapy check failed (-${outcome?.cost ?? cost} eb).`);
+      } else {
+        onNotify(`Completed ${tier} Therapy (Humanity ${outcome?.humanity ?? active.humanity}, -${outcome?.cost ?? cost} eb).`);
+      }
     } catch (err) {
       onNotify(err instanceof Error ? err.message : "Therapy failed");
     } finally {
@@ -773,6 +811,12 @@ export function CharacterPanel({
   const activeRealNameHidden = Boolean(
     detail.real_name_hidden ?? (activeRealName && activeHandle !== activeRealName),
   );
+  const isOwner = Boolean(
+    currentUsername &&
+      ownerUsername &&
+      ownerUsername.toLowerCase() === currentUsername.toLowerCase(),
+  );
+  const canViewRealName = Boolean(!Boolean(detail.real_name_hidden) || isAdmin || isOwner);
   const activePortraitUrl = typeof detail.portrait_url === "string" ? detail.portrait_url.trim() : "";
   const rawActiveColor = typeof detail.color === "string" ? detail.color.trim() : "";
   const activeColorKey =
@@ -946,7 +990,7 @@ export function CharacterPanel({
               <span className="font-mono text-[11px] text-slate-500">rev {active.revision}</span>
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-              {activeRealName && (
+              {activeRealName && canViewRealName && (
                 <span className="inline-flex items-center gap-1">
                   <span>Real Name: <strong className="text-slate-300">{activeRealName}</strong></span>
                   {activeRealNameHidden ? (
