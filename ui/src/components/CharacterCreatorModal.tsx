@@ -459,6 +459,7 @@ export function CharacterCreatorModal({
   const [addictionHook, setAddictionHook] = useState("");
   const [debtHook, setDebtHook] = useState("");
   const [showRepHooks, setShowRepHooks] = useState(true);
+  const [customLifepathFields, setCustomLifepathFields] = useState<Record<string, boolean>>({});
   const [ammoCaliber, setAmmoCaliber] = useState("");
   const [aiBioGuidance, setAiBioGuidance] = useState("");
   const [aiContactsGuidance, setAiContactsGuidance] = useState("");
@@ -484,7 +485,7 @@ export function CharacterCreatorModal({
   const [shopSort, setShopSort] = useState<"cost_asc" | "cost_desc" | "name_asc" | "sp_desc" | "hl_asc" | "tier_asc" | "tier_desc">("cost_asc");
   const [affordableOnly, setAffordableOnly] = useState(false);
   const [selectedOnly, setSelectedOnly] = useState(false);
-  const [loadoutOpen, setLoadoutOpen] = useState(true);
+  const [loadoutOpen, setLoadoutOpen] = useState(false);
   const [inspectedItemId, setInspectedItemId] = useState<string | null>(null);
   const [shopSearch, setShopSearch] = useState("");
   const [cartItems, setCartItems] = useState<Array<{ name: string; category: string; cost_eb: number; hl?: number; sp?: number; location?: string; install?: string; notes?: string; qty: number }>>([]);
@@ -583,6 +584,7 @@ export function CharacterCreatorModal({
     setTraumaHook("");
     setAddictionHook("");
     setDebtHook("");
+    setCustomLifepathFields({});
     setAmmoCaliber("");
     setAiBioGuidance("");
     setAiContactsGuidance("");
@@ -602,7 +604,8 @@ export function CharacterCreatorModal({
       hydratedRef.current = false;
       hadSavedDraftRef.current = false;
       setShowRepHooks(true);
-      setLoadoutOpen(true);
+      setCustomLifepathFields({});
+      setLoadoutOpen(false);
       setInspectedItemId(null);
       setAiError("");
       setInspector(DEFAULT_INSPECTOR);
@@ -1131,6 +1134,25 @@ export function CharacterCreatorModal({
     };
   }, [method, roleInfo, weaponChoices, outfitChoice, cyberwareChoice, cyberwareChoice2, cartItems, selectedFashion, freeformMoney]);
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      weapon: 0,
+      armor: 0,
+      cyberware: 0,
+      gear: 0,
+      program: 0,
+      hardware: 0,
+      vehicle: 0,
+      drug: 0,
+      fashion: selectedFashion.length,
+    };
+    for (const it of cartItems) {
+      const bucket = it.category === "attachment" || it.category === "ammo" ? "weapon" : it.category;
+      if (bucket in counts) counts[bucket] += it.qty;
+    }
+    return counts;
+  }, [cartItems, selectedFashion]);
+
   const { effectiveBody, subdermalSp, subdermalName } = useMemo(() => {
     const graftedCount = gearSummary.cyberware.filter((c) => /grafted muscle/i.test(c.name)).length;
     let body = graftedCount > 0 ? Math.min(10, activeStats.BODY + 2 * graftedCount) : activeStats.BODY;
@@ -1482,6 +1504,7 @@ export function CharacterCreatorModal({
         if (f.options.length) nextRoleLp[f.key] = pickRandom(f.options);
       }
       setRoleLifepath(nextRoleLp);
+      setCustomLifepathFields({});
 
       const friendCount = Math.max(0, d(10) - 7);
       const nextFriends: FriendEntry[] = Array.from({ length: friendCount }, (_, idx) => ({
@@ -2277,8 +2300,8 @@ export function CharacterCreatorModal({
               <div className="space-y-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                   <div className="sm:col-span-4">
-                    <label className="mb-1 flex items-center justify-between font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
-                      <span>Street Handle / Name *</span>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="cyber-field-label mb-0">Street Handle / Name *</label>
                       <button
                         type="button"
                         onClick={() => setName(pickRandom(HANDLE_SUGGESTIONS))}
@@ -2286,18 +2309,18 @@ export function CharacterCreatorModal({
                       >
                         <Dices className="h-3 w-3" /> Roll Handle
                       </button>
-                    </label>
+                    </div>
                     <input
                       type="text"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Vee Mercer"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      className="cyber-input px-3 py-2"
                     />
                   </div>
                   <div className="sm:col-span-3">
-                    <div className="mb-1 flex items-center justify-between gap-1 font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
-                      <span className="truncate">Real / Legal Name</span>
+                    <div className="mb-1 flex items-center justify-between gap-1">
+                      <label className="cyber-field-label mb-0 truncate">Real / Legal Name</label>
                       <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 font-cyber-ui text-[10px] font-normal text-[var(--hud-warn)]" title="When checked, NPCs and the street only know your character by their Handle unless revealed in play.">
                         <input
                           type="checkbox"
@@ -2314,11 +2337,11 @@ export function CharacterCreatorModal({
                       value={realName}
                       onChange={(e) => setRealName(e.target.value)}
                       placeholder="Optional legal name"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      className="cyber-input px-3 py-2"
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Gender</label>
+                    <label className="cyber-field-label">Gender</label>
                     <input
                       type="text"
                       aria-label="Gender"
@@ -2326,7 +2349,7 @@ export function CharacterCreatorModal({
                       value={gender === "__custom__" ? "" : gender}
                       onChange={(e) => setGender(e.target.value)}
                       placeholder="Woman, Man, Non-Binary…"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      className="cyber-input px-2.5 py-2"
                     />
                     <datalist id="cpr-gender-list">
                       <option value="Woman" />
@@ -2337,14 +2360,14 @@ export function CharacterCreatorModal({
                     </datalist>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Pronouns</label>
+                    <label className="cyber-field-label">Pronouns</label>
                     <input
                       type="text"
                       list="cpr-pronouns-list"
                       value={pronouns}
                       onChange={(e) => setPronouns(e.target.value)}
                       placeholder="they/them…"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-ui text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      className="cyber-input px-2.5 py-2"
                     />
                     <datalist id="cpr-pronouns-list">
                       <option value="she/her" />
@@ -2356,13 +2379,13 @@ export function CharacterCreatorModal({
                     </datalist>
                   </div>
                   <div className="sm:col-span-1">
-                    <label className="mb-1 block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">Age</label>
+                    <label className="cyber-field-label">Age</label>
                     <input
                       type="text"
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
                       placeholder="24"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-2 font-cyber-data text-sm text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                      className="cyber-input px-2.5 py-2 font-cyber-data"
                     />
                   </div>
                 </div>
@@ -2465,7 +2488,7 @@ export function CharacterCreatorModal({
 
                 <div>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <label className="block font-cyber-ui text-xs font-semibold text-[var(--hud-text)]">
+                    <label className="cyber-field-label mb-0">
                       One-Line Concept (optional)
                     </label>
                     <FieldAiActions
@@ -2481,7 +2504,7 @@ export function CharacterCreatorModal({
                     value={conceptTagline}
                     onChange={(e) => setConceptTagline(e.target.value)}
                     placeholder="e.g. Ex-Trauma Team medic running black-market clinic jobs in Watson"
-                    className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-3 py-2 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    className="cyber-input px-3 py-2"
                   />
                 </div>
 
@@ -2534,15 +2557,25 @@ export function CharacterCreatorModal({
                               setCustomSkills(defaultCompleteSkills(roleInfo));
                             }
                           }}
-                          className={`border p-3 text-left transition ${
-                            active
-                              ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                              : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
-                          } disabled:opacity-40`}
+                          className={`${
+                            active ? "cyber-card-active" : "cyber-card"
+                          } p-3 text-left disabled:opacity-40`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-cyber-ui text-xs font-bold">{m.name}</span>
-                            <span className="border border-[var(--hud-line-soft)] bg-black/50 px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                            <span
+                              className={`font-cyber-ui text-[13px] ${
+                                active ? "font-bold text-white" : "font-semibold text-[var(--hud-text)]"
+                              }`}
+                            >
+                              {m.name}
+                            </span>
+                            <span
+                              className={`border px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider ${
+                                active
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                  : "border-white/15 bg-black/50 text-[var(--hud-muted)]"
+                              }`}
+                            >
                               {m.badge}
                             </span>
                           </div>
@@ -2609,21 +2642,31 @@ export function CharacterCreatorModal({
                               }, 40);
                             }
                           }}
-                          className={`border p-2.5 text-left transition ${
-                            active
-                              ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                              : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)] hover:border-[var(--hud-line)]"
-                          }`}
+                          className={`${
+                            active ? "cyber-card-active" : "cyber-card"
+                          } p-2.5 text-left`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-cyber-ui text-xs font-bold">{role.name}</span>
+                            <span
+                              className={`font-cyber-ui text-[13px] ${
+                                active ? "font-bold text-white" : "font-semibold text-[var(--hud-text)]"
+                              }`}
+                            >
+                              {role.name}
+                            </span>
                             <div className="flex items-center gap-1.5">
                               {hasRoleExtras && (
-                                <span className="border border-[var(--hud-warn)]/45 bg-[var(--hud-warn)]/10 px-1 py-0.5 font-cyber-ui text-[9px] font-semibold uppercase tracking-wider text-[var(--hud-warn)]">
+                                <span
+                                  className={`border px-1 py-0.5 font-cyber-ui text-[9px] font-semibold uppercase tracking-wider ${
+                                    active
+                                      ? "border-[var(--hud-warn)]/60 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                                      : "border-white/15 bg-black/40 text-[var(--hud-muted)]"
+                                  }`}
+                                >
                                   Role Options
                                 </span>
                               )}
-                              <RoleTag role={role.ability} />
+                              <RoleTag role={role.ability} tone={active ? "accent" : "muted"} />
                             </div>
                           </div>
                           <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{role.tagline}</p>
@@ -2636,7 +2679,7 @@ export function CharacterCreatorModal({
                 {/* Role-Specific Ability Choices */}
                 <div ref={roleExtrasRef} className="space-y-2">
                 {selectedRole === "Tech" && (
-                  <div className="space-y-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-row)] p-3">
+                  <div className="cyber-card-active space-y-2 p-3">
                     <div className="flex items-center justify-between">
                       <span className="font-cyber-ui text-xs font-bold text-[var(--hud-warn)]">
                         Tech Maker Specialties (8 pts total, max 4 each)
@@ -2669,7 +2712,7 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Medtech" && (
-                  <div className="space-y-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-row)] p-3">
+                  <div className="cyber-card-active space-y-2 p-3">
                     <div className="flex items-center justify-between">
                       <span className="font-cyber-ui text-xs font-bold text-[var(--hud-accent)]">
                         Medtech Medicine Allocations (4 pts total)
@@ -2727,34 +2770,34 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Fixer" && (
-                  <div className="grid grid-cols-1 gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-row)] p-3 sm:grid-cols-2">
+                  <div className="cyber-card-active grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                      <label className="cyber-field-label text-[var(--hud-accent)]">
                         Fixer Street Culture
                       </label>
                       <input
                         type="text"
                         value={fixerCulture}
                         onChange={(e) => setFixerCulture(e.target.value)}
-                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        className="cyber-input px-2.5 py-1.5"
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
+                      <label className="cyber-field-label text-[var(--hud-accent)]">
                         Operator Reach Language
                       </label>
                       <input
                         type="text"
                         value={fixerLanguage}
                         onChange={(e) => setFixerLanguage(e.target.value)}
-                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        className="cyber-input px-2.5 py-1.5"
                       />
                     </div>
                   </div>
                 )}
 
                 {selectedRole === "Nomad" && (
-                  <div className="space-y-2 border border-[var(--hud-warn)]/45 bg-[var(--hud-row)] p-3">
+                  <div className="cyber-card-active space-y-2 p-3">
                     <span className="font-cyber-ui text-xs font-bold text-[var(--hud-warn)]">
                       Nomad Moto Picks (4 Starting Vehicles / Upgrades)
                     </span>
@@ -2768,7 +2811,7 @@ export function CharacterCreatorModal({
                             next[idx] = e.target.value;
                             setNomadVehicles(next);
                           }}
-                          className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          className="cyber-input px-2 py-1.5"
                         >
                           <optgroup label="Base Vehicles">
                             {NOMAD_BASE_VEHICLES.map((v) => (
@@ -2787,7 +2830,7 @@ export function CharacterCreatorModal({
                 )}
 
                 {selectedRole === "Exec" && (
-                  <div className="space-y-2 border border-[var(--hud-line)] bg-[var(--hud-row)] p-3">
+                  <div className="cyber-card-active space-y-2 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-cyber-ui text-xs font-bold text-[var(--hud-text)]">
                         Exec Team Member &amp; Corporate Perks (p. 153)
@@ -2798,18 +2841,18 @@ export function CharacterCreatorModal({
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div>
-                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                        <label className="cyber-field-label">
                           Exec Team Member Name
                         </label>
                         <input
                           type="text"
                           value={execTeamName}
                           onChange={(e) => setExecTeamName(e.target.value)}
-                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          className="cyber-input px-2.5 py-1.5"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                        <label className="cyber-field-label">
                           Team Member Specialty
                         </label>
                         <select
@@ -2818,7 +2861,7 @@ export function CharacterCreatorModal({
                           onChange={(e) => {
                             if (e.target.value !== "__custom__") setExecTeamRole(e.target.value);
                           }}
-                          className="mb-1 w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          className="cyber-input mb-1 px-2 py-1"
                         >
                           {EXEC_TEAM_ROLES.map((r) => (
                             <option key={r} value={r}>{r}</option>
@@ -2832,11 +2875,11 @@ export function CharacterCreatorModal({
                           value={execTeamRole}
                           onChange={(e) => setExecTeamRole(e.target.value)}
                           placeholder="Custom specialty…"
-                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          className="cyber-input px-2 py-1 text-[11px]"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block font-cyber-ui text-[11px] font-semibold text-[var(--hud-label)]">
+                        <label className="cyber-field-label">
                           Starting Loyalty (1–10)
                         </label>
                         <input
@@ -2845,7 +2888,7 @@ export function CharacterCreatorModal({
                           max={10}
                           value={execTeamLoyalty}
                           onChange={(e) => setExecTeamLoyalty(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 4)))}
-                          className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          className="cyber-input px-2.5 py-1.5 font-cyber-data"
                         />
                       </div>
                     </div>
@@ -2858,7 +2901,7 @@ export function CharacterCreatorModal({
             {/* STEP 2: STATS & VITALS */}
             {step === "stats" && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
+                <div className="sticky -top-4 sm:-top-5 z-10 -mx-4 sm:-mx-5 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hud-line)] bg-[var(--hud-bg)]/95 px-4 py-3 backdrop-blur sm:px-5">
                   <div>
                     <div className="flex flex-wrap items-center gap-2 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                       <span>
@@ -2872,6 +2915,20 @@ export function CharacterCreatorModal({
                           {method === "complete_package" ? `${statSum} / 62 STAT PTS` : `${statSum} STAT PTS`}
                         </span>
                       )}
+                      {method === "complete_package" && (() => {
+                        const statRemaining = 62 - statSum;
+                        const remainingCls =
+                          statRemaining === 0
+                            ? "border-[var(--hud-ok)]/60 bg-[var(--hud-ok)]/15 text-[var(--hud-ok)]"
+                            : statRemaining > 0
+                              ? "border-[var(--hud-warn)]/60 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                              : "border-[var(--hud-primary-bright)]/70 bg-[var(--hud-primary-bright)]/15 text-[var(--hud-primary-bright)]";
+                        return (
+                          <span className={`border px-2 py-0.5 font-cyber-data text-[10px] font-bold ${remainingCls}`}>
+                            {statRemaining === 0 ? "0 PTS LEFT" : `${statRemaining} PTS LEFT`}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Hover or click any STAT below for Corebook rules, formulas, and beginner advice.
@@ -2926,16 +2983,19 @@ export function CharacterCreatorModal({
                         key={stat}
                         onMouseEnter={() => setInspector(hoverPayload)}
                         onClick={() => setInspector(hoverPayload)}
-                        className={`border p-2.5 transition ${
-                          isKey
-                            ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                            : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-text)]"
-                        }`}
+                        className="cyber-card p-3 text-[var(--hud-text)]"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-cyber-display text-xs font-bold uppercase tracking-wider">
-                            {stat}
-                          </span>
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-cyber-display text-xs font-bold uppercase tracking-wider text-white">
+                              {stat}
+                            </span>
+                            {isKey && (
+                              <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[9px] font-bold uppercase text-[var(--hud-accent)]">
+                                KEY
+                              </span>
+                            )}
+                          </div>
                           <button
                             type="button"
                             aria-label={`${stat} info`}
@@ -3047,209 +3107,170 @@ export function CharacterCreatorModal({
             {/* STEP 3: SKILLS */}
             {step === "skills" && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
-                      <span>
-                        {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
-                        {method === "edgerunner" && "Role Skill Allocation"}
-                        {method === "complete_package" && "Full Skill Allocation (x2 costs double)"}
-                        {method === "freeform" && "Freeform Skills"}
-                      </span>
-                      {(method === "edgerunner" || method === "complete_package") && (
-                        <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                          {skillPointsSpent} / 86 PTS
+                <div className="sticky -top-4 sm:-top-5 z-10 -mx-4 sm:-mx-5 space-y-2.5 border-b border-[var(--hud-line)] bg-[var(--hud-bg)]/95 px-4 pt-3 pb-2.5 backdrop-blur sm:px-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
+                        <span>
+                          {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
+                          {method === "edgerunner" && "Role Skill Allocation"}
+                          {method === "complete_package" && "Full Skill Allocation (x2 costs double)"}
+                          {method === "freeform" && "Freeform Skills"}
                         </span>
-                      )}
-                      {method === "freeform" && (
-                        <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                          {Object.keys(effectiveSkills).length} trained
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
-                      Skill Check = STAT + Skill Rank + 1d10. Hover any skill to see what it does &amp; what DVs you beat.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {method === "complete_package" && roleInfo && (
-                      <HudButton
-                        variant="tactical"
-                        size="xs"
-                        onClick={() => setCustomSkills(defaultCompleteSkills(roleInfo))}
-                      >
-                        <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Role Starter Build (86 pts)
-                      </HudButton>
-                    )}
-                    {method === "edgerunner" && roleInfo && (
-                      <HudButton
-                        variant="tactical"
-                        size="xs"
-                        onClick={() => setEdgerunnerSkills({ ...roleInfo.skills })}
-                      >
-                        Reset to Template
-                      </HudButton>
-                    )}
-                  </div>
-                </div>
-
-                {/* Native Cultural Language (+4 FREE!) & Choice Specializations */}
-                <div className="flex flex-wrap items-center gap-3 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/35 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="whitespace-nowrap font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
-                      Free +4 Cultural Native Language
-                    </label>
-                    <select
-                      value={culturalLanguage}
-                      onChange={(e) => setCulturalLanguage(e.target.value)}
-                      className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                    >
-                      {Array.from(
-                        new Set(
-                          (refData?.cultural_regions ?? []).flatMap((r) => r.languages).concat(["English", "Spanish", "Japanese", "Arabic"]),
-                        ),
-                      ).map((lang) => (
-                        <option key={lang} value={lang}>Language ({lang}) +4</option>
-                      ))}
-                    </select>
-                    {culturalLanguageOverlap && (
-                      <span className="font-cyber-ui text-[10px] text-[var(--hud-warn)]">
-                        Overlaps a paid skill above—pick another tongue (e.g. Spanish/Japanese) to avoid a stacking ruling.
-                      </span>
-                    )}
-                  </div>
-                  {(() => {
-                    const sourceSkills =
-                      method === "streetrat" || method === "edgerunner"
-                        ? Object.keys(roleInfo?.skills ?? {})
-                        : Object.keys(customSkills);
-                    const bases = Object.keys(SPECIALIZATION_SUGGESTIONS).filter((base) =>
-                      sourceSkills.some((sk) => {
-                        const cleaned = sk.replace(/\s*\(choose\s*1\)\s*/i, "").trim();
-                        return cleaned.toLowerCase() === base.toLowerCase() && (method === "streetrat" || method === "edgerunner" ? sk.toLowerCase().includes("choose") || !sk.includes("(") : !sk.includes("("));
-                      }),
-                    );
-                    return bases.map((specBase) => (
-                      <div key={specBase} className="flex items-center gap-2">
-                        <label className="whitespace-nowrap font-cyber-ui text-[11px] font-semibold text-[var(--hud-text)]">
-                          {specBase} Specialization
-                        </label>
-                        <select
-                          value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
-                          onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                          className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                        >
-                          {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </select>
+                        {(method === "edgerunner" || method === "complete_package") && (() => {
+                          const skillRemaining = 86 - skillPointsSpent;
+                          const remainingCls =
+                            skillRemaining === 0
+                              ? "border-[var(--hud-ok)]/60 bg-[var(--hud-ok)]/15 text-[var(--hud-ok)]"
+                              : skillRemaining > 0
+                                ? "border-[var(--hud-warn)]/60 bg-[var(--hud-warn)]/15 text-[var(--hud-warn)]"
+                                : "border-[var(--hud-primary-bright)]/70 bg-[var(--hud-primary-bright)]/15 text-[var(--hud-primary-bright)]";
+                          return (
+                            <>
+                              <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                                {skillPointsSpent} / 86 PTS USED
+                              </span>
+                              <span className={`border px-2.5 py-0.5 font-cyber-data text-[11px] font-bold ${remainingCls}`}>
+                                {skillRemaining} PTS LEFT
+                              </span>
+                            </>
+                          );
+                        })()}
+                        {method === "freeform" && (
+                          <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
+                            {Object.keys(effectiveSkills).length} trained
+                          </span>
+                        )}
                       </div>
-                    ));
-                  })()}
-                </div>
-
-                {/* Search & Group Filter */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative min-w-[180px] flex-1">
-                    <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--hud-muted)]" />
-                    <input
-                      type="text"
-                      value={skillFilter}
-                      onChange={(e) => setSkillFilter(e.target.value)}
-                      placeholder="Filter skills (e.g. Handgun, Stealth, REF)…"
-                      className="w-full border border-[var(--hud-line-soft)] bg-black/60 py-1.5 pl-8 pr-3 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {["All", "Basic", "Role", "Ranged", "Fighting", "Social", "Awareness", "Technique", "Education"].map((grp) => (
-                      <button
-                        key={grp}
-                        type="button"
-                        onClick={() => setSkillGroupFilter(grp)}
-                        className={`border px-2 py-1 font-cyber-ui text-[11px] font-semibold transition ${
-                          skillGroupFilter === grp
-                            ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                            : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
-                        }`}
-                      >
-                        {grp}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Specialization & Custom Skill Builder (Complete Package & Freeform) */}
-                {(method === "complete_package" || method === "freeform") && (
-                  <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2.5">
-                    <div className="font-cyber-display text-[11px] font-semibold uppercase tracking-wider text-[var(--hud-text)]">
-                      Add Skill Specialization (Language, Local Expert, Science, Instrument, Martial Arts)
+                      <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
+                        Skill Check = STAT + Skill Rank + 1d10. Hover any skill to see what it does &amp; what DVs you beat.
+                      </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <select
-                        aria-label="Specialization Category"
-                        value={specBasePick}
-                        onChange={(e) => setSpecBasePick(e.target.value as typeof specBasePick)}
-                        className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                      >
-                        {(["Language", "Local Expert", "Science", "Play Instrument", "Martial Arts"] as const).map((b) => (
-                          <option key={b} value={b}>{b}</option>
-                        ))}
-                      </select>
+
+                    <div className="flex items-center gap-2">
+                      {method === "complete_package" && roleInfo && (
+                        <HudButton
+                          variant="tactical"
+                          size="xs"
+                          onClick={() => setCustomSkills(defaultCompleteSkills(roleInfo))}
+                        >
+                          <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Role Starter Build (86 pts)
+                        </HudButton>
+                      )}
+                      {method === "edgerunner" && roleInfo && (
+                        <HudButton
+                          variant="tactical"
+                          size="xs"
+                          onClick={() => setEdgerunnerSkills({ ...roleInfo.skills })}
+                        >
+                          Reset to Template
+                        </HudButton>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Search & Group Filter */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[180px] flex-1">
+                      <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--hud-muted)]" />
                       <input
                         type="text"
-                        value={specFocusInput}
-                        onChange={(e) => setSpecFocusInput(e.target.value)}
-                        placeholder={
-                          specBasePick === "Martial Arts"
-                            ? "e.g. Karate, Judo, Taekwondo…"
-                            : specBasePick === "Language"
-                              ? "e.g. Japanese, Arabic, Cantonese…"
-                              : specBasePick === "Local Expert"
-                                ? "e.g. Watson, Heywood, Badlands…"
-                                : "Specialization focus…"
-                        }
-                        className="min-w-[160px] flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        value={skillFilter}
+                        onChange={(e) => setSkillFilter(e.target.value)}
+                        placeholder="Filter skills (e.g. Handgun, Stealth, REF)…"
+                        className="cyber-input py-1.5 pl-8 pr-3 text-xs"
                       />
-                      <HudButton
-                        variant="tactical"
-                        size="sm"
-                        onClick={() => {
-                          const focus = specFocusInput.trim();
-                          if (!focus) return;
-                          const fullName = `${specBasePick} (${focus})`;
-                          setCustomSkills((p) => ({ ...p, [fullName]: p[fullName] ?? 2 }));
-                          setSpecFocusInput("");
-                        }}
-                      >
-                        + Add Specialization
-                      </HudButton>
                     </div>
-                    {method === "freeform" && (
-                      <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-1">
+                      {["All", "Basic", "Role", "Ranged", "Fighting", "Social", "Awareness", "Technique", "Education"].map((grp) => (
+                        <button
+                          key={grp}
+                          type="button"
+                          onClick={() => setSkillGroupFilter(grp)}
+                          className={`border px-2 py-1 font-cyber-ui text-[11px] font-semibold transition ${
+                            skillGroupFilter === grp
+                              ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                              : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
+                          }`}
+                        >
+                          {grp}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Compact Specialization & Custom Skill Builder (Complete Package & Freeform) */}
+                  {(method === "complete_package" || method === "freeform") && (
+                    <div className="space-y-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-cyber-display text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                          + Specialization
+                        </span>
+                        <select
+                          aria-label="Specialization Category"
+                          value={specBasePick}
+                          onChange={(e) => setSpecBasePick(e.target.value as typeof specBasePick)}
+                          className="cyber-input w-auto px-2 py-1 text-xs"
+                        >
+                          {(["Language", "Local Expert", "Science", "Play Instrument", "Martial Arts"] as const).map((b) => (
+                            <option key={b} value={b}>{b}</option>
+                          ))}
+                        </select>
                         <input
                           type="text"
-                          value={customNewSkill}
-                          onChange={(e) => setCustomNewSkill(e.target.value)}
-                          placeholder="Or add any custom skill name…"
-                          className="flex-1 border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          value={specFocusInput}
+                          onChange={(e) => setSpecFocusInput(e.target.value)}
+                          placeholder={
+                            specBasePick === "Martial Arts"
+                              ? "e.g. Karate, Judo, Taekwondo…"
+                              : specBasePick === "Language"
+                                ? "e.g. Japanese, Arabic, Cantonese…"
+                                : specBasePick === "Local Expert"
+                                  ? "e.g. Watson, Heywood, Badlands…"
+                                  : "Specialization focus…"
+                          }
+                          className="cyber-input min-w-[160px] flex-1 px-2.5 py-1 text-xs"
                         />
                         <HudButton
                           variant="tactical"
-                          size="sm"
+                          size="xs"
                           onClick={() => {
-                            const s = customNewSkill.trim();
-                            if (!s) return;
-                            setCustomSkills((p) => ({ ...p, [s]: p[s] ?? 4 }));
-                            setCustomNewSkill("");
+                            const focus = specFocusInput.trim();
+                            if (!focus) return;
+                            const fullName = `${specBasePick} (${focus})`;
+                            setCustomSkills((p) => ({ ...p, [fullName]: p[fullName] ?? 2 }));
+                            setSpecFocusInput("");
                           }}
                         >
-                          + Add Skill
+                          + Add Specialization
                         </HudButton>
                       </div>
-                    )}
-                  </div>
-                )}
+                      {method === "freeform" && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={customNewSkill}
+                            onChange={(e) => setCustomNewSkill(e.target.value)}
+                            placeholder="Or add any custom skill name…"
+                            className="cyber-input flex-1 px-2.5 py-1 text-xs"
+                          />
+                          <HudButton
+                            variant="tactical"
+                            size="xs"
+                            onClick={() => {
+                              const s = customNewSkill.trim();
+                              if (!s) return;
+                              setCustomSkills((p) => ({ ...p, [s]: p[s] ?? 4 }));
+                              setCustomNewSkill("");
+                            }}
+                          >
+                            + Add Skill
+                          </HudButton>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Skills List */}
                 <div className="space-y-1.5">
@@ -3303,11 +3324,13 @@ export function CharacterCreatorModal({
                         key={sk.name}
                         onMouseEnter={() => setInspector(hoverPayload)}
                         onClick={() => setInspector(hoverPayload)}
-                        className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-3 py-2 text-xs hover:border-[var(--hud-line)]"
+                        className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs ${
+                          rank > minRank ? "cyber-card-active" : "cyber-card"
+                        }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{storageKey}</span>
+                            <span className="font-cyber-ui text-[13px] font-semibold text-white">{storageKey}</span>
                             <span className="border border-[var(--hud-line-soft)] bg-black/50 px-1.5 py-0.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-muted)]">
                               {sk.stat}
                             </span>
@@ -3322,7 +3345,7 @@ export function CharacterCreatorModal({
                               </span>
                             )}
                           </div>
-                          <p className="mt-0.5 truncate font-cyber-ui text-[11px] text-[var(--hud-muted)]">{sk.summary}</p>
+                          <p className="mt-0.5 truncate font-cyber-ui text-xs text-[var(--hud-muted)]">{sk.summary}</p>
                         </div>
 
                         <div className="flex shrink-0 items-center gap-3">
@@ -3518,8 +3541,8 @@ export function CharacterCreatorModal({
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
-                        <span>Cultural Region</span>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <label className="cyber-field-label mb-0">Cultural Region</label>
                         <button
                           type="button"
                           onClick={() => {
@@ -3529,9 +3552,9 @@ export function CharacterCreatorModal({
                               setCulturalLanguage(pickRandom(reg.languages));
                             }
                           }}
-                          className="font-cyber-data text-[var(--hud-accent)] hover:text-white"
+                          className="font-cyber-data text-[11px] text-[var(--hud-accent)] hover:text-white"
                         >d10 ↻</button>
-                      </label>
+                      </div>
                       <select
                         value={culturalRegion}
                         onChange={(e) => {
@@ -3539,7 +3562,7 @@ export function CharacterCreatorModal({
                           const match = refData?.cultural_regions.find((r) => r.region === e.target.value);
                           if (match?.languages.length) setCulturalLanguage(match.languages[0]);
                         }}
-                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        className="cyber-input px-2.5 py-1.5"
                       >
                         {(refData?.cultural_regions ?? []).map((r) => (
                           <option key={r.region} value={r.region}>{r.region}</option>
@@ -3548,7 +3571,7 @@ export function CharacterCreatorModal({
                     </div>
 
                     <div>
-                      <label className="mb-1 block font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                      <label className="cyber-field-label">
                         Native Language (+4 Free Skill!)
                       </label>
                       <input
@@ -3556,7 +3579,7 @@ export function CharacterCreatorModal({
                         value={culturalLanguage}
                         onChange={(e) => setCulturalLanguage(e.target.value)}
                         list="cultural-lang-options"
-                        className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                        className="cyber-input px-2.5 py-1.5"
                       />
                       <datalist id="cultural-lang-options">
                         {(refData?.cultural_regions.find((r) => r.region === culturalRegion)?.languages ?? []).map((l) => (
@@ -3569,6 +3592,41 @@ export function CharacterCreatorModal({
                         </p>
                       )}
                     </div>
+
+                    {(() => {
+                      const sourceSkills =
+                        method === "streetrat" || method === "edgerunner"
+                          ? Object.keys(roleInfo?.skills ?? {})
+                          : Object.keys(customSkills);
+                      const bases = Object.keys(SPECIALIZATION_SUGGESTIONS).filter((base) =>
+                        sourceSkills.some((sk) => {
+                          const cleaned = sk.replace(/\s*\(choose\s*1\)\s*/i, "").trim();
+                          return (
+                            cleaned.toLowerCase() === base.toLowerCase() &&
+                            (method === "streetrat" || method === "edgerunner"
+                              ? sk.toLowerCase().includes("choose") || !sk.includes("(")
+                              : !sk.includes("("))
+                          );
+                        }),
+                      );
+                      return bases.map((specBase) => (
+                        <div key={specBase}>
+                          <label className="cyber-field-label">
+                            {specBase} Specialization
+                          </label>
+                          <select
+                            aria-label={`${specBase} Specialization`}
+                            value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
+                            onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
+                            className="cyber-input px-2.5 py-1.5"
+                          >
+                            {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ));
+                    })()}
 
                     {([
                       { key: "personality", label: "Personality", val: personality, set: setPersonality },
@@ -3585,38 +3643,63 @@ export function CharacterCreatorModal({
                       { key: "life_goal", label: "Life Goal", val: lifeGoal, set: setLifeGoal },
                     ] as const).map((field) => {
                       const opts = refData?.lifepath_tables[field.key] ?? [];
+                      const isCustom =
+                        Boolean(customLifepathFields[field.key]) ||
+                        (field.val !== "" && !opts.includes(field.val));
                       return (
                         <div key={field.key}>
-                          <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
-                            <span>{field.label}</span>
-                            {opts.length > 0 && (
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <label className="cyber-field-label mb-0">{field.label}</label>
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => field.set(pickRandom(opts))}
-                                className="font-cyber-data text-[var(--hud-accent)] hover:text-white"
+                                onClick={() =>
+                                  setCustomLifepathFields((p) => ({ ...p, [field.key]: !isCustom }))
+                                }
+                                className="font-cyber-ui text-[10px] text-[var(--hud-muted)] hover:text-[var(--hud-accent)]"
                               >
-                                d{opts.length} ↻
+                                {isCustom ? "Presets" : "Custom ✎"}
                               </button>
-                            )}
-                          </label>
-                          <select
-                            value={opts.includes(field.val) ? field.val : "__custom__"}
-                            onChange={(e) => {
-                              if (e.target.value !== "__custom__") field.set(e.target.value);
-                            }}
-                            className="mb-1 w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                          >
-                            {opts.map((o) => (
-                              <option key={o} value={o}>{o}</option>
-                            ))}
-                            {!opts.includes(field.val) && <option value="__custom__">Custom: {field.val}</option>}
-                          </select>
-                          <input
-                            type="text"
-                            value={field.val}
-                            onChange={(e) => field.set(e.target.value)}
-                            className="w-full border border-[var(--hud-line-soft)] bg-black/45 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-muted)] focus:border-[var(--hud-accent)] focus:text-[var(--hud-text)] focus:outline-none"
-                          />
+                              {opts.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    field.set(pickRandom(opts));
+                                    setCustomLifepathFields((p) => ({ ...p, [field.key]: false }));
+                                  }}
+                                  className="font-cyber-data text-[11px] text-[var(--hud-accent)] hover:text-white"
+                                >
+                                  d{opts.length} ↻
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {!isCustom ? (
+                            <select
+                              value={opts.includes(field.val) ? field.val : (opts[0] ?? "__custom__")}
+                              onChange={(e) => {
+                                if (e.target.value === "__custom__") {
+                                  setCustomLifepathFields((p) => ({ ...p, [field.key]: true }));
+                                } else {
+                                  field.set(e.target.value);
+                                }
+                              }}
+                              className="cyber-input px-2.5 py-1.5"
+                            >
+                              {opts.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                              <option value="__custom__">Custom…</option>
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={field.val}
+                              onChange={(e) => field.set(e.target.value)}
+                              placeholder={`Custom ${field.label.toLowerCase()}…`}
+                              className="cyber-input px-2.5 py-1.5"
+                            />
+                          )}
                         </div>
                       );
                     })}
@@ -3630,41 +3713,66 @@ export function CharacterCreatorModal({
                       {selectedRole} Role Lifepath
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {roleInfo.role_lifepath.map((f) => (
-                        <div key={f.key}>
-                          <label className="mb-1 flex items-center justify-between font-cyber-ui text-[11px] text-[var(--hud-text)]">
-                            <span>{f.label}</span>
-                            <button
-                              type="button"
-                              onClick={() => setRoleLifepath((p) => ({ ...p, [f.key]: pickRandom(f.options) }))}
-                              className="font-cyber-ui text-[var(--hud-accent)] hover:text-white"
-                            >Roll ↻</button>
-                          </label>
-                          <select
-                            value={f.options.includes(roleLifepath[f.key] ?? "") ? roleLifepath[f.key] : "__custom__"}
-                            onChange={(e) => {
-                              if (e.target.value !== "__custom__") {
-                                setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }));
-                              }
-                            }}
-                            className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                          >
-                            {f.options.map((o) => (
-                              <option key={o} value={o}>{o}</option>
-                            ))}
-                            {roleLifepath[f.key] && !f.options.includes(roleLifepath[f.key]) && (
-                              <option value="__custom__">{roleLifepath[f.key]}</option>
+                      {roleInfo.role_lifepath.map((f) => {
+                        const opts = f.options;
+                        const val = roleLifepath[f.key] ?? "";
+                        const lpKey = `role:${f.key}`;
+                        const isCustom =
+                          Boolean(customLifepathFields[lpKey]) ||
+                          (val !== "" && !opts.includes(val));
+                        return (
+                          <div key={f.key}>
+                            <div className="mb-1 flex items-center justify-between gap-2">
+                              <label className="cyber-field-label mb-0">{f.label}</label>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCustomLifepathFields((p) => ({ ...p, [lpKey]: !isCustom }))
+                                  }
+                                  className="font-cyber-ui text-[10px] text-[var(--hud-muted)] hover:text-[var(--hud-accent)]"
+                                >
+                                  {isCustom ? "Presets" : "Custom ✎"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRoleLifepath((p) => ({ ...p, [f.key]: pickRandom(opts) }));
+                                    setCustomLifepathFields((p) => ({ ...p, [lpKey]: false }));
+                                  }}
+                                  className="font-cyber-data text-[11px] text-[var(--hud-accent)] hover:text-white"
+                                >Roll ↻</button>
+                              </div>
+                            </div>
+                            {!isCustom ? (
+                              <select
+                                value={opts.includes(val) ? val : (opts[0] ?? "__custom__")}
+                                onChange={(e) => {
+                                  if (e.target.value === "__custom__") {
+                                    setCustomLifepathFields((p) => ({ ...p, [lpKey]: true }));
+                                  } else {
+                                    setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }));
+                                  }
+                                }}
+                                className="cyber-input px-2.5 py-1.5"
+                              >
+                                {opts.map((o) => (
+                                  <option key={o} value={o}>{o}</option>
+                                ))}
+                                <option value="__custom__">Custom…</option>
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={val}
+                                onChange={(e) => setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }))}
+                                placeholder={`Custom ${f.label.toLowerCase()}…`}
+                                className="cyber-input px-2.5 py-1.5"
+                              />
                             )}
-                          </select>
-                          <input
-                            type="text"
-                            value={roleLifepath[f.key] ?? ""}
-                            onChange={(e) => setRoleLifepath((p) => ({ ...p, [f.key]: e.target.value }))}
-                            placeholder={`Custom ${f.label.toLowerCase()}…`}
-                            className="mt-1 w-full border border-[var(--hud-line-soft)] bg-black/45 px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-muted)] focus:border-[var(--hud-accent)] focus:text-[var(--hud-text)] focus:outline-none"
-                          />
-                        </div>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -4395,7 +4503,7 @@ export function CharacterCreatorModal({
                             active={loadoutOpen}
                             onClick={() => setLoadoutOpen((v) => !v)}
                             className={
-                              cyberwarePrereqWarnings.length > 0 || cyberwareSlotWarnings.length > 0
+                              cyberwarePrereqWarnings.length > 0 || cyberwareSlotWarnings.length > 0 || cyberdeckSlotSummary.overCapacity
                                 ? "border-[var(--hud-warn)]/70 text-[var(--hud-warn)]"
                                 : ""
                             }
@@ -4422,7 +4530,7 @@ export function CharacterCreatorModal({
                         </div>
                       </div>
 
-                      {/* Collapsible Loadout Bag & Cyberware Warnings */}
+                      {/* Collapsible Loadout Bag */}
                       {loadoutOpen && (
                         <div className="max-h-52 space-y-2 overflow-y-auto border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-2.5 text-xs">
                           {cartItems.length === 0 && selectedFashion.length === 0 ? (
@@ -4496,6 +4604,20 @@ export function CharacterCreatorModal({
                             </div>
                           )}
 
+                          {cyberdeckSlotSummary.hasDeck && !cyberdeckSlotSummary.overCapacity && (
+                            <div className="flex items-center justify-between border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/50 px-2 py-1.5 font-cyber-ui text-[11px] text-[var(--hud-accent)]">
+                              <span>Cyberdeck Program &amp; Hardware Slots:</span>
+                              <span className="font-cyber-data font-bold">
+                                Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Always-Visible Cyberware & Deck Rule Warnings */}
+                      {(cyberwarePrereqWarnings.length > 0 || cyberwareSlotWarnings.length > 0 || cyberdeckSlotSummary.overCapacity) && (
+                        <div className="max-h-40 space-y-1.5 overflow-y-auto">
                           {cyberwarePrereqWarnings.length > 0 && (
                             <div className="cyber-hazard-thin space-y-1 border border-[var(--hud-warn)]/60 p-2">
                               <HazardBadge tone="warn">Cyberware Foundation Needed (p. 358)</HazardBadge>
@@ -4532,14 +4654,8 @@ export function CharacterCreatorModal({
                             </div>
                           )}
 
-                          {cyberdeckSlotSummary.hasDeck && (
-                            <div
-                              className={`flex items-center justify-between border px-2 py-1.5 font-cyber-ui text-[11px] ${
-                                cyberdeckSlotSummary.overCapacity
-                                  ? "cyber-hazard-thin border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
-                                  : "border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/50 text-[var(--hud-accent)]"
-                              }`}
-                            >
+                          {cyberdeckSlotSummary.hasDeck && cyberdeckSlotSummary.overCapacity && (
+                            <div className="cyber-hazard-thin flex items-center justify-between border border-[var(--hud-warn)]/60 px-2 py-1.5 font-cyber-ui text-[11px] text-[var(--hud-warn)]">
                               <span>Cyberdeck Program &amp; Hardware Slots:</span>
                               <span className="font-cyber-data font-bold">
                                 Deck Slots: {cyberdeckSlotSummary.usedSlots} / {cyberdeckSlotSummary.capacity}
@@ -4551,21 +4667,29 @@ export function CharacterCreatorModal({
 
                       {/* Category Tabs */}
                       <div className="flex flex-wrap items-center gap-1">
-                        {(["weapon", "armor", "cyberware", "gear", "program", "hardware", "vehicle", "drug", "fashion"] as const).map((cat) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            aria-label={cat}
-                            onClick={() => setShopCategory(cat)}
-                            className={`border px-2.5 py-1 font-cyber-ui text-xs capitalize transition ${
-                              shopCategory === cat
-                                ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
-                                : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
-                            }`}
-                          >
-                            {cat === "vehicle" ? "Vehicles" : cat === "drug" ? "Drugs & Pharma" : cat}
-                          </button>
-                        ))}
+                        {(["weapon", "armor", "cyberware", "gear", "program", "hardware", "vehicle", "drug", "fashion"] as const).map((cat) => {
+                          const count = categoryCounts[cat] ?? 0;
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              aria-label={cat}
+                              onClick={() => setShopCategory(cat)}
+                              className={`border px-2.5 py-1 font-cyber-ui text-xs capitalize transition ${
+                                shopCategory === cat
+                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                  : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:border-[var(--hud-line)] hover:text-[var(--hud-text)]"
+                              }`}
+                            >
+                              {cat === "vehicle" ? "Vehicles" : cat === "drug" ? "Drugs & Pharma" : cat}
+                              {count > 0 && (
+                                <span className="ml-1 inline-flex items-center justify-center border border-[var(--hud-ok)]/60 bg-[var(--hud-ok)]/20 px-1 font-cyber-data text-[10px] font-bold text-[var(--hud-ok)]">
+                                  {count}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       {/* Search, Sort & Affordable Controls */}
@@ -4634,15 +4758,15 @@ export function CharacterCreatorModal({
 
                       {/* Sub-filters */}
                       {shopCategory === "weapon" && (
-                        <div className="space-y-1.5">
-                          <div className="flex flex-wrap items-center gap-1">
-                            <span className="mr-1 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                            <span className="mr-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
                               Genre:
                             </span>
                             <button
                               type="button"
                               onClick={() => setWeaponGenres([])}
-                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
+                              className={`border px-1.5 py-0.5 font-cyber-ui text-[11px] transition ${
                                 weaponGenres.length === 0
                                   ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
                                   : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
@@ -4671,7 +4795,7 @@ export function CharacterCreatorModal({
                                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
                                     )
                                   }
-                                  className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
+                                  className={`border px-1.5 py-0.5 font-cyber-ui text-[11px] transition ${
                                     active
                                       ? "border-[var(--hud-primary-bright)] bg-[var(--hud-row)] font-semibold text-[var(--hud-text)]"
                                       : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
@@ -4681,16 +4805,16 @@ export function CharacterCreatorModal({
                                 </button>
                               );
                             })}
-                          </div>
 
-                          <div className="flex flex-wrap items-center gap-1">
-                            <span className="mr-1 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                            <span className="mx-1 h-3.5 w-px bg-[var(--hud-line-soft)]" aria-hidden="true" />
+
+                            <span className="mr-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
                               Tier:
                             </span>
                             <button
                               type="button"
                               onClick={() => setWeaponTiers([])}
-                              className={`border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
+                              className={`border px-1.5 py-0.5 font-cyber-ui text-[11px] transition ${
                                 weaponTiers.length === 0
                                   ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
                                   : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
@@ -4718,7 +4842,7 @@ export function CharacterCreatorModal({
                                       prev.includes(tid) ? prev.filter((x) => x !== tid) : [...prev, tid],
                                     )
                                   }
-                                  className={`inline-flex items-center gap-1 border px-2 py-0.5 font-cyber-ui text-[11px] transition ${
+                                  className={`inline-flex items-center gap-1 border px-1.5 py-0.5 font-cyber-ui text-[11px] transition ${
                                     active
                                       ? `${tierTheme.pillActiveClass} font-semibold`
                                       : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] text-[var(--hud-muted)] hover:text-[var(--hud-text)]"
@@ -4890,20 +5014,25 @@ export function CharacterCreatorModal({
                             return (
                               <div
                                 key={f.name}
-                                className={`flex items-center justify-between gap-3 border px-3 py-2 text-xs transition ${
+                                className={`flex items-center justify-between gap-3 px-3 py-2 text-xs transition ${
                                   qty > 0
-                                    ? "border-l-4 border-l-[var(--hud-ok)] border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)]"
-                                    : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] hover:border-[var(--hud-line)]"
+                                    ? "cyber-card-active border-l-4 border-l-[var(--hud-ok)] bg-emerald-950/25"
+                                    : "cyber-card"
                                 }`}
                               >
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{f.name}</span>
+                                    <span className="font-cyber-ui text-[13px] sm:text-sm font-semibold text-white">{f.name}</span>
+                                    {qty > 0 && (
+                                      <span className="border border-[var(--hud-ok)] bg-[var(--hud-ok)]/15 px-1.5 py-0.5 font-cyber-data text-[10px] font-bold uppercase text-[var(--hud-ok)]">
+                                        IN BAG ×{qty}
+                                      </span>
+                                    )}
                                     <span className="border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-ui text-[10px] text-[var(--hud-accent)]">
                                       {f.style}
                                     </span>
                                   </div>
-                                  <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{f.summary}</p>
+                                  <p className="mt-1 font-cyber-ui text-xs text-[var(--hud-muted)] leading-snug">{f.summary}</p>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1.5">
                                   {qty > 0 && (
@@ -4922,10 +5051,10 @@ export function CharacterCreatorModal({
                                   <button
                                     type="button"
                                     onClick={() => setSelectedFashion((p) => [...p, { name: f.name, cost_eb: f.cost_eb, style: f.style }])}
-                                    className={`cyber-btn-tac cp-fx-hover px-2.5 py-1 font-cyber-data text-[11px] ${
+                                    className={`px-3 py-1.5 font-cyber-data text-xs font-bold transition ${
                                       overBudget
-                                        ? "text-[var(--hud-muted)]"
-                                        : "text-[var(--hud-accent)]"
+                                        ? "border border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-muted)] hover:border-[var(--hud-line)]"
+                                        : "border border-[var(--hud-ok)]/50 bg-emerald-950/35 text-[var(--hud-ok)] hover:border-[var(--hud-ok)] hover:bg-[var(--hud-ok)]/20"
                                     }`}
                                   >
                                     +{f.cost_eb}eb{qty > 0 ? ` (${qty})` : ""}
@@ -4972,32 +5101,37 @@ export function CharacterCreatorModal({
                                 setInspectedItemId(item.id);
                                 setInspector(inspectPayload);
                               }}
-                              className={`flex items-center justify-between gap-3 border px-3 py-2 text-xs transition ${
+                              className={`flex items-center justify-between gap-3 px-3 py-2 text-xs transition ${
                                 inCart
-                                  ? "border-l-4 border-l-[var(--hud-ok)] border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
+                                  ? "cyber-card-active border-l-4 border-l-[var(--hud-ok)] bg-emerald-950/25"
                                   : inspectedItemId === item.id
-                                    ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)]/60"
+                                    ? "cyber-card border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)]/50"
                                     : weaponTierTheme
                                       ? weaponTierTheme.cardClass
-                                      : "border-[var(--hud-line-soft)] bg-[var(--hud-panel)] hover:border-[var(--hud-line)]"
+                                      : "cyber-card"
                               }`}
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{item.name}</span>
+                                  <span className="font-cyber-ui text-[13px] sm:text-sm font-semibold text-white">{item.name}</span>
                                   {inCart && (
-                                    <span className="border border-[var(--hud-ok)]/70 bg-black/55 px-1.5 py-0.5 font-cyber-ui text-[9px] font-bold uppercase tracking-wider text-[var(--hud-ok)]">
-                                      SELECTED <span className="font-cyber-data">×{inCart.qty}</span>
+                                    <span className="border border-[var(--hud-ok)] bg-[var(--hud-ok)]/15 px-1.5 py-0.5 font-cyber-data text-[10px] font-bold uppercase text-[var(--hud-ok)]">
+                                      IN BAG ×{inCart.qty}
                                     </span>
                                   )}
                                   {dmgVal && (
-                                    <span className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-label)]">
-                                      {dmgVal}
+                                    <span className="border border-[var(--hud-primary-bright)]/50 bg-[var(--hud-primary)]/15 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-rose-200">
+                                      DMG {dmgVal}
                                     </span>
                                   )}
-                                  {isPrimaryWeapon && (
-                                    <span className="border border-[var(--hud-line-soft)] bg-black/55 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-muted)]">
-                                      {qualityVal === "Poor" ? "2 Att. Slots" : "3 Att. Slots"}
+                                  {spVal > 0 && (
+                                    <span className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-[var(--hud-accent)]">
+                                      SP {spVal}{locVal ? ` · ${locVal}` : ""}
+                                    </span>
+                                  )}
+                                  {hlVal > 0 && (
+                                    <span className="border border-[var(--hud-warn)]/50 bg-[var(--hud-warn)]/15 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-[var(--hud-warn)]">
+                                      HL {hlVal}{installVal ? ` · ${installVal}` : ""}
                                     </span>
                                   )}
                                   {weaponTierInfo && weaponTierInfo.primaryTier !== "other" && (
@@ -5024,21 +5158,16 @@ export function CharacterCreatorModal({
                                       )}
                                     </>
                                   )}
-                                  {spVal > 0 && (
-                                    <span className="border border-[var(--hud-accent-line)]/45 bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                                      SP {spVal}{locVal ? ` · ${locVal}` : ""}
-                                    </span>
-                                  )}
-                                  {hlVal > 0 && (
-                                    <span className="border border-[var(--hud-warn)]/45 bg-[var(--hud-warn)]/10 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]">
-                                      HL {hlVal}{installVal ? ` · ${installVal}` : ""}
+                                  {isPrimaryWeapon && (
+                                    <span className="border border-[var(--hud-line-soft)] bg-black/55 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                                      {qualityVal === "Poor" ? "2 Att. Slots" : "3 Att. Slots"}
                                     </span>
                                   )}
                                   {item.printed_page && (
-                                    <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">p.{item.printed_page}</span>
+                                    <span className="border border-[var(--hud-line-soft)] bg-black/40 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-muted)]">p.{item.printed_page}</span>
                                   )}
                                 </div>
-                                <p className="mt-0.5 font-cyber-ui text-[11px] leading-snug text-[var(--hud-muted)]">{item.summary}</p>
+                                <p className="mt-1 font-cyber-ui text-xs text-[var(--hud-muted)] leading-snug">{item.summary}</p>
                               </div>
 
                               <div className="flex shrink-0 items-center gap-1.5">
@@ -5100,10 +5229,10 @@ export function CharacterCreatorModal({
                                         },
                                       ]);
                                     }}
-                                    className={`cyber-btn-tac cp-fx-hover px-2.5 py-1 font-cyber-data text-[11px] ${
+                                    className={`px-3 py-1.5 font-cyber-data text-xs font-bold transition ${
                                       overBudget
-                                        ? "text-[var(--hud-muted)]"
-                                        : "text-[var(--hud-ok)]"
+                                        ? "border border-[var(--hud-line-soft)] bg-black/40 text-[var(--hud-muted)] hover:border-[var(--hud-line)]"
+                                        : "border border-[var(--hud-ok)]/50 bg-emerald-950/35 text-[var(--hud-ok)] hover:border-[var(--hud-ok)] hover:bg-[var(--hud-ok)]/20"
                                     }`}
                                   >
                                     +{item.cost_eb}eb
@@ -5372,13 +5501,6 @@ export function CharacterCreatorModal({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-1 border-t border-[var(--hud-line-soft)] pt-2 font-cyber-data text-[10px] text-[var(--hud-muted)]">
-                <span>Seriously Wounded: &lt; {woundThreshold} HP</span>
-                <span>
-                  Death Save: {deathSave}
-                  {effectiveBody !== activeStats.BODY ? ` (BODY ${activeStats.BODY}→${effectiveBody})` : ""}
-                </span>
-              </div>
               {subdermalSp > 0 && (
                 <div className="border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-2 py-1 font-cyber-data text-[10px] text-[var(--hud-accent)]">
                   Passive Cyberware Armor: {subdermalName} (SP {subdermalSp})
@@ -5396,15 +5518,19 @@ export function CharacterCreatorModal({
             </CyberFrame>
 
             {/* Contextual Hover / Click Inspector */}
-            <CyberFrame variant="default" className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3.5">
-              <div className="flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
-                <BookOpen className="h-3.5 w-3.5" />
-                Live Rulebook Inspector
+            <CyberFrame variant="default" className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3.5">
+              <div className="cyber-section-header mb-0">
+                <div className="cyber-section-title">
+                  <BookOpen className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
+                  <span>Live Rulebook Inspector</span>
+                </div>
               </div>
-              <div>
-                <h4 className="font-cyber-ui text-sm font-bold text-[var(--hud-text)]">{inspector.title}</h4>
+              <div className="space-y-1.5">
+                <h4 className="font-cyber-ui text-sm font-bold text-white">{inspector.title}</h4>
                 {inspector.subtitle && (
-                  <div className="font-cyber-ui text-[11px] text-[var(--hud-accent)]/90">{inspector.subtitle}</div>
+                  <span className="inline-block border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
+                    {inspector.subtitle}
+                  </span>
                 )}
               </div>
               <p className="font-cyber-ui text-xs leading-relaxed text-[var(--hud-text)]/90">{inspector.body}</p>

@@ -3274,13 +3274,26 @@ describe("Cyberpunk RED GM UI", () => {
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Vee Mercer"), { target: { value: "Chrome Chord" } });
 
-    // Streetrat Rockerboy exposes dynamic Play Instrument Specialization picker on Step 3
+    // Step 3 keeps sticky skill header clean without duplicating Native Language / Play Instrument pickers
     fireEvent.click(screen.getByRole("button", { name: /3\. Skills/i }));
-    expect(await screen.findByText("Play Instrument Specialization")).toBeInTheDocument();
-    const specLabel = screen.getByText("Play Instrument Specialization");
+    expect(await screen.findByText(/Preset .* Skills \(20 Role Skills \+ Native Language\)/i)).toBeInTheDocument();
+    expect(screen.queryByText("Play Instrument Specialization")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Free \+4 Cultural Native Language/i)).not.toBeInTheDocument();
+
+    // Streetrat Rockerboy exposes dynamic Play Instrument Specialization picker on Step 4 (Street Origins & Background)
+    fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
+    expect(await screen.findByText("Street Origins & Background")).toBeInTheDocument();
+    const specLabel = await screen.findByText("Play Instrument Specialization");
     const specSelect = specLabel.parentElement?.querySelector("select") as HTMLSelectElement;
     expect(specSelect).toBeTruthy();
     fireEvent.change(specSelect, { target: { value: "Synthesizer" } });
+
+    // Single-input Lifepath fields: select dropdown by default, switches to custom input only when "Custom ✎" is clicked
+    expect(screen.queryByPlaceholderText("Custom rocker type…")).not.toBeInTheDocument();
+    const rockerTypeCustomBtn = screen.getByText("Rocker Type").parentElement?.querySelector("button");
+    expect(rockerTypeCustomBtn).toBeTruthy();
+    fireEvent.click(rockerTypeCustomBtn!);
+    expect(screen.getByPlaceholderText("Custom rocker type…")).toBeInTheDocument();
 
     // Switch to Freeform so custom cyberware, fashion, housing, and lifestyle submit cleanly
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
@@ -3307,10 +3320,11 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "+1000eb" }));
     fireEvent.click(screen.getByRole("button", { name: "+500eb" }));
 
-    expect(screen.getByText(/BODY 7→12/)).toBeInTheDocument();
+    expect(screen.getByText(/Death Save: 12/)).toBeInTheDocument();
     expect(screen.getByText(/Passive Cyberware Armor: Skinweave \(SP 7\)/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /6\. Sheet Preview/i }));
+    expect(screen.getByText(/BODY 7 → 12/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Create & Attach to Campaign/i }));
 
     await waitFor(() => expect(createdPayloads.length).toBe(1));

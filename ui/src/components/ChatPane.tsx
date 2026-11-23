@@ -832,7 +832,7 @@ export function ChatPane({
           data-testid="chat-scroll-container"
           className="flex-1 overflow-y-auto px-2.5 py-3 sm:px-4 sm:py-5"
         >
-          <div className="mx-auto max-w-3xl space-y-3 sm:space-y-4">
+          <div className="mx-auto w-full max-w-[1360px] space-y-4 px-1 sm:px-4">
             {visibleMessages.length === 0 && !streaming && (
               <CyberFrame className="px-4 py-6 text-center text-xs text-[var(--hud-muted)]">
                 No messages yet. Check the <strong className="text-[var(--hud-text)]">Campaign</strong> tab for story &amp; rules, or describe your opening move below.
@@ -909,6 +909,25 @@ export function ChatPane({
                 ? msg.metadata?.speaker_portrait_url ||
                   (typeof charDetail.portrait_url === "string" ? charDetail.portrait_url : "")
                 : "";
+              const matchedOwner =
+                typeof charDetail.owner_username === "string"
+                  ? charDetail.owner_username.trim().toLowerCase()
+                  : "";
+              const isOwnPlayerMessage =
+                isUser &&
+                (Boolean(matchedChar && selectedSpeakerId && matchedChar.id === selectedSpeakerId) ||
+                  Boolean(
+                    matchedOwner &&
+                      currentUsername &&
+                      matchedOwner === currentUsername.trim().toLowerCase(),
+                  ) ||
+                  Boolean(
+                    !matchedChar &&
+                      (!msg.metadata?.speaker_character_id ||
+                        msg.metadata.speaker_character_id === selectedSpeakerId),
+                  ) ||
+                  characters.length <= 1);
+              const isTeammateMessage = isUser && !isOwnPlayerMessage;
 
               // Gather inline action rolls for this user message:
               // Either stored directly on msg.metadata.rolls, or on the immediate child assistant message
@@ -1104,15 +1123,39 @@ export function ChatPane({
               );
 
               if (isUser) {
+                const bubbleWidthClass = isEditing
+                  ? "w-full sm:w-[72%] lg:w-[62%]"
+                  : "w-fit min-w-[260px] max-w-[92%] sm:max-w-[70%] lg:max-w-[58%]";
+                const bubbleSurfaceClass = isThink
+                  ? isTeammateMessage
+                    ? "border border-violet-500/55 border-l-[3px] border-l-violet-400 bg-violet-950/30"
+                    : "border border-violet-500/55 border-r-4 border-r-violet-400 bg-violet-950/30"
+                  : isTeammateMessage
+                    ? "border border-l-[3px] bg-[#0d111a]/92"
+                    : `border border-r-4 ${speakerTheme.cardBorderClass}`;
+                const bubbleStyle = isThink
+                  ? undefined
+                  : isTeammateMessage
+                    ? {
+                        borderTopColor: `${speakerTheme.hex}55`,
+                        borderRightColor: `${speakerTheme.hex}55`,
+                        borderBottomColor: `${speakerTheme.hex}55`,
+                        borderLeftColor: speakerTheme.hex,
+                      }
+                    : {
+                        ...speakerTheme.cardBorderStyle,
+                        borderRightColor: speakerTheme.hex,
+                        boxShadow: `inset -16px 0 26px -14px ${speakerTheme.hex}40`,
+                      };
+
                 return (
-                  <div key={msg.id} className="group flex flex-col items-end">
+                  <div
+                    key={msg.id}
+                    className={`group flex flex-col items-end ${isTeammateMessage ? "sm:pr-6 lg:pr-10" : ""}`.trim()}
+                  >
                     <div
-                      className={`w-full sm:w-[88%] px-4 py-2.5 text-[var(--hud-text)] transition ${
-                        isThink
-                          ? "border border-violet-500/55 border-r-2 border-r-violet-400 bg-violet-950/25"
-                          : "border border-white/15 border-r-2 border-r-[var(--hud-accent)] bg-black/55"
-                      }`}
-                      style={!isThink && speakerTheme.isHex ? { borderRightColor: speakerTheme.hex } : undefined}
+                      className={`ml-auto ${bubbleWidthClass} px-4 py-2.5 text-[var(--hud-text)] transition ${bubbleSurfaceClass}`}
+                      style={bubbleStyle}
                     >
                       <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <div className="flex flex-wrap items-center gap-2">
@@ -1126,17 +1169,31 @@ export function ChatPane({
                           ) : (
                             <span
                               className="inline-flex h-4 w-4 items-center justify-center border border-white/20 bg-black/50 text-[var(--hud-accent)]"
-                              style={speakerTheme.isHex ? { color: speakerTheme.nameBadgeStyle?.color } : undefined}
+                              style={{ color: speakerTheme.hex, borderColor: `${speakerTheme.hex}66` }}
                             >
                               <User className="h-2.5 w-2.5" />
                             </span>
                           )}
                           <span
-                            className="font-cyber-ui font-semibold uppercase tracking-wider text-[var(--hud-accent)]"
-                            style={speakerTheme.isHex ? { color: speakerTheme.nameBadgeStyle?.color } : undefined}
+                            className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-cyber-ui text-[11px] font-bold uppercase tracking-wider ${speakerTheme.nameBadgeClass}`.trim()}
+                            style={speakerTheme.nameBadgeStyle}
                           >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${speakerTheme.dotClass}`.trim()}
+                              style={speakerTheme.dotStyle}
+                            />
                             {speakerHandle}
                           </span>
+                          {isOwnPlayerMessage && speakerHandle.toLowerCase() !== "you" && (
+                            <span className="border border-white/20 bg-white/10 px-1.5 py-0.5 font-cyber-data text-[9px] font-bold uppercase tracking-wider text-white">
+                              YOU
+                            </span>
+                          )}
+                          {isTeammateMessage && (
+                            <span className="border border-white/15 bg-black/60 px-1.5 py-0.5 font-cyber-data text-[9px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
+                              CREW
+                            </span>
+                          )}
                           {primaryRole && (
                             <RoleTag role={primaryRole} rank={primaryRank} />
                           )}
@@ -1229,7 +1286,7 @@ export function ChatPane({
 
               return (
                 <div key={msg.id} className="group flex flex-col items-start">
-                  <CyberFrame className={`w-full ${isThink ? "border-violet-500/50" : ""}`}>
+                  <CyberFrame className={`mr-auto w-full lg:w-[82%] xl:w-[76%] ${isThink ? "border-violet-500/50" : ""}`}>
                     {/* Slim GM Header Strip */}
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-4 py-1.5">
                       <div className="flex flex-wrap items-center gap-2.5">
@@ -1477,22 +1534,39 @@ export function ChatPane({
               return (
                 <div className="space-y-3">
                   {streaming.userText && !isPeerStreaming && (
-                    <div className="flex justify-end">
+                    <div className="flex flex-col items-end">
                       <div
-                        className={`w-full sm:w-[88%] px-4 py-2.5 text-[var(--hud-text)] ${
+                        className={`ml-auto w-fit min-w-[260px] max-w-[92%] sm:max-w-[70%] lg:max-w-[58%] px-4 py-2.5 text-[var(--hud-text)] transition ${
                           streamIsThink
-                            ? "border border-violet-500/55 border-r-2 border-r-violet-400 bg-violet-950/25"
-                            : "border border-white/15 border-r-2 border-r-[var(--hud-accent)] bg-black/55"
+                            ? "border border-violet-500/55 border-r-4 border-r-violet-400 bg-violet-950/30"
+                            : `border border-r-4 ${streamTheme.cardBorderClass}`
                         }`}
-                        style={!streamIsThink && streamTheme.isHex ? { borderRightColor: streamTheme.hex } : undefined}
+                        style={
+                          !streamIsThink
+                            ? {
+                                ...streamTheme.cardBorderStyle,
+                                borderRightColor: streamTheme.hex,
+                                boxShadow: `inset -16px 0 26px -14px ${streamTheme.hex}40`,
+                              }
+                            : undefined
+                        }
                       >
-                        <div className="mb-1.5 flex items-center gap-2 text-[11px]">
+                        <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
                           <span
-                            className="font-cyber-ui font-semibold uppercase tracking-wider text-[var(--hud-accent)]"
-                            style={streamTheme.isHex ? { color: streamTheme.nameBadgeStyle?.color } : undefined}
+                            className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-cyber-ui text-[11px] font-bold uppercase tracking-wider ${streamTheme.nameBadgeClass}`.trim()}
+                            style={streamTheme.nameBadgeStyle}
                           >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${streamTheme.dotClass}`.trim()}
+                              style={streamTheme.dotStyle}
+                            />
                             {streaming.speakerName || "You"}
                           </span>
+                          {(streaming.speakerName || "You").toLowerCase() !== "you" && (
+                            <span className="border border-white/20 bg-white/10 px-1.5 py-0.5 font-cyber-data text-[9px] font-bold uppercase tracking-wider text-white">
+                              YOU
+                            </span>
+                          )}
                           {streamIsThink && (
                             <span className="inline-flex items-center gap-1 border border-violet-500/50 bg-violet-500/20 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold uppercase tracking-wider text-violet-200">
                               <Eye className="h-3 w-3" />
@@ -1519,7 +1593,7 @@ export function ChatPane({
                     </div>
                   )}
 
-                  <CyberFrame className={`w-full ${streamIsThink ? "border-violet-500/50" : ""}`}>
+                  <CyberFrame className={`mr-auto w-full lg:w-[82%] xl:w-[76%] ${streamIsThink ? "border-violet-500/50" : ""}`}>
                     <div className="flex items-center justify-between gap-2 border-b border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-4 py-1.5">
                       <div className="flex items-center gap-2.5">
                         <span className="h-2 w-0.5 bg-[var(--hud-primary-bright)]" />
@@ -1600,7 +1674,7 @@ export function ChatPane({
         onSubmit={(e) => void handleSubmit(e)}
         className="shrink-0 border-t border-[var(--hud-line)] bg-[var(--hud-panel)] px-2.5 py-2 backdrop-blur-md sm:px-4 sm:py-3"
       >
-        <div className="mx-auto max-w-3xl space-y-1.5 sm:space-y-2">
+        <div className="mx-auto w-full max-w-5xl space-y-1.5 sm:space-y-2">
           {lockedByPeer && (
             <div className="cyber-hazard-thin flex items-center gap-2 border border-[var(--hud-warn)]/60 bg-[var(--hud-panel)] px-3 py-1.5 text-xs text-[var(--hud-warn)]">
               <Lock className="h-3.5 w-3.5 shrink-0" />
@@ -1742,91 +1816,93 @@ export function ChatPane({
           )}
 
           <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1.5 sm:grid-cols-[1fr_auto_auto] sm:gap-y-2">
-            <div className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center gap-1 sm:gap-1.5">
-              {luckChar && (
-                <div
-                  title={`Commit LUCK before the roll (only spent if a check runs this turn; ${maxLuck} available)`}
-                  className={`inline-flex items-center gap-0.5 border px-1.5 py-0.5 text-[11px] ${
-                    effectiveLuck > 0
-                      ? "border-[var(--hud-warn)]/70 bg-[var(--hud-row)] text-[var(--hud-warn)]"
-                      : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)]"
+            <div className="col-start-1 row-start-1 flex min-w-0 flex-wrap items-center justify-between gap-2 sm:col-span-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-1 sm:gap-1.5">
+                {luckChar && (
+                  <div
+                    title={`Commit LUCK before the roll (only spent if a check runs this turn; ${maxLuck} available)`}
+                    className={`inline-flex items-center gap-0.5 border px-1.5 py-0.5 text-[11px] ${
+                      effectiveLuck > 0
+                        ? "border-[var(--hud-warn)]/70 bg-[var(--hud-row)] text-[var(--hud-warn)]"
+                        : "border-[var(--hud-line-soft)] bg-black/50 text-[var(--hud-muted)]"
+                    }`}
+                  >
+                    <Sparkles className="h-3 w-3 text-[var(--hud-warn)]" />
+                    <button
+                      type="button"
+                      aria-label="Decrease Luck spend"
+                      disabled={effectiveLuck <= 0}
+                      onClick={() => setLuckSpend((v) => Math.max(0, v - 1))}
+                      className="p-0.5 hover:text-white disabled:opacity-35"
+                    >
+                      <Minus className="h-2.5 w-2.5" />
+                    </button>
+                    <span className="min-w-[1.8rem] text-center font-cyber-data text-[11px] font-semibold">
+                      +{effectiveLuck}/{maxLuck}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Increase Luck spend"
+                      disabled={effectiveLuck >= maxLuck}
+                      onClick={() => setLuckSpend((v) => Math.min(maxLuck, v + 1))}
+                      className="p-0.5 hover:text-white disabled:opacity-35"
+                    >
+                      <Plus className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setDiceOpen((v) => !v)}
+                  className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                    diceOpen ? "is-active" : ""
                   }`}
                 >
-                  <Sparkles className="h-3 w-3 text-[var(--hud-warn)]" />
-                  <button
-                    type="button"
-                    aria-label="Decrease Luck spend"
-                    disabled={effectiveLuck <= 0}
-                    onClick={() => setLuckSpend((v) => Math.max(0, v - 1))}
-                    className="p-0.5 hover:text-white disabled:opacity-35"
-                  >
-                    <Minus className="h-2.5 w-2.5" />
-                  </button>
-                  <span className="min-w-[1.8rem] text-center font-cyber-data text-[11px] font-semibold">
-                    +{effectiveLuck}/{maxLuck}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Increase Luck spend"
-                    disabled={effectiveLuck >= maxLuck}
-                    onClick={() => setLuckSpend((v) => Math.min(maxLuck, v + 1))}
-                    className="p-0.5 hover:text-white disabled:opacity-35"
-                  >
-                    <Plus className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              )}
+                  <Dices className="h-3.5 w-3.5" />
+                  Dice
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setDiceOpen((v) => !v)}
-                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
-                  diceOpen ? "is-active" : ""
-                }`}
-              >
-                <Dices className="h-3.5 w-3.5" />
-                Dice
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setColorBarOpen((v) => !v)}
-                title="Highlight text or pick your character's Name Tag Color"
-                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
-                  colorBarOpen ? "is-active" : ""
-                }`}
-              >
-                <Palette className="h-3.5 w-3.5" />
-                Color
-              </button>
-
-              <button
-                type="button"
-                aria-pressed={thinkMode}
-                onClick={() => setThinkMode((v) => !v)}
-                title="Think / Observation mode (/think): ask what your character notices, recalls, or deduces with 0 world time elapsed and no NPC reactions"
-                className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
-                  thinkMode ? "is-active border-violet-400 text-violet-200" : ""
-                }`}
-              >
-                <Eye className="h-3.5 w-3.5" />
-                Think
-              </button>
-
-              {overclock && (
-                <span
-                  title="Overclock armed in Character tab (-2 Humanity / +2 Check on next roll)"
-                  className="cyber-hazard-thin inline-flex items-center gap-1 border border-[var(--hud-warn)]/60 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-[var(--hud-warn)]"
+                <button
+                  type="button"
+                  onClick={() => setColorBarOpen((v) => !v)}
+                  title="Highlight text or pick your character's Name Tag Color"
+                  className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                    colorBarOpen ? "is-active" : ""
+                  }`}
                 >
-                  <Zap className="h-3 w-3 text-[var(--hud-accent)]" />
-                  OVERCLOCK
-                </span>
-              )}
-            </div>
+                  <Palette className="h-3.5 w-3.5" />
+                  Color
+                </button>
 
-            <span className="hidden font-cyber-data text-[10px] text-[var(--hud-muted)] sm:col-span-2 sm:col-start-2 sm:row-start-1 sm:inline sm:justify-self-end">
-              Enter to send · Shift+Enter · <code>/roll 3d6</code> · <code className="text-[var(--hud-accent)]">/think</code>
-            </span>
+                <button
+                  type="button"
+                  aria-pressed={thinkMode}
+                  onClick={() => setThinkMode((v) => !v)}
+                  title="Think / Observation mode (/think): ask what your character notices, recalls, or deduces with 0 world time elapsed and no NPC reactions"
+                  className={`cyber-btn-tac cp-fx-hover px-1.5 py-1 font-cyber-ui text-[10px] uppercase tracking-wider sm:px-2 sm:text-[11px] ${
+                    thinkMode ? "is-active border-violet-400 text-violet-200" : ""
+                  }`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Think
+                </button>
+
+                {overclock && (
+                  <span
+                    title="Overclock armed in Character tab (-2 Humanity / +2 Check on next roll)"
+                    className="cyber-hazard-thin inline-flex items-center gap-1 border border-[var(--hud-warn)]/60 px-1.5 py-0.5 font-cyber-data text-[10px] font-semibold text-[var(--hud-warn)]"
+                  >
+                    <Zap className="h-3 w-3 text-[var(--hud-accent)]" />
+                    OVERCLOCK
+                  </span>
+                )}
+              </div>
+
+              <span className="ml-auto hidden font-cyber-data text-[10px] text-[var(--hud-muted)] sm:inline">
+                Enter to send · Shift+Enter · <code>/roll 3d6</code> · <code className="text-[var(--hud-accent)]">/think</code>
+              </span>
+            </div>
 
             <textarea
               ref={composerRef}

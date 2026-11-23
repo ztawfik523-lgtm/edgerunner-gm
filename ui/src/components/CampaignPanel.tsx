@@ -135,6 +135,15 @@ export function CampaignPanel({
   const [startingSession, setStartingSession] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showCampaignRoster, setShowCampaignRoster] = useState(false);
+  const [showBackdropInput, setShowBackdropInput] = useState(false);
+  const [showAddClock, setShowAddClock] = useState(false);
+  const [openAddSection, setOpenAddSection] = useState<Record<SectionKey, boolean>>({
+    npcs: false,
+    objectives: false,
+    discoveries: false,
+    unresolved: false,
+  });
   const aiBusy = aiBusyMode !== null;
 
   useEffect(() => {
@@ -528,30 +537,111 @@ export function CampaignPanel({
         rulesNode
       ) : (
         <>
-          {/* Admin-only Campaigns & Sessions Manager */}
-          {isAdmin && canManageCampaigns && (
+          {/* Admin-only Unified Active Campaign Header */}
+          {isAdmin && (canManageCampaigns || Boolean(campaign)) && (
             <CyberFrame variant="default" className="space-y-2.5 p-3">
+              {/* 1. Header Row */}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
-                  Campaigns &amp; Sessions
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {campaign && onStartSession && (
-                    <HudButton
-                      variant="tactical"
-                      size="xs"
-                      disabled={startingSession}
-                      onClick={() => void handleStartSession()}
-                      title="Start next session and refill all party LUCK"
-                      className="border-[var(--hud-warn)]/50 text-[var(--hud-warn)]"
+                <span className="cyber-section-title">Active Campaign</span>
+                {canManageCampaigns && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {campaign && onStartSession && (
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        disabled={startingSession}
+                        onClick={() => void handleStartSession()}
+                        title="Start next session and refill all party LUCK"
+                        className="border-[var(--hud-warn)]/50 text-[var(--hud-warn)]"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {startingSession ? "Starting..." : "Start Session"}
+                      </HudButton>
+                    )}
+                    {campaign && onOpenEditCampaign && (
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        onClick={onOpenEditCampaign}
+                      >
+                        <Compass className="h-3 w-3 text-[var(--hud-accent)]" />
+                        Architect
+                      </HudButton>
+                    )}
+                    {onOpenNewCampaign && (
+                      <HudButton
+                        variant="cta"
+                        size="xs"
+                        onClick={onOpenNewCampaign}
+                      >
+                        <Plus className="h-3 w-3" />
+                        New Campaign
+                      </HudButton>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Campaign Selector & Telemetry Block */}
+              {((canManageCampaigns && campaigns.length > 0 && onSelectCampaign) || campaign) && (
+                <div className="space-y-1.5">
+                  {canManageCampaigns && campaigns.length > 0 && onSelectCampaign ? (
+                    <select
+                      aria-label="Active campaign"
+                      value={campaign?.id ?? ""}
+                      onChange={(e) => e.target.value && onSelectCampaign(e.target.value)}
+                      className="cyber-input px-2.5 py-1.5 text-[13px] font-semibold"
                     >
-                      <Sparkles className="h-3 w-3" />
-                      {startingSession ? "Starting..." : "Start Session"}
+                      {campaigns.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.is_primary ? "★ " : ""}{c.name} (Session {c.session_number})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    campaign && (
+                      <h3 className="font-cyber-display text-sm font-bold text-[var(--hud-text)]">
+                        {campaign.name}
+                      </h3>
+                    )
+                  )}
+                  {campaign && (
+                    <p className="font-cyber-data text-[11px] text-[var(--hud-muted)]">
+                      Session {campaign.session_number} · rev {campaign.revision} · Day {clockDay} {clockHour}:{clockMin} ({clockTod})
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* 3. Compact Utility Strip */}
+              {(campaign || (canManageCampaigns && campaigns.length > 0)) && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {campaign && onCompressMemory && (
+                    <HudButton
+                      variant="utility"
+                      size="xs"
+                      disabled={busy || Boolean(compressingMemory)}
+                      onClick={() => void onCompressMemory()}
+                      title="Distill long session history into Campaign Library dossiers & compact summary"
+                    >
+                      <Sparkles className="h-3 w-3 text-[var(--hud-accent)]" />
+                      {compressingMemory ? "Compressing..." : "Compress to Library"}
+                    </HudButton>
+                  )}
+                  {campaign && (
+                    <HudButton
+                      variant="utility"
+                      size="xs"
+                      disabled={busy}
+                      onClick={handleUndo}
+                    >
+                      <RotateCcw className="h-3 w-3 text-[var(--hud-warn)]" />
+                      Undo Note
                     </HudButton>
                   )}
                   {campaign && onExportChat && (
                     <HudButton
-                      variant="tactical"
+                      variant="utility"
                       size="xs"
                       disabled={exporting}
                       onClick={() => void handleExport()}
@@ -561,56 +651,32 @@ export function CampaignPanel({
                       {exporting ? "Exporting..." : "Export"}
                     </HudButton>
                   )}
-                  {campaign && onOpenEditCampaign && (
+                  {canManageCampaigns && campaigns.length > 0 && (
                     <HudButton
-                      variant="tactical"
+                      variant="utility"
                       size="xs"
-                      onClick={onOpenEditCampaign}
+                      active={showCampaignRoster || confirmDeleteCampaignId !== null}
+                      onClick={() => setShowCampaignRoster((v) => !v)}
                     >
-                      <Compass className="h-3 w-3 text-[var(--hud-accent)]" />
-                      Architect
-                    </HudButton>
-                  )}
-                  {onOpenNewCampaign && (
-                    <HudButton
-                      variant="cta"
-                      size="xs"
-                      onClick={onOpenNewCampaign}
-                    >
-                      <Plus className="h-3 w-3" />
-                      New Campaign
+                      Manage List ({campaigns.length})
                     </HudButton>
                   )}
                 </div>
-              </div>
-
-              {campaigns.length > 0 && onSelectCampaign && (
-                <select
-                  aria-label="Active campaign"
-                  value={campaign?.id ?? ""}
-                  onChange={(e) => e.target.value && onSelectCampaign(e.target.value)}
-                  className="w-full border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                >
-                  {campaigns.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.is_primary ? "★ " : ""}{c.name} (Session {c.session_number})
-                    </option>
-                  ))}
-                </select>
               )}
 
-              {campaigns.length > 0 && (
-                <div className="space-y-1">
+              {/* 4. Collapsible Campaign Roster */}
+              {canManageCampaigns && campaigns.length > 0 && (showCampaignRoster || confirmDeleteCampaignId !== null) && (
+                <div className="space-y-1 border-t border-[var(--hud-line-soft)] pt-2">
                   {campaigns.map((c) => {
                     const isActive = c.id === campaign?.id;
                     const confirmingDelete = confirmDeleteCampaignId === c.id;
                     return (
                       <div
                         key={c.id}
-                        className={`flex items-center justify-between gap-2 border px-2.5 py-1.5 text-xs ${
+                        className={`flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs ${
                           isActive
-                            ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-text)]"
-                            : "border-[var(--hud-line-soft)] bg-[var(--hud-row)] text-[var(--hud-muted)] hover:border-[var(--hud-line)]"
+                            ? "cyber-card-active text-[var(--hud-text)]"
+                            : "cyber-card text-[var(--hud-muted)]"
                         }`}
                       >
                         <button
@@ -632,7 +698,7 @@ export function CampaignPanel({
                         <div className="flex shrink-0 items-center gap-1">
                           {!c.is_primary && onSetPrimaryCampaign && (
                             <HudButton
-                              variant="tactical"
+                              variant="utility"
                               size="xs"
                               disabled={busy}
                               onClick={() => {
@@ -915,38 +981,6 @@ export function CampaignPanel({
           ) : (
             /* Admin Full Campaign Controls */
             <>
-              <CyberFrame variant="default" className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-                <div>
-                  <h3 className="font-cyber-display text-sm font-bold text-[var(--hud-text)]">{campaign.name}</h3>
-                  <p className="font-cyber-data text-[11px] text-[var(--hud-muted)]">
-                    Session {campaign.session_number} · rev {campaign.revision} · Day {clockDay} {clockHour}:{clockMin} ({clockTod})
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {onCompressMemory && (
-                    <HudButton
-                      variant="tactical"
-                      size="xs"
-                      disabled={busy || Boolean(compressingMemory)}
-                      onClick={() => void onCompressMemory()}
-                      title="Distill long session history into Campaign Library dossiers & compact summary"
-                    >
-                      <Sparkles className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
-                      {compressingMemory ? "Compressing..." : "Compress to Library"}
-                    </HudButton>
-                  )}
-                  <HudButton
-                    variant="tactical"
-                    size="xs"
-                    disabled={busy}
-                    onClick={handleUndo}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5 text-[var(--hud-warn)]" />
-                    Undo Note
-                  </HudButton>
-                </div>
-              </CyberFrame>
-
               {(activeEncounter || activeRuns.length > 0) && (
                 <div className="cyber-hazard-thin space-y-2 border border-[var(--hud-primary-bright)]/70 bg-[var(--hud-row)] p-3 text-xs">
                   {activeEncounter && (
@@ -1004,40 +1038,50 @@ export function CampaignPanel({
                     />
                   </div>
 
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-1.5 font-cyber-ui text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
-                        <ImagePlus className="h-3.5 w-3.5 text-[var(--hud-accent)]" />
-                        Scene / Campaign Backdrop Image (optional)
-                      </label>
-                      <div className="flex items-center gap-1.5">
-                        <label className="cyber-btn-tac inline-flex cursor-pointer items-center gap-1 px-2 py-0.5 font-cyber-ui text-[10px] font-medium">
-                          <ImagePlus className="h-3 w-3 text-[var(--hud-accent)]" /> Upload Image
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleBannerUpload}
-                            className="hidden"
-                          />
-                        </label>
-                        {bannerUrl && (
-                          <HudButton
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => setBannerUrl("")}
-                          >
-                            Reset Default
-                          </HudButton>
-                        )}
-                      </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <HudButton
+                        variant="utility"
+                        size="xs"
+                        active={showBackdropInput}
+                        onClick={() => setShowBackdropInput((v) => !v)}
+                      >
+                        <ImagePlus className="h-3 w-3 text-[var(--hud-accent)]" />
+                        {bannerUrl ? "Backdrop Image (Active)" : "+ Backdrop Image"}
+                      </HudButton>
                     </div>
-                    <input
-                      type="url"
-                      value={bannerUrl.startsWith("data:") ? "" : bannerUrl}
-                      onChange={(e) => setBannerUrl(e.target.value)}
-                      placeholder={bannerUrl.startsWith("data:") ? "Custom image uploaded from device" : "Paste an online image URL (https://…) or upload above"}
-                      className="w-full border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                    />
+
+                    {showBackdropInput && (
+                      <div className="space-y-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="cyber-btn-util inline-flex cursor-pointer items-center gap-1 px-2 py-0.5 font-cyber-ui text-[10px] font-medium">
+                            <ImagePlus className="h-3 w-3 text-[var(--hud-accent)]" /> Upload Image
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleBannerUpload}
+                              className="hidden"
+                            />
+                          </label>
+                          {bannerUrl && (
+                            <HudButton
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => setBannerUrl("")}
+                            >
+                              Reset Default
+                            </HudButton>
+                          )}
+                        </div>
+                        <input
+                          type="url"
+                          value={bannerUrl.startsWith("data:") ? "" : bannerUrl}
+                          onChange={(e) => setBannerUrl(e.target.value)}
+                          placeholder={bannerUrl.startsWith("data:") ? "Custom image uploaded from device" : "Paste an online image URL (https://…) or upload above"}
+                          className="cyber-input px-2.5 py-1.5 text-xs"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1123,14 +1167,24 @@ export function CampaignPanel({
 
               {/* World Clocks & Heat (Admin only) */}
               <CyberFrame variant="default" className="space-y-2.5 p-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1.5 font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
                     <Clock className="h-3.5 w-3.5 text-[var(--hud-warn)]" />
                     World Clocks &amp; Heat
                   </span>
-                  <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
-                    Day {clockDay} · {clockHour}:{clockMin}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-cyber-data text-[10px] text-[var(--hud-muted)]">
+                      Day {clockDay} · {clockHour}:{clockMin}
+                    </span>
+                    <HudButton
+                      variant="utility"
+                      size="xs"
+                      active={showAddClock}
+                      onClick={() => setShowAddClock((v) => !v)}
+                    >
+                      + Add Clock
+                    </HudButton>
+                  </div>
                 </div>
 
                 {clocks.length > 0 && (
@@ -1169,7 +1223,7 @@ export function CampaignPanel({
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
                               <HudButton
-                                variant="tactical"
+                                variant="utility"
                                 size="xs"
                                 disabled={busy}
                                 active={isSecret}
@@ -1207,7 +1261,7 @@ export function CampaignPanel({
                                 )}
                               </HudButton>
                               <HudButton
-                                variant="tactical"
+                                variant="utility"
                                 size="xs"
                                 disabled={busy || filled <= 0}
                                 onClick={() => void handleClockAction({ action: "tick", id: clock.id, delta: -1 })}
@@ -1220,7 +1274,7 @@ export function CampaignPanel({
                                 {filled}/{segments}
                               </span>
                               <HudButton
-                                variant="tactical"
+                                variant="utility"
                                 size="xs"
                                 disabled={busy || filled >= segments}
                                 onClick={() => void handleClockAction({ action: "tick", id: clock.id, delta: 1 })}
@@ -1254,88 +1308,90 @@ export function CampaignPanel({
                   </div>
                 )}
 
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const name = newClockName.trim();
-                    if (!name) return;
-                    const maxVal = Math.max(2, Math.min(12, parseInt(newClockMax, 10) || 4));
-                    const trig = newClockTrigger.trim();
-                    setNewClockName("");
-                    setNewClockTrigger("");
-                    void handleClockAction({
-                      action: "upsert",
-                      name,
-                      segments: maxVal,
-                      visibility: newClockVisibility,
-                      note: trig || undefined,
-                    });
-                  }}
-                  className="flex flex-wrap gap-1.5 pt-1"
-                >
-                  <input
-                    type="text"
-                    value={newClockName}
-                    onChange={(e) => setNewClockName(e.target.value)}
-                    placeholder="Clock (e.g. NCPD Heat)"
-                    className="flex-1 min-w-[120px] border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                  />
-                  <input
-                    type="number"
-                    min={2}
-                    max={12}
-                    value={newClockMax}
-                    onChange={(e) => setNewClockMax(e.target.value)}
-                    title="Segments (2-12)"
-                    className="w-12 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-1.5 py-1 text-center font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    value={newClockTrigger}
-                    onChange={(e) => setNewClockTrigger(e.target.value)}
-                    placeholder="Trigger (optional)"
-                    className="w-28 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                  />
-                  <HudButton
-                    variant="tactical"
-                    size="xs"
-                    active={newClockVisibility === "secret"}
-                    onClick={() =>
-                      setNewClockVisibility((v) => (v === "secret" ? "public" : "secret"))
-                    }
-                    title={
-                      newClockVisibility === "secret"
-                        ? "New clock will be Secret (GM only)"
-                        : "New clock will be Public (visible to players)"
-                    }
-                    aria-label="New clock visibility"
-                    className={
-                      newClockVisibility === "secret"
-                        ? "border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
-                        : "text-[var(--hud-muted)]"
-                    }
+                {(showAddClock || clocks.length === 0) && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const name = newClockName.trim();
+                      if (!name) return;
+                      const maxVal = Math.max(2, Math.min(12, parseInt(newClockMax, 10) || 4));
+                      const trig = newClockTrigger.trim();
+                      setNewClockName("");
+                      setNewClockTrigger("");
+                      void handleClockAction({
+                        action: "upsert",
+                        name,
+                        segments: maxVal,
+                        visibility: newClockVisibility,
+                        note: trig || undefined,
+                      });
+                    }}
+                    className="flex flex-wrap gap-1.5 pt-1"
                   >
-                    {newClockVisibility === "secret" ? (
-                      <>
-                        <EyeOff className="h-3 w-3" /> Secret
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="h-3 w-3" /> Public
-                      </>
-                    )}
-                  </HudButton>
-                  <HudButton
-                    type="submit"
-                    variant="tactical"
-                    size="sm"
-                    disabled={busy || !newClockName.trim()}
-                    aria-label="Add world clock"
-                    className="text-[var(--hud-warn)]"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </HudButton>
-                </form>
+                    <input
+                      type="text"
+                      value={newClockName}
+                      onChange={(e) => setNewClockName(e.target.value)}
+                      placeholder="Clock (e.g. NCPD Heat)"
+                      className="flex-1 min-w-[120px] border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                    <input
+                      type="number"
+                      min={2}
+                      max={12}
+                      value={newClockMax}
+                      onChange={(e) => setNewClockMax(e.target.value)}
+                      title="Segments (2-12)"
+                      className="w-12 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-1.5 py-1 text-center font-cyber-data text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={newClockTrigger}
+                      onChange={(e) => setNewClockTrigger(e.target.value)}
+                      placeholder="Trigger (optional)"
+                      className="w-28 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
+                      active={newClockVisibility === "secret"}
+                      onClick={() =>
+                        setNewClockVisibility((v) => (v === "secret" ? "public" : "secret"))
+                      }
+                      title={
+                        newClockVisibility === "secret"
+                          ? "New clock will be Secret (GM only)"
+                          : "New clock will be Public (visible to players)"
+                      }
+                      aria-label="New clock visibility"
+                      className={
+                        newClockVisibility === "secret"
+                          ? "border-[var(--hud-warn)]/60 text-[var(--hud-warn)]"
+                          : "text-[var(--hud-muted)]"
+                      }
+                    >
+                      {newClockVisibility === "secret" ? (
+                        <>
+                          <EyeOff className="h-3 w-3" /> Secret
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="h-3 w-3" /> Public
+                        </>
+                      )}
+                    </HudButton>
+                    <HudButton
+                      type="submit"
+                      variant="tactical"
+                      size="sm"
+                      disabled={busy || !newClockName.trim()}
+                      aria-label="Add world clock"
+                      className="text-[var(--hud-warn)]"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </HudButton>
+                  </form>
+                )}
               </CyberFrame>
 
               <div className="space-y-3">
@@ -1353,9 +1409,22 @@ export function CampaignPanel({
                         <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
                           {title}
                         </div>
-                        {adminOnly && (
-                          <HazardBadge tone="warn">CLASSIFIED // GM</HazardBadge>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {adminOnly && (
+                            <HazardBadge tone="warn">CLASSIFIED // GM</HazardBadge>
+                          )}
+                          <HudButton
+                            variant="utility"
+                            size="xs"
+                            active={openAddSection[key]}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenAddSection((prev) => ({ ...prev, [key]: !prev[key] }));
+                            }}
+                          >
+                            + Add
+                          </HudButton>
+                        </div>
                       </div>
                       {entries.length === 0 ? (
                         <p className="text-xs text-[var(--hud-muted)]">None recorded yet.</p>
@@ -1369,24 +1438,27 @@ export function CampaignPanel({
                             return (
                               <div
                                 key={k}
-                                className="flex items-start justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-1.5 text-xs"
+                                className="cyber-card flex items-start justify-between gap-2 px-2.5 py-2 text-xs"
                               >
-                                <div>
-                                  <span className="font-cyber-ui font-semibold text-[var(--hud-accent)]">{k}</span>
-                                  {npcReal && !npcHidden && npcReal !== k && (
-                                    <span className="ml-1 text-[10px] text-[var(--hud-muted)]">({npcReal})</span>
-                                  )}
-                                  {npcHidden && (
-                                    <HazardBadge
-                                      tone="warn"
-                                      title={npcReal ? `Real name '${npcReal}' is hidden from players` : "Hidden real name"}
-                                      className="ml-1.5 px-1.5 py-0 text-[9px]"
-                                    >
-                                      <EyeOff className="h-2.5 w-2.5" /> {npcReal ? `Alias (${npcReal})` : "Alias Only"}
-                                    </HazardBadge>
-                                  )}
-                                  <span className="font-cyber-ui font-semibold text-[var(--hud-accent)]">:</span>{" "}
-                                  <span className="text-[var(--hud-text)]">{v}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="font-cyber-ui text-[13px] font-semibold text-[var(--hud-accent)]">
+                                      {k}
+                                    </span>
+                                    {npcReal && !npcHidden && npcReal !== k && (
+                                      <span className="text-[10px] text-[var(--hud-muted)]">({npcReal})</span>
+                                    )}
+                                    {npcHidden && (
+                                      <HazardBadge
+                                        tone="warn"
+                                        title={npcReal ? `Real name '${npcReal}' is hidden from players` : "Hidden real name"}
+                                        className="ml-0.5 px-1.5 py-0 text-[9px]"
+                                      >
+                                        <EyeOff className="h-2.5 w-2.5" /> {npcReal ? `Alias (${npcReal})` : "Alias Only"}
+                                      </HazardBadge>
+                                    )}
+                                  </div>
+                                  <p className="mt-0.5 text-xs leading-relaxed text-[var(--hud-text)]/90">{v}</p>
                                 </div>
                                 {confirming ? (
                                   <div className="flex shrink-0 items-center gap-1">
@@ -1427,61 +1499,63 @@ export function CampaignPanel({
                         </div>
                       )}
 
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void handleAddEntry(key);
-                        }}
-                        className="space-y-1.5 pt-1"
-                      >
-                        <div className="flex gap-1.5">
-                          <input
-                            type="text"
-                            value={draftKey[key]}
-                            onChange={(e) => setDraftKey((p) => ({ ...p, [key]: e.target.value }))}
-                            placeholder={key === "npcs" ? "Handle / Alias (e.g. Rogue)" : placeholderKey}
-                            className="w-1/3 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                          />
-                          <input
-                            type="text"
-                            value={draftVal[key]}
-                            onChange={(e) => setDraftVal((p) => ({ ...p, [key]: e.target.value }))}
-                            placeholder="Details..."
-                            className="flex-1 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                          />
-                          <HudButton
-                            type="submit"
-                            variant="tactical"
-                            size="sm"
-                            disabled={busy || !draftKey[key].trim() || !draftVal[key].trim()}
-                            aria-label={`Add ${key} entry`}
-                            className="text-[var(--hud-accent)]"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </HudButton>
-                        </div>
-                        {key === "npcs" && (
-                          <div className="flex flex-wrap items-center gap-2">
+                      {openAddSection[key] && (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleAddEntry(key);
+                          }}
+                          className="space-y-1.5 pt-1"
+                        >
+                          <div className="flex gap-1.5">
                             <input
                               type="text"
-                              value={npcRealNameDraft}
-                              onChange={(e) => setNpcRealNameDraft(e.target.value)}
-                              placeholder="Real / Legal Name (optional)"
-                              className="flex-1 min-w-[140px] border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                              value={draftKey[key]}
+                              onChange={(e) => setDraftKey((p) => ({ ...p, [key]: e.target.value }))}
+                              placeholder={key === "npcs" ? "Handle / Alias (e.g. Rogue)" : placeholderKey}
+                              className="w-1/3 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             />
-                            <label className="inline-flex cursor-pointer items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-warn)]">
-                              <input
-                                type="checkbox"
-                                checked={npcRealHiddenDraft}
-                                onChange={(e) => setNpcRealHiddenDraft(e.target.checked)}
-                                className="accent-[var(--hud-warn)]"
-                              />
-                              {npcRealHiddenDraft ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                              <span>{npcRealHiddenDraft ? "Hidden / Secret" : "Public"}</span>
-                            </label>
+                            <input
+                              type="text"
+                              value={draftVal[key]}
+                              onChange={(e) => setDraftVal((p) => ({ ...p, [key]: e.target.value }))}
+                              placeholder="Details..."
+                              className="flex-1 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                            />
+                            <HudButton
+                              type="submit"
+                              variant="tactical"
+                              size="sm"
+                              disabled={busy || !draftKey[key].trim() || !draftVal[key].trim()}
+                              aria-label={`Add ${key} entry`}
+                              className="text-[var(--hud-accent)]"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </HudButton>
                           </div>
-                        )}
-                      </form>
+                          {key === "npcs" && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type="text"
+                                value={npcRealNameDraft}
+                                onChange={(e) => setNpcRealNameDraft(e.target.value)}
+                                placeholder="Real / Legal Name (optional)"
+                                className="flex-1 min-w-[140px] border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] px-2 py-1 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                              />
+                              <label className="inline-flex cursor-pointer items-center gap-1 font-cyber-ui text-[10px] text-[var(--hud-warn)]">
+                                <input
+                                  type="checkbox"
+                                  checked={npcRealHiddenDraft}
+                                  onChange={(e) => setNpcRealHiddenDraft(e.target.checked)}
+                                  className="accent-[var(--hud-warn)]"
+                                />
+                                {npcRealHiddenDraft ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                <span>{npcRealHiddenDraft ? "Hidden / Secret" : "Public"}</span>
+                              </label>
+                            </div>
+                          )}
+                        </form>
+                      )}
                     </CyberFrame>
                   );
                 })}
