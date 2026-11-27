@@ -119,7 +119,6 @@ class CampaignMemory:
                 "gm_secrets",
                 "campaign_clocks",
                 "turn_gm_snapshots",
-                "turn_pre_snapshots",
                 "campaign_compressions",
                 "campaign_library",
                 "library_events",
