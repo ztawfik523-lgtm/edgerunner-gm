@@ -264,8 +264,17 @@ class CampaignStore:
             if "money" in changes:
                 updated["money"] = _integer(changes["money"], "money", 0, 2**63 - 1)
             if "humanity" in changes:
-                max_hum = max(100, int(before["stats"].get("EMP", 10)) * 10)
+                # Cap at EMP x 10 using EMP as created; current EMP already reflects Humanity loss.
+                created = conn.execute(
+                    "SELECT after_json FROM audit WHERE character_id=? AND before_json IS NULL ORDER BY revision LIMIT 1",
+                    (str(character_id),),
+                ).fetchone()
+                if created is None:
+                    raise ValueError(f"character {character_id} has no creation record to cap Humanity")
+                max_hum = int(json.loads(created["after_json"])["stats"]["EMP"]) * 10
                 updated["humanity"] = _integer(changes["humanity"], "humanity", 0, max_hum)
+                updated["stats"] = dict(before["stats"])
+                rules_eval.sync_emp_from_humanity(updated)
             if "inventory" in changes:
                 inv = _mapping(changes["inventory"], "inventory")
                 for item, count in inv.items():
@@ -274,8 +283,9 @@ class CampaignStore:
                     _integer(count, f"inventory count for {item}", 0, 2**63 - 1)
                 updated["inventory"] = inv
             updated["revision"] += 1
-            conn.execute("UPDATE characters SET hp=?,money=?,humanity=?,inventory=?,revision=? WHERE id=?",
-                         (updated["hp"], updated["money"], updated["humanity"], _json(updated["inventory"]), updated["revision"], str(character_id)))
+            conn.execute("UPDATE characters SET hp=?,money=?,humanity=?,stats=?,inventory=?,revision=? WHERE id=?",
+                         (updated["hp"], updated["money"], updated["humanity"], _json(updated["stats"]), _json(updated["inventory"]),
+                          updated["revision"], str(character_id)))
             conn.execute("INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated
