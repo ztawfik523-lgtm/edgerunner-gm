@@ -14,7 +14,6 @@ def _isolate_redgm_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "REDGM_ADMIN_PASS",
         "REDGM_USER_USER",
         "REDGM_USER_PASS",
-        "REDGM_AUTH_SECRET",
         "REDGM_ROOM_PIN",
         "REDGM_HOST",
         "REDGM_PORT",

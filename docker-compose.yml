@@ -22,8 +22,7 @@ services:
       REDGM_USER_USER: "${REDGM_USER_USER:-}"
       REDGM_USER_PASS: "${REDGM_USER_PASS:-}"
       REDGM_BOOTSTRAP_TOKEN: "${REDGM_BOOTSTRAP_TOKEN:-}"
-      REDGM_AUTH_SECRET: "${REDGM_AUTH_SECRET:-}"
-      REDGM_PIN: "${REDGM_PIN:-}"
+      REDGM_ROOM_PIN: "${REDGM_ROOM_PIN:-}"
     volumes:
       - redgm_data:/data
       - redgm_cache:/home/redgm/.cache/cyberpunk-red-gm

@@ -112,7 +112,7 @@ assert.equal(metadata.cyberpunk_red_gm.campaign_id, 'fast');
 chatId = 'chat-batch4c';
 metadata = { cyberpunk_red_gm: { campaign_id: 'camp-4c', chat_key: JSON.stringify(['character:pc.png', 'chat-batch4c']) } };
 globalThis.REDGM_API_TOKEN = 'tok-secret';
-globalThis.REDGM_PIN = '4321';
+globalThis.REDGM_ROOM_PIN = '4321';
 let lastHeaders = null;
 backend = async (_url, options) => {
     lastHeaders = options?.headers || {};
@@ -166,7 +166,7 @@ assert.ok(tools.get('solo_action').parameters.properties.action.enum.includes('a
 assert.ok(tools.get('solo_action').parameters.properties.action.enum.includes('gear_action'));
 await tools.get('solo_action').action({ action: 'advance_time', arguments: { minutes: 10, expected_revision: 7, reason: 'wait', operation_id: 'op-t1' } });
 delete globalThis.REDGM_API_TOKEN;
-delete globalThis.REDGM_PIN;
+delete globalThis.REDGM_ROOM_PIN;
 
 await extension.exit();
 assert.equal(tools.size, 0); assert.equal(listeners.get('chat-changed').size, 0);

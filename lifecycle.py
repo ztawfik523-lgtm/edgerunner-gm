@@ -369,8 +369,13 @@ class SoloService:
             ident = str(uuid.uuid4()); runtime["runs"][ident] = run
             return {"run_id": ident}
         if action == "net_action":
-            if args["action"] in {"new_turn", "ice_turn"}: raise ValueError("NET/ICE turns advance through the shared encounter queue")
-            return self._net_step(state, args["run_id"], args["action"], args.get("arguments", {}), randbelow)
+            net_act = args.get("action")
+            if not isinstance(net_act, str) or not net_act:
+                raise ValueError("net_action requires a string action")
+            if net_act in {"new_turn", "ice_turn"}: raise ValueError("NET/ICE turns advance through the shared encounter queue")
+            if args.get("run_id") not in runtime["runs"]:
+                raise ValueError(f"Unknown NET run: {args.get('run_id')}")
+            return self._net_step(state, args["run_id"], net_act, args.get("arguments", {}), randbelow)
         raise ValueError(f"Unknown solo action: {action}")
 
     @staticmethod

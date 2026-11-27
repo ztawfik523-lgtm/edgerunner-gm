@@ -258,10 +258,12 @@ def test_undo_last_restores_all_character_columns_and_rename_owner_audits(tmp_pa
     assert undone_hum["skills"] == char["skills"]
     assert undone_hum["detail"] == char["detail"]
 
-    # rename_owner_username logs an audit event per affected character
+    # transfer_owner logs an audit event per affected character
     before_count = len(store.audit_events(char["id"]))
-    affected = store.rename_owner_username("alice", "alice_new")
-    assert affected == [camp["id"]]
+    affected: set[str] = set()
+    with store.transfer_owner("alice", "alice_new", affected):
+        pass
+    assert affected == {camp["id"]}
     events = store.audit_events(char["id"])
     assert len(events) == before_count + 1
     assert events[-1]["before"]["detail"]["owner_username"] == "alice"

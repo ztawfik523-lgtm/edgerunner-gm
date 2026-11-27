@@ -16,7 +16,6 @@ import urllib.error
 import urllib.request
 
 BACKEND_UNIT = "redgm-backend.service"
-LEGACY_ST_UNIT = "redgm-sillytavern.service"
 MARKER = "# Managed by Cyberpunk RED GM launcher"
 BACKEND_URL = "http://127.0.0.1:8765/health"
 UI_URL = "http://127.0.0.1:8765/"
@@ -87,9 +86,8 @@ def _is_owned_unit(unit_dir: Path, unit: str) -> bool:
     return path.is_file() and MARKER in path.read_text(encoding="utf-8", errors="replace")
 
 
-def _owned_units(config_home: Path) -> set[str]:
-    unit_dir = config_home / "systemd" / "user"
-    return {unit for unit in (BACKEND_UNIT, LEGACY_ST_UNIT) if _is_owned_unit(unit_dir, unit)}
+def _backend_installed(config_home: Path) -> bool:
+    return _is_owned_unit(config_home / "systemd" / "user", BACKEND_UNIT)
 
 
 def install(
@@ -150,10 +148,6 @@ def install(
             "",
         )
     )
-    legacy_path = unit_dir / LEGACY_ST_UNIT
-    if _is_owned_unit(unit_dir, LEGACY_ST_UNIT):
-        _systemctl("stop", LEGACY_ST_UNIT)
-        legacy_path.unlink(missing_ok=True)
     _atomic_write(backend_path, backend_contents, 0o600)
     _atomic_write(desktop, f"{MARKER}\n{entry}", 0o644)
     _systemctl("daemon-reload", check=True)
@@ -199,8 +193,7 @@ def _open_ui(url: str, browser_mode: str = "auto") -> None:
 
 
 def start(config_home: Path, no_browser: bool = False, browser_mode: str = "auto") -> None:
-    owned = _owned_units(config_home)
-    if BACKEND_UNIT not in owned:
+    if not _backend_installed(config_home):
         raise LauncherError("Service is not installed. Run launcher.py install first.")
     active = _systemctl("is-active", "--quiet", BACKEND_UNIT).returncode == 0
     if _port_open(8765) and not active:
@@ -229,23 +222,16 @@ def start(config_home: Path, no_browser: bool = False, browser_mode: str = "auto
 
 
 def stop(config_home: Path) -> None:
-    owned = _owned_units(config_home)
-    if not owned:
+    if not _backend_installed(config_home):
         raise LauncherError("No managed Cyberpunk RED GM services are installed.")
-    errors = []
-    for unit in (LEGACY_ST_UNIT, BACKEND_UNIT):
-        if unit in owned:
-            result = _systemctl("stop", unit)
-            if result.returncode:
-                errors.append(result.stderr.strip() or f"Unable to stop {unit}")
-    if errors:
-        raise LauncherError("; ".join(errors))
+    result = _systemctl("stop", BACKEND_UNIT)
+    if result.returncode:
+        raise LauncherError(result.stderr.strip() or f"Unable to stop {BACKEND_UNIT}")
     print("Cyberpunk RED GM service stopped.")
 
 
 def status(config_home: Path) -> int:
-    owned = _owned_units(config_home)
-    if BACKEND_UNIT not in owned:
+    if not _backend_installed(config_home):
         print(f"{BACKEND_UNIT}: not installed")
         return 1
     result = _systemctl("is-active", BACKEND_UNIT)

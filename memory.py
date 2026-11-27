@@ -24,9 +24,6 @@ class CampaignMemory:
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, revision INTEGER NOT NULL,
                 state_json TEXT NOT NULL, session_number INTEGER NOT NULL DEFAULT 0,
                 is_primary INTEGER NOT NULL DEFAULT 0)""")
-            camp_cols = {r[1] for r in conn.execute("PRAGMA table_info(campaigns)")}
-            if "is_primary" not in camp_cols:
-                conn.execute("ALTER TABLE campaigns ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0")
             conn.execute("""CREATE TABLE IF NOT EXISTS campaign_members (
                 campaign_id TEXT NOT NULL REFERENCES campaigns(id),
                 character_id TEXT UNIQUE NOT NULL REFERENCES characters(id),
@@ -51,7 +48,7 @@ class CampaignMemory:
             return None
         result = dict(id=row["id"], name=row["name"], revision=row["revision"],
                       state=json.loads(row["state_json"]), session_number=row["session_number"],
-                      is_primary=bool(row["is_primary"]) if "is_primary" in row.keys() else False)
+                      is_primary=bool(row["is_primary"]))
         result["character_ids"] = [r[0] for r in conn.execute(
             "SELECT character_id FROM campaign_members WHERE campaign_id=? ORDER BY character_id", (row["id"],))]
         return result

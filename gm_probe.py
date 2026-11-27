@@ -61,7 +61,7 @@ class Transport:
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.api_token = (api_token if api_token is not None else os.environ.get("REDGM_API_TOKEN", "")).strip()
-        self.pin = (pin if pin is not None else os.environ.get("REDGM_PIN", "")).strip()
+        self.pin = (pin if pin is not None else os.environ.get("REDGM_ROOM_PIN", "")).strip()
 
     def backend_headers(self):
         hdrs = {}

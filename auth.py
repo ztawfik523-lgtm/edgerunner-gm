@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 from collections import deque
+from contextlib import ExitStack
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -13,7 +14,7 @@ import secrets
 import threading
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable, ContextManager
 
 from index_lock import index_lock
 from turnloop import _SETTINGS_LOCK, default_settings_path, read_settings_doc, write_settings_doc
@@ -25,6 +26,15 @@ _MAX_PIN_FAILURES = 20
 _PIN_WINDOW_SECONDS = 60.0
 _MAX_RATE_LIMIT_BUCKETS = 4096
 
+# Every shared-passcode / room-PIN session acts as this one identity. It is
+# reserved so no saved account can share it (and thus its characters).
+SHARED_USERNAME = "player"
+
+# Context manager factory run inside an account rename/delete: receives
+# (old_username, new_username or None for deletion) and must commit its own
+# changes only when the with-block exits cleanly.
+OwnerTransfer = Callable[[str, "str | None"], ContextManager[Any]]
+
 
 class AuthError(ValueError):
     """Raised on invalid credentials or auth payload."""
@@ -32,6 +42,16 @@ class AuthError(ValueError):
 
 class AuthRateLimitError(ValueError):
     """Raised after repeated failed login attempts."""
+
+
+def _secret_eq(supplied: str, expected: str) -> bool:
+    """Constant-time comparison that accepts any Unicode text."""
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _check_account_name(username: str) -> None:
+    if username.lower() == SHARED_USERNAME:
+        raise AuthError(f"The username '{SHARED_USERNAME}' is reserved for shared-passcode players.")
 
 
 def _b64e(data: bytes) -> str:
@@ -71,9 +91,11 @@ def verify_password(password: str, encoded: str) -> bool:
 class AuthManager:
     """Manages Admin/User accounts, shared passcodes, and HMAC session tokens."""
 
-    def __init__(self, settings_path: Path | None = None, *, room_pin: str = ""):
+    def __init__(self, settings_path: Path | None = None, *, room_pin: str = "", allow_open: bool = True):
         self._explicit_settings_path = settings_path.expanduser() if settings_path is not None else None
         self.room_pin = (room_pin or "").strip()
+        # Unconfigured auth grants "open" (admin-equivalent) access only on loopback binds.
+        self.allow_open = allow_open
         self._failures: dict[str, deque[float]] = {}
         self._rate_lock = threading.Lock()
         self._pin_failures: dict[str, deque[float]] = {}
@@ -274,7 +296,7 @@ class AuthManager:
             body, sig = token.strip().split(".", 1)
             secret, version = self._ensure_secret_and_version()
             expected_sig = _b64e(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
-            if not hmac.compare_digest(sig, expected_sig):
+            if not _secret_eq(sig, expected_sig):
                 return None
             payload = json.loads(_b64d(body).decode("utf-8"))
             if not isinstance(payload, dict):
@@ -347,7 +369,7 @@ class AuthManager:
                 # Reject legacy untyped tokens so deleted or changed accounts'
                 # pre-upgrade sessions cannot evade per-account revocation.
                 return None
-            return {"username": username, "role": role}
+            return {"username": username, "role": role, "kind": token_kind}
         except (ValueError, json.JSONDecodeError, TypeError):
             return None
 
@@ -364,6 +386,7 @@ class AuthManager:
                 "authenticated": True,
                 "role": verified["role"],
                 "username": verified["username"],
+                "token_kind": verified["kind"],
                 "admin_configured": self.is_admin_configured(),
                 "user_configured": self.is_user_configured(),
                 "user_passcode_configured": bool(auth.get("user_passcode_hash") or self.room_pin),
@@ -384,6 +407,7 @@ class AuthManager:
                     "authenticated": False,
                     "role": "anon",
                     "username": None,
+                    "token_kind": None,
                     "admin_configured": self.is_admin_configured(),
                     "user_configured": self.is_user_configured(),
                     "user_passcode_configured": bool(auth.get("user_passcode_hash") or self.room_pin),
@@ -392,14 +416,15 @@ class AuthManager:
                     "can_bootstrap": self.can_bootstrap(),
                     "detail": str(exc),
                 }
-            if self.room_pin and hmac.compare_digest(supplied_pin, self.room_pin):
+            if self.room_pin and _secret_eq(supplied_pin, self.room_pin):
                 self._clear_pin_failures(bucket)
                 return {
                     "auth_enabled": enabled,
                     "pin_only_mode": pin_only,
                     "authenticated": True,
                     "role": "user",
-                    "username": "player",
+                    "username": SHARED_USERNAME,
+                    "token_kind": "shared",
                     "admin_configured": self.is_admin_configured(),
                     "user_configured": self.is_user_configured(),
                     "user_passcode_configured": bool(auth.get("user_passcode_hash") or self.room_pin),
@@ -415,7 +440,8 @@ class AuthManager:
                     "pin_only_mode": pin_only,
                     "authenticated": True,
                     "role": "user",
-                    "username": "player",
+                    "username": SHARED_USERNAME,
+                    "token_kind": "shared",
                     "admin_configured": self.is_admin_configured(),
                     "user_configured": self.is_user_configured(),
                     "user_passcode_configured": True,
@@ -426,8 +452,8 @@ class AuthManager:
             self._record_pin_failure(bucket)
 
         if not enabled:
-            role = "open"
-            authenticated = True
+            role = "open" if self.allow_open else "anon"
+            authenticated = self.allow_open
         elif pin_only:
             role = "user"
             authenticated = False
@@ -444,6 +470,7 @@ class AuthManager:
             "authenticated": authenticated,
             "role": role,
             "username": None,
+            "token_kind": None,
             "admin_configured": self.is_admin_configured(),
             "user_configured": self.is_user_configured(),
             "user_passcode_configured": bool(auth.get("user_passcode_hash") or self.room_pin),
@@ -478,7 +505,7 @@ class AuthManager:
         env_admin = self._env_admin()
         if env_admin is not None and mode_clean in {"auto", "admin"}:
             adm_u, adm_p = env_admin
-            if (not uname_low or uname_low == adm_u.lower()) and hmac.compare_digest(pw, adm_p):
+            if (not uname_low or uname_low == adm_u.lower()) and _secret_eq(pw, adm_p):
                 self._clear_failures(bucket)
                 return {"token": self.issue_token(adm_u, "admin", token_kind="environment",
                                                   credential_binding=f"environment:{adm_p}"),
@@ -487,35 +514,11 @@ class AuthManager:
         env_user = self._env_user()
         if env_user is not None and mode_clean in {"auto", "user"}:
             usr_u, usr_p = env_user
-            if (not uname_low or uname_low == usr_u.lower()) and hmac.compare_digest(pw, usr_p):
+            if (not uname_low or uname_low == usr_u.lower()) and _secret_eq(pw, usr_p):
                 self._clear_failures(bucket)
                 return {"token": self.issue_token(usr_u, "user", token_kind="environment",
                                                   credential_binding=f"environment:{usr_p}"),
                         "role": "user", "username": usr_u, "expires_in": _TOKEN_TTL_SECONDS}
-
-        def _ensure_account_id(account_key: str, acc_entry: dict[str, Any]) -> str:
-            existing_id = acc_entry.get("account_id")
-            if isinstance(existing_id, str) and existing_id:
-                return existing_id
-            assigned: dict[str, str] = {}
-
-            def _backfill(cur: dict[str, Any]) -> dict[str, Any]:
-                accs = self._saved_accounts(cur)
-                target = accs.get(account_key)
-                if isinstance(target, dict):
-                    cur_id = target.get("account_id")
-                    if isinstance(cur_id, str) and cur_id:
-                        assigned["id"] = cur_id
-                    else:
-                        new_id = uuid.uuid4().hex
-                        target["account_id"] = new_id
-                        accs[account_key] = target
-                        cur["accounts"] = accs
-                        assigned["id"] = new_id
-                return cur
-
-            self._update_auth_section(_backfill)
-            return assigned.get("id") or uuid.uuid4().hex
 
         # 2. Check saved named accounts.
         if uname_low and uname_low in accounts:
@@ -523,11 +526,10 @@ class AuthManager:
             acc_role = acc["role"]
             if mode_clean in {"auto", acc_role} and verify_password(pw, acc["password_hash"]):
                 self._clear_failures(bucket)
-                account_id = _ensure_account_id(uname_low, acc)
                 return {
                     "token": self.issue_token(acc["username"], acc_role, token_kind="account",
                                               account_version=acc.get("token_version", 1),
-                                              account_id=account_id),
+                                              account_id=acc.get("account_id")),
                     "role": acc_role,
                     "username": acc["username"],
                     "expires_in": _TOKEN_TTL_SECONDS,
@@ -536,32 +538,32 @@ class AuthManager:
             # Allow password-only Admin login when only one saved admin account exists.
             admin_accs = [(k, a) for k, a in accounts.items() if a["role"] == "admin"]
             if mode_clean == "admin" and len(admin_accs) == 1 and verify_password(pw, admin_accs[0][1]["password_hash"]):
-                acc_key, acc = admin_accs[0]
+                acc = admin_accs[0][1]
                 self._clear_failures(bucket)
-                account_id = _ensure_account_id(acc_key, acc)
                 return {
                     "token": self.issue_token(acc["username"], "admin", token_kind="account",
                                               account_version=acc.get("token_version", 1),
-                                              account_id=account_id),
+                                              account_id=acc.get("account_id")),
                     "role": "admin",
                     "username": acc["username"],
                     "expires_in": _TOKEN_TTL_SECONDS,
                 }
 
-        # 3. Check shared User passcode / room PIN when signing in as User.
+        # 3. Check shared User passcode / room PIN when signing in as User. A
+        # typed username is ignored: everyone holding the shared secret is the
+        # same reserved identity, so nobody can claim another player's name.
         if mode_clean in {"auto", "user"}:
             passcode_hash = auth.get("user_passcode_hash")
-            label = uname or "player"
             if isinstance(passcode_hash, str) and verify_password(pw, passcode_hash):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(label, "user", token_kind="shared",
+                return {"token": self.issue_token(SHARED_USERNAME, "user", token_kind="shared",
                                                   credential_binding=f"passcode:{passcode_hash}"),
-                        "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
-            if self.room_pin and hmac.compare_digest(pw, self.room_pin):
+                        "role": "user", "username": SHARED_USERNAME, "expires_in": _TOKEN_TTL_SECONDS}
+            if self.room_pin and _secret_eq(pw, self.room_pin):
                 self._clear_failures(bucket)
-                return {"token": self.issue_token(label, "user", token_kind="shared",
+                return {"token": self.issue_token(SHARED_USERNAME, "user", token_kind="shared",
                                                   credential_binding=f"room-pin:{self.room_pin}"),
-                        "role": "user", "username": label, "expires_in": _TOKEN_TTL_SECONDS}
+                        "role": "user", "username": SHARED_USERNAME, "expires_in": _TOKEN_TTL_SECONDS}
 
         self._record_failure(bucket)
         raise AuthError("Invalid username or password")
@@ -583,8 +585,10 @@ class AuthManager:
         adm_hash = hash_password(admin_password)
         usr_name = (user_username or "").strip()
         usr_hash = hash_password(user_password) if user_password else None
-        if usr_hash and not usr_name:
-            usr_name = "player"
+        if usr_hash:
+            if not usr_name or len(usr_name) > 40:
+                raise AuthError("Player username must be 1-40 characters")
+            _check_account_name(usr_name)
         passcode_hash = hash_password(user_passcode) if user_passcode else None
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -669,7 +673,7 @@ class AuthManager:
         role = payload.get("role")
         user_passcode = payload.get("user_passcode")
         clear_passcode = bool(payload.get("clear_user_passcode"))
-        revoke_sessions = bool(payload.get("revoke_sessions") or payload.get("revoke_all_tokens"))
+        revoke_sessions = bool(payload.get("revoke_all_tokens"))
         has_guest = "allow_guest_users" in payload and payload["allow_guest_users"] is not None
         has_signup = "allow_self_signup" in payload and payload["allow_self_signup"] is not None
 
@@ -688,6 +692,8 @@ class AuthManager:
                     raise AuthError("Username must be at most 40 characters")
                 key = username.lower()
                 existing = accs.get(key)
+                if existing is None:
+                    _check_account_name(username)
                 default_role = existing.get("role", "user") if existing else "user"
                 target_role = str(role or default_role).strip().lower()
                 if target_role not in {"admin", "user"}:
@@ -732,25 +738,29 @@ class AuthManager:
         self._update_auth_section(_apply)
         return self.list_accounts()
 
-    def delete_account(self, username: str) -> dict[str, Any]:
+    def delete_account(self, username: str, *, owner_transfer: OwnerTransfer | None = None) -> dict[str, Any]:
+        """Delete a saved account; ``owner_transfer(name, None)`` releases its game ownership in the same commit."""
         target = (username or "").strip().lower()
         if not target:
             raise AuthError("Username is required")
         env_admin = self._env_admin()
 
-        def _remove(cur: dict[str, Any]) -> dict[str, Any]:
-            accs = self._saved_accounts(cur)
-            if target not in accs:
-                raise AuthError(f"Saved account not found: {username}")
-            if accs[target]["role"] == "admin":
-                other_admins = [k for k, v in accs.items() if k != target and v["role"] == "admin"]
-                if not other_admins and env_admin is None:
-                    raise AuthError("Cannot delete the last admin account")
-            del accs[target]
-            cur["accounts"] = accs
-            return cur
+        with ExitStack() as stack:
+            def _remove(cur: dict[str, Any]) -> dict[str, Any]:
+                accs = self._saved_accounts(cur)
+                if target not in accs:
+                    raise AuthError(f"Saved account not found: {username}")
+                if accs[target]["role"] == "admin":
+                    other_admins = [k for k, v in accs.items() if k != target and v["role"] == "admin"]
+                    if not other_admins and env_admin is None:
+                        raise AuthError("Cannot delete the last admin account")
+                if owner_transfer is not None:
+                    stack.enter_context(owner_transfer(accs[target]["username"], None))
+                del accs[target]
+                cur["accounts"] = accs
+                return cur
 
-        self._update_auth_section(_remove)
+            self._update_auth_section(_remove)
         return self.list_accounts()
 
     def register_user(self, *, username: str, password: str, bucket: str = "default") -> dict[str, Any]:
@@ -762,6 +772,7 @@ class AuthManager:
         uname = (username or "").strip()
         if not uname or len(uname) > 40:
             raise AuthError("Username must be 1-40 characters")
+        _check_account_name(uname)
         if not isinstance(password, str) or len(password) < 4 or len(password) > 256:
             raise AuthError("Password must be 4-256 characters")
         key = uname.lower()
@@ -808,8 +819,15 @@ class AuthManager:
         current_password: str,
         new_username: str | None = None,
         new_password: str | None = None,
+        bucket: str = "default",
+        owner_transfer: OwnerTransfer | None = None,
     ) -> dict[str, Any]:
-        """Allow a signed-in saved account user (or admin) to update their own username and/or password."""
+        """Allow a signed-in saved account user (or admin) to update their own username and/or password.
+
+        Wrong current passwords count against the sign-in rate limit for ``bucket``.
+        On rename, ``owner_transfer(old, new)`` moves game ownership in the same commit.
+        """
+        self._check_rate_limit(bucket)
         cur_name = (current_username or "").strip()
         if not cur_name:
             raise AuthError("You must be signed in with a named account to update account settings.")
@@ -822,6 +840,8 @@ class AuthManager:
             raise AuthError("Username must be 1-40 characters")
         target_key = target_name.lower()
         change_name = target_key != cur_key or target_name != cur_name
+        if target_key != cur_key:
+            _check_account_name(target_name)
         change_pw = isinstance(new_password, str) and len(new_password) > 0
         if not change_name and not change_pw:
             raise AuthError("Provide a new username or a new password.")
@@ -835,17 +855,22 @@ class AuthManager:
         if change_name and ((env_admin and target_key == env_admin[0].lower()) or (env_user and target_key == env_user[0].lower())):
             raise AuthError("That username is already taken.")
 
-        updated_meta: dict[str, str] = {}
+        updated_meta: dict[str, Any] = {}
+        wrong_password = False
 
         def _apply(cur: dict[str, Any]) -> dict[str, Any]:
+            nonlocal wrong_password
             accs = self._saved_accounts(cur)
             entry = accs.get(cur_key)
             if entry is None:
                 raise AuthError("Only saved accounts can update their username or password here.")
             if not verify_password(current_password, entry["password_hash"]):
+                wrong_password = True
                 raise AuthError("Current password is incorrect.")
             if target_key != cur_key and target_key in accs:
                 raise AuthError("That username is already taken.")
+            if change_name and owner_transfer is not None:
+                stack.enter_context(owner_transfer(entry["username"], target_name))
             next_entry = dict(entry)
             next_entry["username"] = target_name
             if change_pw:
@@ -862,7 +887,14 @@ class AuthManager:
             updated_meta["account_id"] = next_entry.get("account_id")
             return cur
 
-        self._update_auth_section(_apply)
+        try:
+            with ExitStack() as stack:
+                self._update_auth_section(_apply)
+        except AuthError:
+            if wrong_password:
+                self._record_failure(bucket)
+            raise
+        self._clear_failures(bucket)
         final_user = updated_meta["username"]
         final_role = updated_meta["role"]
         return {

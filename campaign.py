@@ -10,9 +10,9 @@ import os
 import re
 import sqlite3
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import rules_eval
 
@@ -68,16 +68,14 @@ class CampaignStore:
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, stats TEXT NOT NULL,
                     skills TEXT NOT NULL, hp INTEGER NOT NULL, max_hp INTEGER NOT NULL,
                     humanity INTEGER NOT NULL, luck_remaining INTEGER NOT NULL,
-                    money INTEGER NOT NULL, inventory TEXT NOT NULL, revision INTEGER NOT NULL
+                    money INTEGER NOT NULL, inventory TEXT NOT NULL, revision INTEGER NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}'
                 )""")
             conn.execute("""CREATE TABLE IF NOT EXISTS audit (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT, character_id TEXT NOT NULL,
                     revision INTEGER NOT NULL, before_json TEXT, after_json TEXT NOT NULL,
                     reason TEXT NOT NULL, operation_id TEXT UNIQUE NOT NULL, payload TEXT NOT NULL
                 )""")
-            columns = {r[1] for r in conn.execute("PRAGMA table_info(characters)")}
-            if "detail" not in columns:
-                conn.execute("ALTER TABLE characters ADD COLUMN detail TEXT NOT NULL DEFAULT '{}'")
             conn.commit()
         finally:
             conn.close()
@@ -529,61 +527,73 @@ class CampaignStore:
                          (str(character_id), updated["revision"], _json(before), _json(updated), reason, operation_id, payload))
             return updated
 
-    def rename_owner_username(self, old_username: str, new_username: str) -> list[str]:
-        """Update detail.owner_username on all characters owned by old_username; return affected campaign IDs."""
-        old_clean = (old_username or "").strip().lower()
-        new_clean = (new_username or "").strip()
-        if not old_clean or not new_clean:
-            return []
-        changed_char_ids: set[str] = set()
-        affected_campaigns: list[str] = []
+    @contextmanager
+    def transfer_owner(self, old_username: str, new_username: str | None, affected_campaigns: set[str]) -> Iterator[None]:
+        """Move character ownership and chat authorship from one account name to another.
+
+        ``new_username=None`` (account deletion) releases ownership instead, so a
+        later account reusing the name inherits nothing. Changes commit only when
+        the with-block exits cleanly, letting the caller pair them with its own
+        account write. IDs of campaigns that changed are added to ``affected_campaigns``.
+        """
+        old_clean = (old_username or "").strip()
+        new_clean = (new_username or "").strip() or None
+        if not old_clean:
+            raise ValueError("old username is required")
+        old_key = old_clean.lower()
         with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute("SELECT * FROM characters").fetchall()
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             op_batch = uuid.uuid4().hex[:12]
-            for row in rows:
+            changed_char_ids: list[str] = []
+            for row in conn.execute("SELECT * FROM characters").fetchall():
                 before = self._record(row)
-                detail = before.get("detail") if isinstance(before.get("detail"), dict) else {}
-                owner = str(detail.get("owner_username") or "").strip()
-                if owner.lower() == old_clean:
-                    after = copy.deepcopy(before)
-                    if not isinstance(after.get("detail"), dict):
-                        after["detail"] = {}
+                owner = str(before["detail"].get("owner_username") or "").strip()
+                if owner.lower() != old_key:
+                    continue
+                after = copy.deepcopy(before)
+                if new_clean is None:
+                    after["detail"].pop("owner_username", None)
+                    reason = f"Owner account {owner} deleted; ownership released"
+                else:
                     after["detail"]["owner_username"] = new_clean
-                    after["revision"] = int(before["revision"]) + 1
-                    conn.execute(
-                        "UPDATE characters SET detail=?, revision=? WHERE id=?",
-                        (_json(after["detail"]), after["revision"], before["id"]),
-                    )
-                    op_id = f"rename_owner:{op_batch}:{before['id']}"
-                    payload = _json({
-                        "action": "rename_owner_username",
-                        "character_id": before["id"],
-                        "old_username": owner,
-                        "new_username": new_clean,
-                    })
-                    conn.execute(
-                        "INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
-                        (
-                            before["id"],
-                            after["revision"],
-                            _json(before),
-                            _json(after),
-                            f"Owner username renamed from {owner} to {new_clean}",
-                            op_id,
-                            payload,
-                        ),
-                    )
-                    changed_char_ids.add(str(before["id"]))
-            if changed_char_ids:
-                has_members = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_members'"
-                ).fetchone()
-                if has_members:
-                    placeholders = ",".join("?" for _ in changed_char_ids)
-                    for crow in conn.execute(
+                    reason = f"Owner username renamed from {owner} to {new_clean}"
+                after["revision"] = int(before["revision"]) + 1
+                conn.execute(
+                    "UPDATE characters SET detail=?, revision=? WHERE id=?",
+                    (_json(after["detail"]), after["revision"], before["id"]),
+                )
+                payload = _json({
+                    "action": "transfer_owner",
+                    "character_id": before["id"],
+                    "old_username": owner,
+                    "new_username": new_clean,
+                })
+                conn.execute(
+                    "INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
+                    (before["id"], after["revision"], _json(before), _json(after), reason,
+                     f"transfer_owner:{op_batch}:{before['id']}", payload),
+                )
+                changed_char_ids.append(str(before["id"]))
+            if changed_char_ids and "campaign_members" in tables:
+                placeholders = ",".join("?" for _ in changed_char_ids)
+                affected_campaigns.update(
+                    str(r[0]) for r in conn.execute(
                         f"SELECT DISTINCT campaign_id FROM campaign_members WHERE character_id IN ({placeholders})",
-                        tuple(changed_char_ids),
-                    ).fetchall():
-                        affected_campaigns.append(str(crow["campaign_id"]))
-        return affected_campaigns
+                        changed_char_ids,
+                    )
+                )
+            if "chat_messages" in tables:
+                for row in conn.execute(
+                    "SELECT id, campaign_id, metadata_json FROM chat_messages WHERE metadata_json LIKE '%author_username%'"
+                ).fetchall():
+                    meta = json.loads(row["metadata_json"])
+                    if str(meta.get("author_username") or "").strip().lower() != old_key:
+                        continue
+                    if new_clean is None:
+                        meta.pop("author_username", None)
+                    else:
+                        meta["author_username"] = new_clean
+                    conn.execute("UPDATE chat_messages SET metadata_json=? WHERE id=?", (_json(meta), row["id"]))
+                    affected_campaigns.add(str(row["campaign_id"]))
+            yield

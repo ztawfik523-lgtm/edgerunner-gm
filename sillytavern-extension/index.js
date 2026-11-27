@@ -13,9 +13,8 @@ function backendUrl() { return DEFAULT_BACKEND; }
 function authHeaders() {
     const headers = {};
     let token = globalThis.REDGM_API_TOKEN || '';
-    let pin = globalThis.REDGM_PIN || '';
+    let pin = globalThis.REDGM_ROOM_PIN || '';
     try {
-        if (!token && typeof globalThis.localStorage?.getItem === 'function') token = globalThis.localStorage.getItem('redgm:authToken') || '';
         if (!pin && typeof globalThis.localStorage?.getItem === 'function') pin = globalThis.localStorage.getItem('redgm:roomPin') || '';
     } catch (_) { /* storage unavailable */ }
     if (String(token).trim()) headers.Authorization = `Bearer ${String(token).trim()}`;

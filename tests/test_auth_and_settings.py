@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from auth import AuthError, AuthManager, AuthRateLimitError, hash_password, verify_password
 from gameplay import GameplayService
 import redkb
+import server.security
 from tests.test_library import _create_rules_db
 from turnloop import (
     DEFAULT_PROMPT_TEMPLATES,
@@ -226,14 +227,14 @@ def test_pin_is_player_only_and_json_bodies_are_bounded(tmp_path: Path, monkeypa
     client.cookies.clear()
     assert client.get("/v1/settings/all", headers=pin_headers).status_code == 403
 
-    monkeypatch.setattr(redkb, "_AUTH_JSON_MAX_BYTES", 128)
+    monkeypatch.setattr(server.security, "_AUTH_JSON_MAX_BYTES", 128)
     oversized_auth = '{"username":"runner","password":"' + ("x" * 200) + '"}'
     assert client.post(
         "/v1/auth/login", content=oversized_auth,
         headers={"Content-Type": "application/json"},
     ).status_code == 413
 
-    monkeypatch.setattr(redkb, "_JSON_MAX_BYTES", 128)
+    monkeypatch.setattr(server.security, "_JSON_MAX_BYTES", 128)
     oversized_json = '{"value":"' + ("x" * 200) + '"}'
     assert client.post(
         "/v1/chat/branch", content=oversized_json,
@@ -264,7 +265,7 @@ def test_pin_is_player_only_and_json_bodies_are_bounded(tmp_path: Path, monkeypa
             "path": "/v1/chat/turn",
             "headers": [(b"content-type", b"application/json")],
         }
-        await redkb._JsonBodyLimitMiddleware(inner_app)(scope, receive, send)
+        await server.security._JsonBodyLimitMiddleware(inner_app)(scope, receive, send)
         assert sent[0]["status"] == 413
         assert not reached_app
 
@@ -316,7 +317,7 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     user_token = login_user.json()["token"]
     assert login_user.json()["role"] == "user"
 
-    user_headers = {"X-RedGM-Token": user_token}
+    user_headers = {"Authorization": "Bearer " + user_token}
     # Normal play features work for User; campaign creation/mutation & export are Admin-only.
     pub = client.get("/v1/settings/public", headers=user_headers)
     assert pub.status_code == 200
@@ -331,7 +332,7 @@ def test_http_admin_vs_user_role_enforcement(tmp_path: Path, monkeypatch):
     assert blocked_create.status_code == 403
 
     # Admin creates campaign; user cannot mutate campaign, clocks, or export chat.
-    admin_headers = {"X-RedGM-Token": admin_token}
+    admin_headers = {"Authorization": "Bearer " + admin_token}
     created = client.post(
         "/v1/game",
         headers=admin_headers,
@@ -565,7 +566,7 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
     )
     assert setup.status_code == 200
     admin_token = setup.json()["token"]
-    admin_headers = {"X-RedGM-Token": admin_token}
+    admin_headers = {"Authorization": "Bearer " + admin_token}
 
     # Player self-registers without admin creating an account for them.
     client.cookies.clear()
@@ -573,7 +574,7 @@ def test_player_self_registration_and_campaign_primary_delete(tmp_path, monkeypa
     assert reg.status_code == 200
     assert reg.json()["role"] == "user"
     assert reg.json()["username"] == "choom_alice"
-    alice_headers = {"X-RedGM-Token": reg.json()["token"]}
+    alice_headers = {"Authorization": "Bearer " + reg.json()["token"]}
 
     # Duplicate username is rejected.
     dup = client.post("/v1/auth/register", json={"username": "choom_alice", "password": "other-pass"})
@@ -615,13 +616,13 @@ def test_delete_character_requires_claim_or_admin(tmp_path, monkeypatch):
         client,
         {"admin_username": "gm", "admin_password": "admin-password-1", "allow_self_signup": True},
     )
-    admin_headers = {"X-RedGM-Token": setup.json()["token"]}
+    admin_headers = {"Authorization": "Bearer " + setup.json()["token"]}
     client.cookies.clear()
     alice_reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
-    alice_headers = {"X-RedGM-Token": alice_reg.json()["token"]}
+    alice_headers = {"Authorization": "Bearer " + alice_reg.json()["token"]}
     client.cookies.clear()
     bob_reg = client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"})
-    bob_headers = {"X-RedGM-Token": bob_reg.json()["token"]}
+    bob_headers = {"Authorization": "Bearer " + bob_reg.json()["token"]}
 
     camp = client.post(
         "/v1/game",
@@ -746,7 +747,7 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
         client, {"admin_username": "admin", "admin_password": "admin-password-1"}
     )
     assert setup.status_code == 200
-    admin_headers = {"X-RedGM-Token": setup.json()["token"]}
+    admin_headers = {"Authorization": "Bearer " + setup.json()["token"]}
 
     # Initially unindexed
     st0 = client.get("/v1/corebook/status", headers=admin_headers)
@@ -856,58 +857,31 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     assert "Visual UI flair" not in narrator_sys
 
 
-def test_legacy_account_id_backfill_no_temp_keys_and_auth_body_limit(tmp_path, monkeypatch):
+def test_recreated_username_invalidates_tokens_no_temp_keys_and_auth_body_limit(tmp_path, monkeypatch):
     import json
     from auth import AuthManager, hash_password
-    from turnloop import read_settings_doc, write_settings_doc
+    from turnloop import read_settings_doc
 
     rules_db = tmp_path / "rules.sqlite"
     camp_db = tmp_path / "campaign.sqlite"
     settings_path = tmp_path / "settings.json"
     monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
 
-    # Pre-seed a legacy account without account_id
     auth = AuthManager(settings_path=settings_path)
-    write_settings_doc(
-        {
-            "auth": {
-                "secret": "s" * 64,
-                "token_version": 1,
-                "allow_self_signup": True,
-                "accounts": {
-                    "legacyuser": {
-                        "username": "legacyuser",
-                        "role": "user",
-                        "password_hash": hash_password("legacy-pass-1"),
-                        "token_version": 1,
-                    },
-                    "admin": {
-                        "username": "admin",
-                        "role": "admin",
-                        "password_hash": hash_password("admin-pass-1"),
-                        "token_version": 1,
-                        "account_id": "adm-1",
-                    },
-                },
-            }
-        },
-        settings_path,
-    )
-
-    # Logging in backfills account_id and issues a verifiable token
-    login_res = auth.authenticate(username="legacyuser", password="legacy-pass-1")
-    assert auth.verify_token(login_res["token"]) == {"username": "legacyuser", "role": "user"}
-    saved_doc = read_settings_doc(settings_path)
-    assert saved_doc["auth"]["accounts"]["legacyuser"].get("account_id")
+    auth.setup_initial(admin_username="admin", admin_password="admin-pass-1")
+    first = auth.register_user(username="reuser", password="reuser-pass-1")
+    login_res = auth.authenticate(username="reuser", password="reuser-pass-1")
+    assert auth.verify_token(login_res["token"]) == {"username": "reuser", "role": "user", "kind": "account"}
 
     # Deleting and recreating the same username invalidates the old token
-    auth.delete_account("legacyuser")
-    auth.register_user(username="legacyuser", password="legacy-pass-2")
+    auth.delete_account("reuser")
+    auth.register_user(username="reuser", password="reuser-pass-2")
     assert auth.verify_token(login_res["token"]) is None
+    assert auth.verify_token(first["token"]) is None
 
     # Registering a new user does not leave _create_account_id in settings.json
     reg_res = auth.register_user(username="newuser", password="newuser-pass-1")
-    assert auth.verify_token(reg_res["token"]) == {"username": "newuser", "role": "user"}
+    assert auth.verify_token(reg_res["token"]) == {"username": "newuser", "role": "user", "kind": "account"}
     saved_auth = read_settings_doc(settings_path)["auth"]
     assert "_create_account_id" not in saved_auth
     assert "_setup_adm_id" not in saved_auth
@@ -981,10 +955,10 @@ def test_llm_override_hardening_and_origin_key_stripping(tmp_path: Path, monkeyp
         client,
         {"admin_username": "gm", "admin_password": "gm-password-1", "allow_self_signup": True},
     )
-    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    admin_headers = {"Authorization": "Bearer " + boot.json()["token"]}
     client.cookies.clear()
     reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
-    alice_headers = {"X-RedGM-Token": reg.json()["token"]}
+    alice_headers = {"Authorization": "Bearer " + reg.json()["token"]}
 
     camp = client.post(
         "/v1/game",
@@ -1051,10 +1025,10 @@ def test_admin_and_pin_only_permission_gates(tmp_path: Path, monkeypatch):
         client,
         {"admin_username": "gm", "admin_password": "gm-password-1", "allow_self_signup": True},
     )
-    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    admin_headers = {"Authorization": "Bearer " + boot.json()["token"]}
     client.cookies.clear()
     reg = client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})
-    alice_headers = {"X-RedGM-Token": reg.json()["token"]}
+    alice_headers = {"Authorization": "Bearer " + reg.json()["token"]}
 
     camp = client.post(
         "/v1/game",
@@ -1180,11 +1154,11 @@ def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monk
             "allow_guest_users": True,
         },
     )
-    admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+    admin_headers = {"Authorization": "Bearer " + boot.json()["token"]}
     client.cookies.clear()
-    alice_headers = {"X-RedGM-Token": client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"}).json()["token"]}
+    alice_headers = {"Authorization": "Bearer " + client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"}).json()["token"]}
     client.cookies.clear()
-    bob_headers = {"X-RedGM-Token": client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"}).json()["token"]}
+    bob_headers = {"Authorization": "Bearer " + client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"}).json()["token"]}
     client.cookies.clear()
 
     camp = client.post(
@@ -1337,4 +1311,6 @@ def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monk
     # Alice can update and delete her own message; Admin can edit/delete any message.
     assert client.post("/v1/chat/message/update", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": alice_user_msg["id"], "content": "Alice edits her action"}).status_code == 200
     assert client.post("/v1/chat/message/update", headers=admin_headers, json={"campaign_id": camp["id"], "message_id": asst_msg["id"], "content": "GM edited"}).status_code == 200
-    assert client.post("/v1/chat/delete", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": roll_res.json()["message"]["id"]}).status_code == 200
+    # Players may only delete single messages: a branch delete would remove others' replies too.
+    assert client.post("/v1/chat/delete", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": roll_res.json()["message"]["id"], "scope": "branch"}).status_code == 403
+    assert client.post("/v1/chat/delete", headers=alice_headers, json={"campaign_id": camp["id"], "message_id": roll_res.json()["message"]["id"], "scope": "single"}).status_code == 200
