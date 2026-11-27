@@ -13,7 +13,10 @@ class FakeTransport:
         self.posts = []
         self.gets = []
 
-    def get_json(self, url, timeout=30):
+    def backend_headers(self):
+        return {}
+
+    def get_json(self, url, timeout=30, headers=None):
         self.gets.append(url)
         if url.endswith("csrf-token"):
             return {"token": "csrf"}
