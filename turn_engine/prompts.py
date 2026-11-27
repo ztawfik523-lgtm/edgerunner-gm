@@ -285,7 +285,7 @@ def build_planner_messages(
         f"{custom_lines}"
         "Schema:\n"
         "{\n"
-        '  "checks": [{"actor": "handle_or_npc", "skill": "Handgun|Interface|Perception|...", "stat": "REF|INT|ROLE|...", "dv": 13, "modifier": 0, "luck": 0, "overclock": false, "npc": false, "reason": "..."}],\n'
+        '  "checks": [{"actor": "handle_or_npc", "skill": "Handgun|Interface|Perception|...", "stat": "REF|INT|ROLE|...", "dv": 13, "modifier": 0, "npc": false, "reason": "..."}],\n'
         '  "start_time": "22:15",\n'
         '  "time_elapsed_minutes": 0,\n'
         '  "state_ops": [{"type": "update_campaign", "changes": {"scene": "5th & Main, Night Market loading dock", "summary": "...", "npcs": {"NPC Handle": "Role, location — Disposition (Neutral 0); tie-in"}, "npc_identities": {"NPC Handle": {"real_name": "Optional legal name", "real_name_hidden": true, "personality": "temperament/traits", "speech_style": "cadence/verbal quirks"}}, "pc_locations": {"PC Handle": "Location if split"}, "all_together": "Shared location if reunited", "objectives": {"Clear your name": "Active"}, "discoveries": {"Topic": "Observed clue"}}, "reason": "..."}],\n'
@@ -304,7 +304,6 @@ def build_planner_messages(
         f"{guidance_line}"
         f"Overclock requested by player: {overclock}.\n"
         f"Pre-committed LUCK by player: {max(0, int(luck_spend))}.\n"
-        f"Pre-rolled server dice pool available if needed: {json.dumps(prep['dice_pool'])}.\n"
         f"Narrative Memory: {json.dumps(state)}\n"
         f"NPC Identities (Respect real_name_hidden): {json.dumps(npc_profiles)}\n"
         f"Solo Engine State: {json.dumps(solo_summary)}\n"
@@ -497,7 +496,7 @@ def build_narrator_messages(
             f"\n- Single-Pass Player Stakes: Overclock requested={bool(overclock)}, Pre-committed LUCK={max(0, int(luck_spend))}.\n"
             "At the very end of your reply, if rules checks, state updates, clocks, secrets, or homebrew additions are needed, "
             "append ONE <gm_ops>{...}</gm_ops> block matching this JSON schema:\n"
-            '<gm_ops>{"checks":[{"actor":"handle_or_npc","skill":"...","stat":"REF|INT|ROLE|...","dv":13,"modifier":0,"luck":0,"overclock":false,"npc":false,"reason":"..."}],'
+            '<gm_ops>{"checks":[{"actor":"handle_or_npc","skill":"...","stat":"REF|INT|ROLE|...","dv":13,"modifier":0,"npc":false,"reason":"..."}],'
             '"time_elapsed_minutes":0,'
             '"state_ops":[{"type":"update_campaign|update_character","changes":{},"reason":"..."}],'
             '"solo_ops":[],"clock_ops":[],"gm_secrets":{},"new_homebrew":[]}</gm_ops>'
@@ -676,7 +675,7 @@ def build_think_planner_messages(
         "- Respect Information Fog-of-War: set realistic DVs (typically 9/13/15/17/21/24) when details are hidden, subtle, deceptive, or specialized.\n"
         "Schema:\n"
         "{\n"
-        '  "checks": [{"actor": "handle", "skill": "Perception|Human Perception|Streetwise|Local Expert|Education|Tactics|Criminology|Deduction|Electronics/Security Tech|Cybertech|Library Search|Tracking|Conceal/Reveal Object", "stat": "INT|EMP|COOL|TECH", "dv": 13, "modifier": 0, "luck": 0, "overclock": false, "npc": false, "reason": "..."}],\n'
+        '  "checks": [{"actor": "handle", "skill": "Perception|Human Perception|Streetwise|Local Expert|Education|Tactics|Criminology|Deduction|Electronics/Security Tech|Cybertech|Library Search|Tracking|Conceal/Reveal Object", "stat": "INT|EMP|COOL|TECH", "dv": 13, "modifier": 0, "npc": false, "reason": "..."}],\n'
         '  "new_homebrew": [],\n'
         '  "gm_notes": "what is immediately obvious vs gated behind the check"\n'
         "}\n"
@@ -687,7 +686,6 @@ def build_think_planner_messages(
         f"{guidance_line}"
         f"Overclock requested by player: {overclock}.\n"
         f"Pre-committed LUCK by player: {max(0, int(luck_spend))}.\n"
-        f"Pre-rolled server dice pool available if needed: {json.dumps(prep['dice_pool'])}.\n"
         f"Narrative Memory: {json.dumps(state)}\n"
         f"NPC Identities (Respect real_name_hidden): {json.dumps(npc_profiles)}\n"
         f"Solo Engine State: {json.dumps(solo_summary)}\n"
@@ -825,7 +823,7 @@ def build_think_narrator_messages(
             "At the very end of your reply, ONLY if an observation/knowledge/recall check "
             f"({_THINK_OBSERVATION_SKILLS}) is needed, append ONE <gm_ops>{{...}}</gm_ops> block with "
             '"time_elapsed_minutes":0, "state_ops":[], "solo_ops":[], "clock_ops":[], "gm_secrets":{}:\n'
-            '<gm_ops>{"checks":[{"actor":"handle","skill":"Perception","stat":"INT","dv":13,"modifier":0,"luck":0,"overclock":false,"npc":false,"reason":"..."}],'
+            '<gm_ops>{"checks":[{"actor":"handle","skill":"Perception","stat":"INT","dv":13,"modifier":0,"npc":false,"reason":"..."}],'
             '"time_elapsed_minutes":0,"state_ops":[],"solo_ops":[],"clock_ops":[],"gm_secrets":{},"new_homebrew":[]}</gm_ops>'
         )
     hist_win = max(4, min(500, int(t_settings.get("history_window", 14))))

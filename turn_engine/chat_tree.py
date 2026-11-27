@@ -41,9 +41,30 @@ class ChatTreeStore:
                 )
                 """
             )
-            cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_messages)")}
-            if "channel_id" not in cols:
-                conn.execute("ALTER TABLE chat_messages ADD COLUMN channel_id TEXT NOT NULL DEFAULT 'main'")
+            # Branch-keyed GM snapshots and compression watermarks are pruned/re-pointed by delete_message.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS turn_gm_snapshots (
+                    message_id TEXT PRIMARY KEY,
+                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+                    parent_id TEXT,
+                    secrets_json TEXT NOT NULL DEFAULT '{}',
+                    clocks_json TEXT NOT NULL DEFAULT '[]'
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS campaign_compressions (
+                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+                    channel_id TEXT NOT NULL DEFAULT 'main',
+                    leaf_id TEXT,
+                    compressed_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (campaign_id, channel_id)
+                )
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_camp_parent ON chat_messages(campaign_id, parent_id, created_at)"
             )
@@ -58,11 +79,10 @@ class ChatTreeStore:
 
     @staticmethod
     def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
-        keys = row.keys()
         return {
             "id": row["id"],
             "campaign_id": row["campaign_id"],
-            "channel_id": row["channel_id"] if "channel_id" in keys and row["channel_id"] else "main",
+            "channel_id": row["channel_id"],
             "parent_id": row["parent_id"],
             "role": row["role"],
             "content": row["content"],
@@ -82,6 +102,14 @@ class ChatTreeStore:
                 (campaign_id, message_id),
             ).fetchone()
             return self._row_dict(row) if row else None
+
+    def get_children(self, campaign_id: str, message_id: str) -> list[dict[str, Any]]:
+        with closing(self.store._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_messages WHERE campaign_id=? AND parent_id=? ORDER BY created_at, id",
+                (campaign_id, message_id),
+            ).fetchall()
+        return [self._row_dict(r) for r in rows]
 
     def has_children(self, campaign_id: str, message_id: str) -> bool:
         with closing(self.store._connect()) as conn:
@@ -124,7 +152,7 @@ class ChatTreeStore:
                 ).fetchone()
                 if not parent:
                     raise ValueError(f"parent message not found in campaign: {parent_id}")
-                parent_chan = self._norm_channel(parent["channel_id"] if "channel_id" in parent.keys() else "main")
+                parent_chan = self._norm_channel(parent["channel_id"])
                 if parent_chan != chan:
                     chan = parent_chan
             if activate:
@@ -281,7 +309,7 @@ class ChatTreeStore:
             ).fetchone()
             if target is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
-            target_chan = self._norm_channel(target["channel_id"] if "channel_id" in target.keys() else "main")
+            target_chan = self._norm_channel(target["channel_id"])
             rows = conn.execute(
                 "SELECT * FROM chat_messages WHERE campaign_id=? AND channel_id=? ORDER BY created_at, id",
                 (campaign_id, target_chan),
@@ -369,7 +397,7 @@ class ChatTreeStore:
             ).fetchone()
             if target_meta is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
-            target_chan = self._norm_channel(target_meta["channel_id"] if "channel_id" in target_meta.keys() else "main")
+            target_chan = self._norm_channel(target_meta["channel_id"])
             rows = conn.execute(
                 "SELECT id, parent_id, is_active, created_at FROM chat_messages WHERE campaign_id=? AND channel_id=? ORDER BY created_at, id",
                 (campaign_id, target_chan),
@@ -384,21 +412,6 @@ class ChatTreeStore:
             target_row = by_id[message_id]
             parent_id = target_row["parent_id"]
             was_active = bool(target_row["is_active"])
-            has_snapshots = bool(
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_gm_snapshots'"
-                ).fetchone()
-            )
-            has_compressions = bool(
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_compressions'"
-                ).fetchone()
-            )
-            has_pre_snapshots = bool(
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_pre_snapshots'"
-                ).fetchone()
-            )
 
             if scope == "single":
                 direct_children = children.get(message_id, [])
@@ -415,27 +428,19 @@ class ChatTreeStore:
                                     "UPDATE chat_messages SET is_active=0 WHERE campaign_id=? AND id=?",
                                     (campaign_id, ch["id"]),
                                 )
-                    if has_snapshots:
-                        conn.execute(
-                            "UPDATE turn_gm_snapshots SET parent_id=? WHERE campaign_id=? AND parent_id=?",
-                            (parent_id, campaign_id, message_id),
-                        )
-                conn.execute("DELETE FROM chat_messages WHERE campaign_id=? AND id=?", (campaign_id, message_id))
-                if has_snapshots:
                     conn.execute(
-                        "DELETE FROM turn_gm_snapshots WHERE campaign_id=? AND message_id=?",
-                        (campaign_id, message_id),
-                    )
-                if has_pre_snapshots:
-                    conn.execute(
-                        "DELETE FROM turn_pre_snapshots WHERE campaign_id=? AND user_message_id=?",
-                        (campaign_id, message_id),
-                    )
-                if has_compressions:
-                    conn.execute(
-                        "UPDATE campaign_compressions SET leaf_id=? WHERE campaign_id=? AND leaf_id=?",
+                        "UPDATE turn_gm_snapshots SET parent_id=? WHERE campaign_id=? AND parent_id=?",
                         (parent_id, campaign_id, message_id),
                     )
+                conn.execute("DELETE FROM chat_messages WHERE campaign_id=? AND id=?", (campaign_id, message_id))
+                conn.execute(
+                    "DELETE FROM turn_gm_snapshots WHERE campaign_id=? AND message_id=?",
+                    (campaign_id, message_id),
+                )
+                conn.execute(
+                    "UPDATE campaign_compressions SET leaf_id=? WHERE campaign_id=? AND leaf_id=?",
+                    (parent_id, campaign_id, message_id),
+                )
                 excluded = {message_id}
                 if was_active:
                     # Deactivate all remaining original siblings under parent_id first.
@@ -476,17 +481,11 @@ class ChatTreeStore:
                 # Delete leaves first to satisfy self-referential foreign keys cleanly.
                 for del_id in reversed(to_delete):
                     conn.execute("DELETE FROM chat_messages WHERE campaign_id=? AND id=?", (campaign_id, del_id))
-                    if has_snapshots:
-                        conn.execute(
-                            "DELETE FROM turn_gm_snapshots WHERE campaign_id=? AND message_id=?",
-                            (campaign_id, del_id),
-                        )
-                    if has_pre_snapshots:
-                        conn.execute(
-                            "DELETE FROM turn_pre_snapshots WHERE campaign_id=? AND user_message_id=?",
-                            (campaign_id, del_id),
-                        )
-                if has_compressions and to_delete:
+                    conn.execute(
+                        "DELETE FROM turn_gm_snapshots WHERE campaign_id=? AND message_id=?",
+                        (campaign_id, del_id),
+                    )
+                if to_delete:
                     placeholders = ",".join("?" for _ in to_delete)
                     conn.execute(
                         f"UPDATE campaign_compressions SET leaf_id=? WHERE campaign_id=? AND leaf_id IN ({placeholders})",
@@ -523,7 +522,7 @@ class ChatTreeStore:
             ).fetchone()
             if row is None:
                 raise ValueError(f"message not found in campaign: {message_id}")
-            target_chan = self._norm_channel(row["channel_id"] if "channel_id" in row.keys() else "main")
+            target_chan = self._norm_channel(row["channel_id"])
             meta = json.loads(row["metadata_json"])
             meta["edited"] = True
             meta["edited_at"] = datetime.now(timezone.utc).isoformat()
@@ -679,66 +678,12 @@ class BranchPrivateStateStore:
             )
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS turn_gm_snapshots (
-                    message_id TEXT PRIMARY KEY,
-                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-                    parent_id TEXT,
-                    secrets_json TEXT NOT NULL DEFAULT '{}',
-                    clocks_json TEXT NOT NULL DEFAULT '[]'
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS turn_pre_snapshots (
-                    user_message_id TEXT PRIMARY KEY,
-                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-                    snapshot_json TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS campaign_compressions (
-                    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-                    channel_id TEXT NOT NULL DEFAULT 'main',
-                    leaf_id TEXT,
-                    compressed_count INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL DEFAULT '',
-                    PRIMARY KEY (campaign_id, channel_id)
-                )
-                """
-            )
-            conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS campaign_banners (
                     campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
                     banner_url TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
-            comp_cols = {r[1] for r in conn.execute("PRAGMA table_info(campaign_compressions)")}
-            if "channel_id" not in comp_cols:
-                conn.execute(
-                    """
-                    CREATE TABLE campaign_compressions_new (
-                        campaign_id TEXT NOT NULL REFERENCES campaigns(id),
-                        channel_id TEXT NOT NULL DEFAULT 'main',
-                        leaf_id TEXT,
-                        compressed_count INTEGER NOT NULL DEFAULT 0,
-                        updated_at TEXT NOT NULL DEFAULT '',
-                        PRIMARY KEY (campaign_id, channel_id)
-                    )
-                    """
-                )
-                conn.execute(
-                    """
-                    INSERT INTO campaign_compressions_new (campaign_id, channel_id, leaf_id, compressed_count, updated_at)
-                    SELECT campaign_id, 'main', leaf_id, compressed_count, updated_at FROM campaign_compressions
-                    """
-                )
-                conn.execute("DROP TABLE campaign_compressions")
-                conn.execute("ALTER TABLE campaign_compressions_new RENAME TO campaign_compressions")
 
     @staticmethod
     def clean_secrets_dict(raw: Any) -> dict[str, str]:
@@ -1253,142 +1198,3 @@ class BranchPrivateStateStore:
                 """,
                 (campaign_id, chan, leaf_id, max(0, int(count)), now),
             )
-
-    def has_pre_turn_snapshot(self, campaign_id: str, user_message_id: str) -> bool:
-        with closing(self.gameplay.store._connect()) as conn:
-            return bool(
-                conn.execute(
-                    "SELECT 1 FROM turn_pre_snapshots WHERE campaign_id=? AND user_message_id=?",
-                    (campaign_id, user_message_id),
-                ).fetchone()
-            )
-
-    def save_pre_turn_snapshot(self, campaign_id: str, user_message_id: str) -> None:
-        ctx = self.gameplay.campaign_context(campaign_id)
-        camp = ctx.get("campaign") or {}
-        solo_rt = (ctx.get("solo") or {}).get("runtime") or {}
-        chars = [
-            {
-                "id": c["id"],
-                "name": c["name"],
-                "stats": c["stats"],
-                "skills": c["skills"],
-                "hp": int(c["hp"]),
-                "max_hp": int(c["max_hp"]),
-                "humanity": int(c["humanity"]),
-                "luck_remaining": int(c["luck_remaining"]),
-                "money": int(c["money"]),
-                "inventory": c["inventory"],
-                "detail": c["detail"],
-            }
-            for c in (ctx.get("characters") or [])
-        ]
-        snapshot = {
-            "campaign": {
-                "name": camp.get("name"),
-                "state": camp.get("state"),
-                "session_number": int(camp.get("session_number") or 0),
-            },
-            "solo": {"runtime": solo_rt},
-            "characters": chars,
-        }
-        with closing(self.gameplay.store._connect()) as conn, conn:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "INSERT OR IGNORE INTO turn_pre_snapshots (user_message_id, campaign_id, snapshot_json) VALUES (?, ?, ?)",
-                (user_message_id, campaign_id, _json(snapshot)),
-            )
-
-    def restore_pre_turn_snapshot(self, campaign_id: str, user_message_id: str) -> bool:
-        with closing(self.gameplay.store._connect()) as conn, conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT snapshot_json FROM turn_pre_snapshots WHERE campaign_id=? AND user_message_id=?",
-                (campaign_id, user_message_id),
-            ).fetchone()
-            if row is None:
-                return False
-            snap = json.loads(row["snapshot_json"])
-            camp_snap = snap.get("campaign")
-            if isinstance(camp_snap, dict):
-                cur_camp = conn.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
-                if cur_camp is not None:
-                    snap_state_json = _json(camp_snap["state"])
-                    if (
-                        cur_camp["name"] != camp_snap["name"]
-                        or cur_camp["state_json"] != snap_state_json
-                        or int(cur_camp["session_number"]) != int(camp_snap["session_number"])
-                    ):
-                        conn.execute(
-                            "UPDATE campaigns SET name=?, state_json=?, session_number=?, revision=? WHERE id=?",
-                            (
-                                camp_snap["name"],
-                                snap_state_json,
-                                int(camp_snap["session_number"]),
-                                int(cur_camp["revision"]) + 1,
-                                campaign_id,
-                            ),
-                        )
-            solo_snap = snap.get("solo")
-            if isinstance(solo_snap, dict) and conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='solo_state'"
-            ).fetchone():
-                cur_solo = conn.execute("SELECT * FROM solo_state WHERE campaign_id=?", (campaign_id,)).fetchone()
-                if cur_solo is not None:
-                    snap_rt_json = _json(solo_snap["runtime"])
-                    if cur_solo["runtime_json"] != snap_rt_json:
-                        conn.execute(
-                            "UPDATE solo_state SET runtime_json=?, revision=? WHERE campaign_id=?",
-                            (snap_rt_json, int(cur_solo["revision"]) + 1, campaign_id),
-                        )
-            for csnap in snap.get("characters") or []:
-                if not isinstance(csnap, dict) or not csnap.get("id"):
-                    continue
-                cur_row = conn.execute("SELECT * FROM characters WHERE id=?", (csnap["id"],)).fetchone()
-                if cur_row is None:
-                    continue
-                before = self.gameplay.store._record(cur_row)
-                changed = any(
-                    before.get(k) != csnap.get(k)
-                    for k in ("name", "stats", "skills", "hp", "max_hp", "humanity", "luck_remaining", "money", "inventory", "detail")
-                )
-                if not changed:
-                    continue
-                after = {
-                    "id": before["id"],
-                    "name": csnap["name"],
-                    "stats": csnap["stats"],
-                    "skills": csnap["skills"],
-                    "hp": int(csnap["hp"]),
-                    "max_hp": int(csnap["max_hp"]),
-                    "humanity": int(csnap["humanity"]),
-                    "luck_remaining": int(csnap["luck_remaining"]),
-                    "money": int(csnap["money"]),
-                    "inventory": csnap["inventory"],
-                    "detail": csnap["detail"],
-                    "revision": int(before["revision"]) + 1,
-                }
-                conn.execute(
-                    "UPDATE characters SET name=?,stats=?,skills=?,hp=?,max_hp=?,humanity=?,luck_remaining=?,money=?,inventory=?,detail=?,revision=? WHERE id=?",
-                    (
-                        after["name"],
-                        _json(after["stats"]),
-                        _json(after["skills"]),
-                        after["hp"],
-                        after["max_hp"],
-                        after["humanity"],
-                        after["luck_remaining"],
-                        after["money"],
-                        _json(after["inventory"]),
-                        _json(after["detail"]),
-                        after["revision"],
-                        after["id"],
-                    ),
-                )
-                op_id = f"regen-restore:{user_message_id[:16]}:{after['id'][:16]}:{uuid.uuid4().hex[:8]}"
-                payload = _json({"action": "regenerate_restore", "user_message_id": user_message_id, "character_id": after["id"]})
-                conn.execute(
-                    "INSERT INTO audit(character_id,revision,before_json,after_json,reason,operation_id,payload) VALUES(?,?,?,?,?,?,?)",
-                    (after["id"], after["revision"], _json(before), _json(after), "Regenerate turn: restore pre-turn character state", op_id, payload),
-                )
-        return True

@@ -567,11 +567,27 @@ def _extract_last_json_dict(text: str) -> dict[str, Any] | None:
     return last_dict
 
 
-def extract_gm_plan(raw_text: str) -> dict[str, Any] | None:
-    """Extract structured GM plan dict from `<gm_ops>`, `[[GM_STATE:...]]`, fenced JSON, or balanced braces.
+def extract_tagged_gm_ops(raw_text: str) -> dict[str, Any] | None:
+    """Extract the single-pass plan: the last valid JSON dict inside a `<gm_ops>...</gm_ops>` block.
 
-    Strips `<think>` blocks first. Returns `{}` when a valid empty JSON object was parsed,
-    and returns `None` when no valid JSON dict could be extracted.
+    Bare JSON elsewhere in narrated prose is never treated as a plan.
+    """
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return None
+    cleaned = _strip_think_blocks(raw_text)
+    for match in reversed(list(_GM_XML_RE.finditer(cleaned))):
+        parsed = _extract_last_json_dict(match.group(1))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def extract_gm_plan(raw_text: str) -> dict[str, Any] | None:
+    """Extract a JSON-mode pass result from `<gm_ops>`, `[[GM_STATE:...]]`, fenced JSON, or balanced braces.
+
+    Only for passes that requested strict JSON (planner, chronicler, archivist); single-pass prose uses
+    `extract_tagged_gm_ops`. Strips `<think>` blocks first. Returns `{}` when a valid empty JSON object
+    was parsed, and returns `None` when no valid JSON dict could be extracted.
     """
     if not isinstance(raw_text, str) or not raw_text.strip():
         return None
@@ -580,11 +596,9 @@ def extract_gm_plan(raw_text: str) -> dict[str, Any] | None:
         return None
 
     # 1. Check <gm_ops>...</gm_ops> blocks (last valid dict wins).
-    for match in reversed(list(_GM_XML_RE.finditer(cleaned))):
-        inner = match.group(1)
-        parsed = _extract_last_json_dict(inner)
-        if parsed is not None:
-            return parsed
+    tagged = extract_tagged_gm_ops(cleaned)
+    if tagged is not None:
+        return tagged
 
     # 2. Check [[GM_STATE:...]] blocks (last valid dict wins, supporting nested braces/arrays).
     decoder = json.JSONDecoder()
