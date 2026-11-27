@@ -1,20 +1,41 @@
+export function safeStorageGet(key: string): string | null {
+  try {
+    return typeof window !== "undefined" && typeof window.localStorage?.getItem === "function"
+      ? window.localStorage.getItem(key)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function safeStorageSet(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
+      window.localStorage.setItem(key, value);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function safeStorageRemove(key: string): void {
+  try {
+    if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 const memoryDrafts = new Map<string, string>();
 
 const PREFIX = "redgm:draft:";
 
 export function loadDraft<T>(key: string): T | null {
   const fullKey = `${PREFIX}${key}`;
-  try {
-    if (typeof window !== "undefined" && typeof window.localStorage?.getItem === "function") {
-      const raw = window.localStorage.getItem(fullKey);
-      if (raw) {
-        memoryDrafts.set(fullKey, raw);
-        return JSON.parse(raw) as T;
-      }
-    }
-  } catch {
-    // ignore storage errors
-  }
+  const raw = safeStorageGet(fullKey);
+  if (raw) memoryDrafts.set(fullKey, raw);
   const mem = memoryDrafts.get(fullKey);
   if (!mem) return null;
   try {
@@ -26,27 +47,15 @@ export function loadDraft<T>(key: string): T | null {
 
 export function saveDraft<T>(key: string, value: T): void {
   const fullKey = `${PREFIX}${key}`;
-  try {
-    const serialized = JSON.stringify(value);
-    memoryDrafts.set(fullKey, serialized);
-    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-      window.localStorage.setItem(fullKey, serialized);
-    }
-  } catch {
-    // ignore storage errors
-  }
+  const serialized = JSON.stringify(value);
+  memoryDrafts.set(fullKey, serialized);
+  safeStorageSet(fullKey, serialized);
 }
 
 export function clearDraft(key: string): void {
   const fullKey = `${PREFIX}${key}`;
   memoryDrafts.delete(fullKey);
-  try {
-    if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
-      window.localStorage.removeItem(fullKey);
-    }
-  } catch {
-    // ignore storage errors
-  }
+  safeStorageRemove(fullKey);
 }
 
 export function clearAllDrafts(): void {

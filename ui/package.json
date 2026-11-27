@@ -10,11 +10,17 @@
   },
   "dependencies": {
     "cmdk": "^1.1.1",
+    "hast-util-to-jsx-runtime": "^2.3.6",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-resizable-panels": "^3.0.1",
-    "streamdown": "^1.1.10"
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "remend": "1.0.1",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.8",

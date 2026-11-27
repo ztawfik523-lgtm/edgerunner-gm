@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen, FileText, Plus, Search, Sparkles, Trash2 } from "lucide-react";
 import netrunArchiveBanner from "../assets/netrun-archive-banner.jpg";
 import {
@@ -35,7 +35,6 @@ export function categoryLabel(c: string): string {
 
 interface LibraryPanelProps {
   campaignId: string | null;
-  rulesIndexed: boolean;
   selectedEntry: LibraryEntry | null;
   onSelectEntry: (entry: LibraryEntry | null) => void;
   onNotify: (msg: string) => void;
@@ -43,7 +42,6 @@ interface LibraryPanelProps {
 
 export function LibraryPanel({
   campaignId,
-  rulesIndexed,
   selectedEntry,
   onSelectEntry,
   onNotify,
@@ -69,8 +67,12 @@ export function LibraryPanel({
   const [hbStat, setHbStat] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Only the latest search / page request may update state; slower stale responses are dropped.
+  const searchSeqRef = useRef(0);
+  const pageSeqRef = useRef(0);
 
   const refresh = async () => {
+    const seq = ++searchSeqRef.current;
     setLoading(true);
     try {
       const res = await searchLibrary({
@@ -81,11 +83,11 @@ export function LibraryPanel({
         includeHomebrew: sourceFilter !== "corebook",
         limit: 50,
       });
-      setItems(res);
+      if (seq === searchSeqRef.current) setItems(res);
     } catch {
-      setItems([]);
+      if (seq === searchSeqRef.current) setItems([]);
     } finally {
-      setLoading(false);
+      if (seq === searchSeqRef.current) setLoading(false);
     }
   };
 
@@ -97,19 +99,22 @@ export function LibraryPanel({
   }, [query, category, sourceFilter, campaignId]);
 
   useEffect(() => {
+    pageSeqRef.current += 1;
     setPageText(null);
+    setPageLoading(false);
     setConfirmDeleteId(null);
   }, [selectedEntry?.id]);
 
   const handleLoadPage = async (page: number) => {
+    const seq = ++pageSeqRef.current;
     setPageLoading(true);
     try {
       const res = await fetchCorebookPage(page, "printed");
-      setPageText(res.text);
+      if (seq === pageSeqRef.current) setPageText(res.text);
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : "Could not read page");
+      if (seq === pageSeqRef.current) onNotify(err instanceof Error ? err.message : "Could not read page");
     } finally {
-      setPageLoading(false);
+      if (seq === pageSeqRef.current) setPageLoading(false);
     }
   };
 
@@ -180,7 +185,7 @@ export function LibraryPanel({
               NET Archive // Corebook &amp; Homebrew
             </div>
             <div className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
-              {rulesIndexed ? "Corebook index online · Instant lookup" : "Homebrew & local dossier mode"}
+              Corebook index online · Instant lookup
             </div>
           </div>
           <BookOpen className="h-4 w-4 shrink-0 text-[var(--hud-primary-bright)]" />
@@ -425,7 +430,7 @@ export function LibraryPanel({
             </div>
           )}
 
-          {rulesIndexed && selectedEntry.printed_page && (
+          {selectedEntry.printed_page && (
             <div>
               <HudButton
                 variant="tactical"
@@ -454,9 +459,7 @@ export function LibraryPanel({
         )}
         {!loading && items.length === 0 && (
           <CyberFrame variant="default" className="p-4 text-center font-cyber-ui text-xs text-[var(--hud-muted)]">
-            {rulesIndexed
-              ? "No entries matched your filter."
-              : "No Corebook PDF uploaded yet. You can upload your PDF in Settings → Corebook PDF, or add custom homebrew entries above."}
+            No entries matched your filter.
           </CyberFrame>
         )}
         {items.map((entry) => {

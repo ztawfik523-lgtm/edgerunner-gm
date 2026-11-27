@@ -1,6 +1,6 @@
+import { memo } from "react";
 import {
   AlertTriangle,
-  BookOpen,
   Globe,
   LogOut,
   Settings,
@@ -21,12 +21,11 @@ interface TopBarProps {
   onSyncRevisions?: () => Promise<void>;
   onOpenCoop: () => void;
   onOpenSettings: () => void;
-  onOpenCorebookSettings?: () => void;
   onOpenAuth?: () => void;
   onSignOut?: () => void;
 }
 
-export function TopBar({
+export const TopBar = memo(function TopBar({
   health,
   llmSettings,
   revisionMismatch,
@@ -37,7 +36,6 @@ export function TopBar({
   onSyncRevisions,
   onOpenCoop,
   onOpenSettings,
-  onOpenCorebookSettings,
   onOpenAuth,
   onSignOut,
 }: TopBarProps) {
@@ -178,28 +176,6 @@ export function TopBar({
               <span className="hidden sm:inline">Accounts</span>
             </button>
           )}
-
-          {health && !health.rules_indexed && (
-            canAdminSettings && onOpenCorebookSettings ? (
-              <button
-                type="button"
-                onClick={onOpenCorebookSettings}
-                title="Upload your Cyberpunk RED Corebook PDF under Settings -> BYOC (Freeform & Homebrew play works without it)"
-                className="cyber-btn-tac cp-fx-hover shrink-0 border-[var(--hud-warn)]/50 px-2 py-1 text-[11px] font-medium text-[var(--hud-warn)]"
-              >
-                <BookOpen className="h-3 w-3 text-[var(--hud-warn)]" />
-                <span className="hidden sm:inline">No BYOC</span>
-              </button>
-            ) : (
-              <span
-                title={health.detail ?? "No Corebook uploaded yet (Homebrew & Freeform play still active)"}
-                className="inline-flex shrink-0 items-center gap-1 border border-[var(--hud-warn)]/50 bg-[var(--hud-row)] px-2 py-1 text-[11px] text-[var(--hud-warn)]"
-              >
-                <BookOpen className="h-3 w-3" />
-                <span className="hidden sm:inline">No BYOC</span>
-              </span>
-            )
-          )}
         </div>
       </div>
 
@@ -224,4 +200,4 @@ export function TopBar({
       )}
     </header>
   );
-}
+});

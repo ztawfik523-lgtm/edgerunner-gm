@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { BookOpen, Compass, GripVertical, MessageSquare, User } from "lucide-react";
 import {
@@ -48,7 +48,10 @@ import {
   type UiFontWeight,
   type UiTextScale,
 } from "./components/SettingsModal";
+import { SetupScreen } from "./components/SetupScreen";
 import { TopBar } from "./components/TopBar";
+import { safeStorageGet, safeStorageSet } from "./draftStorage";
+import { useStableHandlers } from "./utils/useStableHandlers";
 import type {
   ActiveTurnInfo,
   AuthStatus,
@@ -79,26 +82,6 @@ function userClaimedCharStorageKey(username?: string | null, campaignId?: string
   return STORAGE_CLAIMED_CHAR_KEY;
 }
 
-function safeStorageGet(key: string): string | null {
-  try {
-    return typeof window !== "undefined" && typeof window.localStorage?.getItem === "function"
-      ? window.localStorage.getItem(key)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeStorageSet(key: string, id: string): void {
-  try {
-    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-      window.localStorage.setItem(key, id);
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
-
 function getInitialUrlCampaignId(): string | null {
   try {
     if (typeof window === "undefined") return null;
@@ -107,6 +90,11 @@ function getInitialUrlCampaignId(): string | null {
     return null;
   }
 }
+
+// Dashboard panels are heavy; memoized so streaming tokens in the chat do not re-render them.
+const MemoCharacterPanel = memo(CharacterPanel);
+const MemoCampaignPanel = memo(CampaignPanel);
+const MemoLibraryPanel = memo(LibraryPanel);
 
 export function App() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -200,6 +188,10 @@ export function App() {
   const [activeTurnsMap, setActiveTurnsMap] = useState<Record<string, ActiveTurnInfo>>({});
 
   const abortRef = useRef<AbortController | null>(null);
+  const pendingDeltaRef = useRef("");
+  const deltaFrameRef = useRef<number | null>(null);
+  const playerNameRef = useRef(playerName);
+  const claimedCharIdRef = useRef(claimedCharId);
   const activeCampaignIdRef = useRef<string | null>(activeCampaignId);
   const activeChannelIdRef = useRef<string>(activeChannelId);
   const lastSyncSeqRef = useRef<number>(0);
@@ -217,6 +209,11 @@ export function App() {
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  useEffect(() => {
+    playerNameRef.current = playerName;
+    claimedCharIdRef.current = claimedCharId;
+  }, [playerName, claimedCharId]);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -240,16 +237,23 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /** Show a fetched chat tree only if it still belongs to the campaign + channel on screen. */
+  const applyTree = useCallback((tree: ChatTreeResponse) => {
+    if (tree.campaign_id !== activeCampaignIdRef.current) return;
+    if (tree.channel_id !== activeChannelIdRef.current) return;
+    setChatTree(tree);
+  }, []);
+
   const loadCampaignData = useCallback(async (campId: string, chanId?: string) => {
-    const targetChan = chanId ?? activeChannelIdRef.current ?? "main";
+    const targetChan = chanId ?? activeChannelIdRef.current;
     const [ctx, tree] = await Promise.all([
       fetchCampaignContext(campId),
       fetchChatTree(campId, targetChan),
     ]);
-    if (activeCampaignIdRef.current && activeCampaignIdRef.current !== campId) return;
+    if (activeCampaignIdRef.current !== campId) return;
     setCampaignContext(ctx);
-    setChatTree(tree);
-  }, []);
+    applyTree(tree);
+  }, [applyTree]);
 
   const refreshInitial = useCallback(async () => {
     try {
@@ -257,7 +261,7 @@ export function App() {
         fetchHealth().catch(() => null),
         fetchAuthStatus().catch(() => null),
       ]);
-      if (h) setHealth(h);
+      setHealth(h);
       setAuthStatus(auth);
 
       if (auth && (auth.can_bootstrap || (auth.auth_enabled && !auth.authenticated))) {
@@ -276,14 +280,23 @@ export function App() {
 
       const canAdminLlm =
         !auth || !auth.auth_enabled || auth.role === "admin" || auth.role === "open";
-      const [llm, campList, skillsData] = await Promise.all([
-        canAdminLlm ? fetchLLMSettings().catch(() => null) : Promise.resolve(null),
+      setLlmSettings(canAdminLlm ? await fetchLLMSettings().catch(() => null) : null);
+
+      // BYOC is mandatory: nothing campaign-related loads until the Corebook is indexed.
+      if (!h?.rules_indexed) {
+        setCampaigns([]);
+        setActiveCampaignId(null);
+        setCampaignContext(null);
+        setChatTree(null);
+        return;
+      }
+
+      const [campList, skillsData] = await Promise.all([
         listCampaigns().catch(() => []),
-        fetchSkillsCatalog().catch(() => ({ skills: {}, rules_indexed: false })),
+        fetchSkillsCatalog(),
       ]);
-      setLlmSettings(llm);
       setCampaigns(campList);
-      setCorebookSkills(skillsData.skills ?? {});
+      setCorebookSkills(skillsData.skills);
 
       const urlCamp = getInitialUrlCampaignId();
       const campKey = userCampaignStorageKey(auth?.username);
@@ -294,6 +307,11 @@ export function App() {
         campList.find((c) => c.is_primary)?.id ??
         campList[0]?.id ??
         null;
+      if (chosen !== activeCampaignIdRef.current) {
+        activeCampaignIdRef.current = chosen;
+        activeChannelIdRef.current = "main";
+        setActiveChannelId("main");
+      }
       setActiveCampaignId(chosen);
       if (chosen) {
         safeStorageSet(campKey, chosen);
@@ -310,6 +328,21 @@ export function App() {
   useEffect(() => {
     void refreshInitial();
   }, [refreshInitial]);
+
+  // While the Corebook is missing or indexing, poll health so the app unlocks as soon as it is ready
+  // (also covers indexing that finishes after the Settings modal was closed).
+  const rulesIndexed = Boolean(health?.rules_indexed);
+  useEffect(() => {
+    if (rulesIndexed) return;
+    const timer = setInterval(() => {
+      void fetchHealth()
+        .then((h) => {
+          if (h.rules_indexed) void refreshInitial();
+        })
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [rulesIndexed, refreshInitial]);
 
   // Keep claimed / speaker character aligned when campaign characters load
   useEffect(() => {
@@ -363,10 +396,11 @@ export function App() {
     if (!grouping || grouping.mode !== "split") {
       userPinnedMainRef.current = false;
       if (activeChannelId !== "main") {
+        activeChannelIdRef.current = "main";
         setActiveChannelId("main");
         setPeerStreaming(null);
         if (activeCampaignId) {
-          void fetchChatTree(activeCampaignId, "main").then(setChatTree).catch(() => {});
+          void fetchChatTree(activeCampaignId, "main").then(applyTree).catch(() => {});
         }
       }
       return;
@@ -375,20 +409,22 @@ export function App() {
     const assignedChan = targetChar ? grouping.char_channel_map?.[targetChar] : undefined;
     const validIds = new Set(["main", ...grouping.channels.map((ch) => ch.id)]);
     if (!userPinnedMainRef.current && assignedChan && validIds.has(assignedChan) && activeChannelId === "main") {
+      activeChannelIdRef.current = assignedChan;
       setActiveChannelId(assignedChan);
       setPeerStreaming(null);
       if (activeCampaignId) {
-        void fetchChatTree(activeCampaignId, assignedChan).then(setChatTree).catch(() => {});
+        void fetchChatTree(activeCampaignId, assignedChan).then(applyTree).catch(() => {});
       }
     } else if (!validIds.has(activeChannelId)) {
       const nextChan = assignedChan || grouping.channels[0]?.id || "main";
+      activeChannelIdRef.current = nextChan;
       setActiveChannelId(nextChan);
       setPeerStreaming(null);
       if (activeCampaignId) {
-        void fetchChatTree(activeCampaignId, nextChan).then(setChatTree).catch(() => {});
+        void fetchChatTree(activeCampaignId, nextChan).then(applyTree).catch(() => {});
       }
     }
-  }, [campaignContext?.party_grouping, speakerId, claimedCharId, activeChannelId, activeCampaignId]);
+  }, [campaignContext?.party_grouping, speakerId, claimedCharId, activeChannelId, activeCampaignId, applyTree]);
 
   // Live Co-op presence heartbeat + SSE subscription + real-time peer streaming
   useEffect(() => {
@@ -414,8 +450,8 @@ export function App() {
 
     const ping = () => {
       void sendPresence(activeCampaignId, {
-        player_name: playerName,
-        character_id: claimedCharId || null,
+        player_name: playerNameRef.current,
+        character_id: claimedCharIdRef.current || null,
       })
         .then((res) => {
           if (Array.isArray(res?.players)) setRoster(res.players);
@@ -551,7 +587,7 @@ export function App() {
       }
       unsubscribe();
     };
-  }, [activeCampaignId, playerName, claimedCharId, loadCampaignData, selfClientId]);
+  }, [activeCampaignId, loadCampaignData, selfClientId]);
 
   const handleSelectCampaign = async (id: string) => {
     abortRef.current?.abort();
@@ -577,8 +613,7 @@ export function App() {
     setActiveChannelId(channelId);
     setPeerStreaming(null);
     try {
-      const tree = await fetchChatTree(activeCampaignId, channelId);
-      setChatTree(tree);
+      applyTree(await fetchChatTree(activeCampaignId, channelId));
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to switch scene channel");
     }
@@ -657,6 +692,14 @@ export function App() {
     setCampaigns(updatedList);
   };
 
+  const flushTextDelta = () => {
+    deltaFrameRef.current = null;
+    const delta = pendingDeltaRef.current;
+    if (!delta) return;
+    pendingDeltaRef.current = "";
+    setStreaming((prev) => (prev ? { ...prev, text: prev.text + delta } : prev));
+  };
+
   const runStreamedAction = async (
     userText: string,
     overclock: boolean,
@@ -671,6 +714,7 @@ export function App() {
   ) => {
     const controller = new AbortController();
     abortRef.current = controller;
+    pendingDeltaRef.current = "";
     setStreaming({
       userText,
       speakerName,
@@ -713,9 +757,11 @@ export function App() {
             );
           },
           onTextDelta: (delta) => {
-            setStreaming((prev) =>
-              prev ? { ...prev, text: prev.text + delta } : prev,
-            );
+            // Buffer tokens and commit at most once per animation frame.
+            pendingDeltaRef.current += delta;
+            if (deltaFrameRef.current === null) {
+              deltaFrameRef.current = requestAnimationFrame(flushTextDelta);
+            }
           },
           onDone: (data) => {
             if (data.gm_deferred) {
@@ -733,6 +779,8 @@ export function App() {
         notify(err instanceof Error ? err.message : "Turn failed");
       }
     } finally {
+      if (deltaFrameRef.current !== null) cancelAnimationFrame(deltaFrameRef.current);
+      flushTextDelta();
       const refreshCampId = targetCampaignId ?? activeCampaignId;
       if (refreshCampId) {
         await loadCampaignData(refreshCampId).catch(() => {});
@@ -819,19 +867,17 @@ export function App() {
   const handleUpdateMessageInPlace = async (msg: ChatMessageNode, newText: string) => {
     if (!activeCampaignId) return;
     try {
-      const updated = await updateChatMessage(activeCampaignId, msg.id, newText);
-      setChatTree(updated);
+      applyTree(await updateChatMessage(activeCampaignId, msg.id, newText));
       notify("Updated message text.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to edit message");
     }
   };
 
-  const handleDeleteMessage = async (msg: ChatMessageNode, scope: "single" | "branch" = "branch") => {
+  const handleDeleteMessage = async (msg: ChatMessageNode, scope: "single" | "branch") => {
     if (!activeCampaignId) return;
     try {
-      const updated = await deleteChatMessage(activeCampaignId, msg.id, scope);
-      setChatTree(updated);
+      applyTree(await deleteChatMessage(activeCampaignId, msg.id, scope));
       notify(scope === "single" ? "Deleted message." : "Deleted message branch.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to delete message");
@@ -882,8 +928,7 @@ export function App() {
   const handleSwitchBranch = async (messageId: string) => {
     if (!activeCampaignId) return;
     try {
-      const updated = await switchChatBranch(activeCampaignId, messageId);
-      setChatTree(updated);
+      applyTree(await switchChatBranch(activeCampaignId, messageId));
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to switch branch");
     }
@@ -915,8 +960,7 @@ export function App() {
   const handleSyncRevisions = async () => {
     if (!activeCampaignId) return;
     try {
-      const res = await syncChatRevisions(activeCampaignId, activeChannelId);
-      setChatTree(res);
+      applyTree(await syncChatRevisions(activeCampaignId, activeChannelId));
       notify("Synced branch state with live campaign revisions.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Failed to sync branch state");
@@ -950,6 +994,45 @@ export function App() {
     notify("Signed out.");
   };
 
+  // Stable identities for props of memoized children (TopBar, dashboard panels).
+  const stable = useStableHandlers({
+    toggleOverclock: () => setOverclock((v) => !v),
+    selectSpeakerId: (id: string) => {
+      speakerPinnedGeneralRef.current = id === "";
+      setSpeakerId(id);
+    },
+    openCreateCharacter: () => setCharacterCreatorOpen(true),
+    refreshActiveCampaign,
+    selectCampaign: handleSelectCampaign,
+    setPrimaryCampaign: handleSetPrimaryCampaign,
+    deleteCampaign: handleDeleteCampaign,
+    openNewCampaign: () => {
+      setCampaignCreatorEdit(null);
+      setCampaignCreatorOpen(true);
+    },
+    openEditCampaign: () => {
+      if (!campaignContext) return;
+      setCampaignCreatorEdit(campaignContext.campaign);
+      setCampaignCreatorOpen(true);
+    },
+    startSession: handleStartSession,
+    exportChat: handleExportChat,
+    compressMemory: handleCompressMemory,
+    toggleViewAsUser: () => void handleToggleViewAsUser(),
+    syncRevisions: handleSyncRevisions,
+    openCoop: () => setCoopOpen(true),
+    openSettings: () => {
+      setSettingsInitialTab(isEffectiveAdmin ? "connection" : "display");
+      setSettingsOpen(true);
+    },
+    openCorebookSettings: () => {
+      setSettingsInitialTab("corebook");
+      setSettingsOpen(true);
+    },
+    openAuth: () => setAuthModalOpen(true),
+    signOut: () => void handleSignOut(),
+  });
+
   const dashboardContent = (
     <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-[var(--hud-panel)] backdrop-blur-[2px]">
       <div className="flex border-b border-[var(--hud-line)] bg-black/50 px-2 pt-1 sm:pt-1.5">
@@ -982,7 +1065,7 @@ export function App() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rightTab === "character" && campaignContext && (
-          <CharacterPanel
+          <MemoCharacterPanel
             campaignId={campaignContext.campaign.id}
             campaignRevision={campaignContext.campaign.revision}
             soloRevision={campaignContext.solo.revision}
@@ -994,17 +1077,14 @@ export function App() {
             currentUsername={authStatus?.username}
             activeChannelId={activeChannelId}
             overclock={overclock}
-            onToggleOverclock={() => setOverclock((v) => !v)}
+            onToggleOverclock={stable.toggleOverclock}
             selectedSpeakerId={speakerId}
-            onSelectSpeakerId={(id) => {
-              speakerPinnedGeneralRef.current = id === "";
-              setSpeakerId(id);
-            }}
+            onSelectSpeakerId={stable.selectSpeakerId}
             requireCharacterToSpeak={requireCharacterToSpeak}
             protectOthers={protectOthers}
             preferredSelectedId={preferredCharacterId}
-            onOpenCreateCharacter={() => setCharacterCreatorOpen(true)}
-            onRefresh={refreshActiveCampaign}
+            onOpenCreateCharacter={stable.openCreateCharacter}
+            onRefresh={stable.refreshActiveCampaign}
             onNotify={notify}
           />
         )}
@@ -1015,41 +1095,30 @@ export function App() {
         )}
 
         {rightTab === "campaign" && (
-          <CampaignPanel
+          <MemoCampaignPanel
             context={campaignContext}
             campaigns={campaigns}
             canManageCampaigns={canManageCampaigns}
             isAdmin={isEffectiveAdmin}
             currentUsername={authStatus?.username}
             activeLeafId={chatTree?.active_leaf_id ?? null}
-            onSelectCampaign={handleSelectCampaign}
-            onSetPrimaryCampaign={handleSetPrimaryCampaign}
-            onDeleteCampaign={handleDeleteCampaign}
-            onOpenNewCampaign={() => {
-              setCampaignCreatorEdit(null);
-              setCampaignCreatorOpen(true);
-            }}
-            onOpenEditCampaign={
-              campaignContext
-                ? () => {
-                    setCampaignCreatorEdit(campaignContext.campaign);
-                    setCampaignCreatorOpen(true);
-                  }
-                : undefined
-            }
-            onStartSession={handleStartSession}
-            onExportChat={handleExportChat}
-            onCompressMemory={handleCompressMemory}
+            onSelectCampaign={stable.selectCampaign}
+            onSetPrimaryCampaign={stable.setPrimaryCampaign}
+            onDeleteCampaign={stable.deleteCampaign}
+            onOpenNewCampaign={stable.openNewCampaign}
+            onOpenEditCampaign={campaignContext ? stable.openEditCampaign : undefined}
+            onStartSession={stable.startSession}
+            onExportChat={stable.exportChat}
+            onCompressMemory={stable.compressMemory}
             compressingMemory={compressingMemory}
-            onRefresh={refreshActiveCampaign}
+            onRefresh={stable.refreshActiveCampaign}
             onNotify={notify}
           />
         )}
 
         {rightTab === "library" && (
-          <LibraryPanel
+          <MemoLibraryPanel
             campaignId={activeCampaignId}
-            rulesIndexed={Boolean(health?.rules_indexed)}
             selectedEntry={selectedLibraryEntry}
             onSelectEntry={setSelectedLibraryEntry}
             onNotify={notify}
@@ -1064,7 +1133,6 @@ export function App() {
   const chatPaneNode = (
     <ChatPane
       campaignId={activeCampaignId}
-      campaign={activeCampaign}
       partyGrouping={campaignContext?.party_grouping}
       activeChannelId={activeChannelId}
       onChangeChannelId={handleSelectChannel}
@@ -1096,10 +1164,77 @@ export function App() {
     />
   );
 
-  const customBannerUrl =
-    campaignContext?.campaign?.state?.discoveries?.["__banner_url"] ||
-    campaignContext?.campaign?.state?.discoveries?.["Banner URL"] ||
-    "";
+  const customBannerUrl = campaignContext?.banner_url ?? "";
+
+  const settingsModal = (
+    <SettingsModal
+      open={settingsOpen}
+      setupMode={!rulesIndexed}
+      initialTab={settingsInitialTab}
+      isAdmin={isEffectiveAdmin}
+      settings={llmSettings}
+      authStatus={authStatus}
+      uiScale={uiScale}
+      uiWeight={uiWeight}
+      hudTheme={hudTheme}
+      fontPreset={fontPreset}
+      hudReducedFx={hudReducedFx}
+      onChangeUiScale={setUiScale}
+      onChangeUiWeight={setUiWeight}
+      onChangeHudTheme={setHudTheme}
+      onChangeFontPreset={setFontPreset}
+      onChangeHudReducedFx={setHudReducedFx}
+      onClose={() => setSettingsOpen(false)}
+      onSaved={(updated) => {
+        setLlmSettings(updated);
+        notify(`Saved AI settings (${updated.model}).`);
+      }}
+      onAuthChanged={refreshInitial}
+      onCorebookIndexed={refreshInitial}
+      onNotify={notify}
+    />
+  );
+
+  const authModal = (
+    <AuthGateModal
+      open={authBlocked || authModalOpen}
+      blocking={authBlocked}
+      authStatus={authStatus}
+      onAuthenticated={refreshInitial}
+      onClose={() => setAuthModalOpen(false)}
+    />
+  );
+
+  const toastNode = toast ? (
+    <button
+      type="button"
+      role="status"
+      title="Click to dismiss"
+      onClick={() => setToast(null)}
+      className="fixed bottom-4 right-4 z-50 cursor-pointer border border-[var(--hud-accent-line)] bg-[var(--hud-panel)] px-4 py-2.5 text-left text-xs font-medium text-[var(--hud-text)] shadow-xl hover:border-[var(--hud-accent)]"
+    >
+      {toast}
+    </button>
+  ) : null;
+
+  if (!rulesIndexed) {
+    return (
+      <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-[var(--hud-bg)] text-[var(--hud-text)] hud-backdrop">
+        <SetupScreen
+          health={health}
+          canUpload={isEffectiveAdmin}
+          authStatus={authStatus}
+          onOpenConnection={stable.openSettings}
+          onOpenCorebook={stable.openCorebookSettings}
+          onOpenAuth={stable.openAuth}
+          onSignOut={stable.signOut}
+        />
+        {settingsModal}
+        {authModal}
+        {toastNode}
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-[var(--hud-bg)] text-[var(--hud-text)] hud-backdrop">
@@ -1123,19 +1258,12 @@ export function App() {
         coopCount={roster.length}
         authStatus={authStatus}
         viewAsUser={viewAsUser}
-        onToggleViewAsUser={() => void handleToggleViewAsUser()}
-        onSyncRevisions={handleSyncRevisions}
-        onOpenCoop={() => setCoopOpen(true)}
-        onOpenSettings={() => {
-          setSettingsInitialTab(isEffectiveAdmin ? "connection" : "display");
-          setSettingsOpen(true);
-        }}
-        onOpenCorebookSettings={() => {
-          setSettingsInitialTab("corebook");
-          setSettingsOpen(true);
-        }}
-        onOpenAuth={() => setAuthModalOpen(true)}
-        onSignOut={() => void handleSignOut()}
+        onToggleViewAsUser={stable.toggleViewAsUser}
+        onSyncRevisions={stable.syncRevisions}
+        onOpenCoop={stable.openCoop}
+        onOpenSettings={stable.openSettings}
+        onOpenAuth={stable.openAuth}
+        onSignOut={stable.signOut}
       />
 
       {/* Mobile pane switcher */}
@@ -1234,6 +1362,7 @@ export function App() {
 
       {campaignContext && (
         <CharacterCreatorModal
+          key={campaignContext.campaign.id}
           open={characterCreatorOpen}
           campaignId={campaignContext.campaign.id}
           campaignRevision={campaignContext.campaign.revision}
@@ -1278,46 +1407,8 @@ export function App() {
         onNotify={notify}
       />
 
-      <SettingsModal
-        open={settingsOpen}
-        initialTab={settingsInitialTab}
-        isAdmin={isEffectiveAdmin}
-        settings={llmSettings}
-        authStatus={authStatus}
-        uiScale={uiScale}
-        uiWeight={uiWeight}
-        hudTheme={hudTheme}
-        fontPreset={fontPreset}
-        hudReducedFx={hudReducedFx}
-        onChangeUiScale={setUiScale}
-        onChangeUiWeight={setUiWeight}
-        onChangeHudTheme={setHudTheme}
-        onChangeFontPreset={setFontPreset}
-        onChangeHudReducedFx={setHudReducedFx}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={(updated) => {
-          setLlmSettings(updated);
-          notify(`Saved AI settings (${updated.model}).`);
-        }}
-        onAuthChanged={refreshInitial}
-        onCorebookIndexed={async () => {
-          const [h, skillsData] = await Promise.all([
-            fetchHealth().catch(() => null),
-            fetchSkillsCatalog().catch(() => ({ skills: {}, rules_indexed: false })),
-          ]);
-          if (h) setHealth(h);
-          setCorebookSkills(skillsData.skills ?? {});
-        }}
-        onNotify={notify}
-      />
-
-      <AuthGateModal
-        open={authBlocked || authModalOpen}
-        blocking={authBlocked}
-        authStatus={authStatus}
-        onAuthenticated={refreshInitial}
-        onClose={() => setAuthModalOpen(false)}
-      />
+      {settingsModal}
+      {authModal}
 
       <CommandPalette
         open={searchOpen}
@@ -1326,17 +1417,7 @@ export function App() {
         onSelectEntry={handleInspectEntry}
       />
 
-      {toast && (
-        <button
-          type="button"
-          role="status"
-          title="Click to dismiss"
-          onClick={() => setToast(null)}
-          className="fixed bottom-4 right-4 z-50 cursor-pointer border border-[var(--hud-accent-line)] bg-[var(--hud-panel)] px-4 py-2.5 text-left text-xs font-medium text-[var(--hud-text)] shadow-xl hover:border-[var(--hud-accent)]"
-        >
-          {toast}
-        </button>
-      )}
+      {toastNode}
       </div>
     </div>
   );

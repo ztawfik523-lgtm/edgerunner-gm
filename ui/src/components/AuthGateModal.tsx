@@ -3,6 +3,7 @@ import { KeyRound, Loader2, Shield, ShieldCheck, UserCheck, UserPlus, X } from "
 import { loginAuth, logoutAuth, registerAuth, setupInitialAuth } from "../api";
 import cyberHeroBackdrop from "../assets/cyber-hero-backdrop.jpg";
 import type { AuthStatus } from "../types";
+import { useModalFocus } from "../utils/useModalFocus";
 import { CyberFrame, HazardBadge, HudButton, HudToggle } from "./cyber";
 
 interface AuthGateModalProps {
@@ -54,14 +55,7 @@ export function AuthGateModal({
     }
   }, [open, authStatus?.can_bootstrap, authStatus?.role]);
 
-  useEffect(() => {
-    if (!open || blocking || !onClose) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, blocking, onClose]);
+  const dialogRef = useModalFocus(open, blocking ? undefined : onClose);
 
   if (!open) return null;
 
@@ -98,11 +92,16 @@ export function AuthGateModal({
         setBusy(false);
         return;
       }
+      if (setupPlayerPass.trim() && !setupPlayerUser.trim()) {
+        setError("Choose a username for the player account.");
+        setBusy(false);
+        return;
+      }
       await setupInitialAuth({
         bootstrap_token: bootstrapToken,
         admin_username: adminUname,
         admin_password: setupAdminPass,
-        user_username: setupPlayerPass.trim() ? (setupPlayerUser.trim() || "player") : "",
+        user_username: setupPlayerPass.trim() ? setupPlayerUser.trim() : "",
         user_password: setupPlayerPass.trim(),
         user_passcode: setupRoomPasscode.trim(),
         allow_guest_users: allowGuests,
@@ -190,10 +189,12 @@ export function AuthGateModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-4 backdrop-blur-sm outline-none"
       role="dialog"
       aria-modal="true"
       aria-label="Cyberpunk RED GM Access"
+      ref={dialogRef}
+      tabIndex={-1}
     >
       <CyberFrame
         variant="modal"
@@ -339,7 +340,7 @@ export function AuthGateModal({
                       type="text"
                       value={setupPlayerUser}
                       onChange={(e) => setSetupPlayerUser(e.target.value)}
-                      placeholder="player"
+                      placeholder="e.g. vee"
                       className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                     />
                   </label>

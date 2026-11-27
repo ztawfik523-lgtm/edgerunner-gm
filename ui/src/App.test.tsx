@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { clearAllDrafts } from "./draftStorage";
@@ -76,6 +76,7 @@ describe("Cyberpunk RED GM UI", () => {
     };
     let branchState: {
       campaign_id: string;
+      channel_id: string;
       nodes: unknown[];
       active_branch: unknown[];
       active_leaf_id: string | null;
@@ -83,6 +84,7 @@ describe("Cyberpunk RED GM UI", () => {
       revision_mismatch: boolean;
     } = {
       campaign_id: "camp-1",
+      channel_id: "main",
       nodes: [],
       active_branch: [],
       active_leaf_id: null,
@@ -204,6 +206,7 @@ describe("Cyberpunk RED GM UI", () => {
         };
         branchState = {
           ...branchState,
+          channel_id: "main",
           nodes: [userMsg, asstMsg],
           active_branch: [userMsg, asstMsg],
           active_leaf_id: "a1",
@@ -325,7 +328,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true });
       if (url === "/v1/settings/llm") {
         return jsonResponse({
           base_url: "http://127.0.0.1:11434/v1",
@@ -338,10 +341,11 @@ describe("Cyberpunk RED GM UI", () => {
           mode: "two_pass",
         });
       }
-      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: "camp-2",
+          channel_id: "main",
           nodes: [u1, a1, a2],
           active_branch: [u1, a1],
           active_leaf_id: "a1",
@@ -352,6 +356,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url === "/v1/chat/branch") {
         return jsonResponse({
           campaign_id: "camp-2",
+          channel_id: "main",
           nodes: [u1, a1, a2],
           active_branch: [u1, a2],
           active_leaf_id: "a2",
@@ -398,7 +403,6 @@ describe("Cyberpunk RED GM UI", () => {
       expect(screen.getAllByText(/Branch A outcome\./i).length).toBeGreaterThan(0);
     });
     expect(screen.getByText(/Branch State Differs/i)).toBeInTheDocument();
-    expect(screen.getByText(/No BYOC/i)).toBeInTheDocument();
     expect(screen.getAllByText("1/2").length).toBeGreaterThan(0);
 
     // Switch branch via next arrow
@@ -478,6 +482,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: "camp-qol",
+          channel_id: "main",
           nodes: [u1, a1],
           active_branch: [u1, a1],
           active_leaf_id: "a1",
@@ -490,6 +495,7 @@ describe("Cyberpunk RED GM UI", () => {
         const updatedA1 = { ...a1, content: body.content, metadata: { edited: true } };
         return jsonResponse({
           campaign_id: "camp-qol",
+          channel_id: "main",
           nodes: [u1, updatedA1],
           active_branch: [u1, updatedA1],
           active_leaf_id: "a1",
@@ -500,6 +506,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url === "/v1/chat/delete") {
         return jsonResponse({
           campaign_id: "camp-qol",
+          channel_id: "main",
           nodes: [u1],
           active_branch: [u1],
           active_leaf_id: "u1",
@@ -632,6 +639,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: "camp-color",
+          channel_id: "main",
           nodes: [u1, a1],
           active_branch: [u1, a1],
           active_leaf_id: "ca1",
@@ -753,6 +761,7 @@ describe("Cyberpunk RED GM UI", () => {
     };
     let branchState: {
       campaign_id: string;
+      channel_id: string;
       nodes: unknown[];
       active_branch: unknown[];
       active_leaf_id: string;
@@ -760,6 +769,7 @@ describe("Cyberpunk RED GM UI", () => {
       revision_mismatch: boolean;
     } = {
       campaign_id: "camp-1",
+      channel_id: "main",
       nodes: [],
       active_branch: [],
       active_leaf_id: "a0",
@@ -1351,7 +1361,7 @@ describe("Cyberpunk RED GM UI", () => {
         });
       }
       if (url.startsWith("/v1/chat/tree")) {
-        return jsonResponse({ campaign_id: "camp-cc", nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: campaign.revision, solo_revision: createdChar ? 1 : 0 }, revision_mismatch: false });
+        return jsonResponse({ campaign_id: "camp-cc", channel_id: "main", nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: campaign.revision, solo_revision: createdChar ? 1 : 0 }, revision_mismatch: false });
       }
       if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
       if (url === "/v1/game" && init?.method === "POST") {
@@ -1708,14 +1718,15 @@ describe("Cyberpunk RED GM UI", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true });
       if (url === "/v1/settings/llm") {
         return jsonResponse({ base_url: "http://127.0.0.1:11434/v1", model: "llama3", has_api_key: false, api_key_masked: "", temperature: 0.4, max_tokens: 1200, timeout_s: 60, mode: "two_pass", gm_thinking_mode: "quality" });
       }
-      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: "camp-regen",
+          channel_id: "main",
           nodes: regenerated ? [u1, a1, a2] : [u1, a1],
           active_branch: regenerated ? [u1, a2] : [u1, a1],
           active_leaf_id: regenerated ? "ra2" : "ra1",
@@ -1991,12 +2002,17 @@ describe("Cyberpunk RED GM UI", () => {
       void fetchMock;
 
       render(<App />);
-      const noCorebookBtn = await screen.findByRole("button", { name: /No BYOC/i });
-      fireEvent.click(noCorebookBtn);
+      // BYOC is mandatory: without an indexed Corebook only the setup screen is shown.
+      expect(await screen.findByRole("heading", { name: "Bring your own Corebook" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Party/i })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("chat-scroll-container")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Upload Corebook PDF/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/BYOC — Bring Your Own Corebook/i)).toBeInTheDocument();
       });
+      // Settings is limited to Connection + Corebook during setup.
+      expect(screen.queryByRole("button", { name: /^Prompts$/i })).not.toBeInTheDocument();
 
       const fileInput = screen.getByLabelText(/Upload Corebook PDF file/i) as HTMLInputElement;
       const pdfFile = new File(["%PDF-1.4 test"], "CPR-Corebook.pdf", { type: "application/pdf" });
@@ -2005,6 +2021,10 @@ describe("Cyberpunk RED GM UI", () => {
       await waitFor(() => {
         expect(screen.getByRole("progressbar")).toBeInTheDocument();
         expect(screen.getAllByText(/BYOC Ready \(2 pages\)/i).length).toBeGreaterThanOrEqual(1);
+      });
+      // Indexing finished: the setup screen is gone and the full app (and Settings tabs) unlock.
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "Bring your own Corebook" })).not.toBeInTheDocument();
       });
 
       // Open Prompts tab, verify separated sections + Chronicler toggle, and expand Advanced built-in prompts
@@ -2034,7 +2054,7 @@ describe("Cyberpunk RED GM UI", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: false });
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true });
       if (url === "/v1/settings/llm") {
         return jsonResponse({
           base_url: "http://127.0.0.1:11434/v1",
@@ -2049,7 +2069,7 @@ describe("Cyberpunk RED GM UI", () => {
           gm_thinking_mode: "balanced",
         });
       }
-      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: false });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
         return jsonResponse({
           rules_indexed: false,
@@ -2126,6 +2146,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: campaign.id,
+          channel_id: "main",
           nodes: activeBranch,
           active_branch: activeBranch,
           active_leaf_id: activeBranch.length ? "intro-a1" : null,
@@ -2375,6 +2396,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: campaign.id,
+          channel_id: "main",
           nodes: branchMessages,
           active_branch: branchMessages,
           active_leaf_id: "m-a1",
@@ -2833,6 +2855,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url === "/health") {
         return jsonResponse({ status: "ok", rules_indexed: true, pass_count: 100 });
       }
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/auth/status") {
         return jsonResponse({
           auth_enabled: true,
@@ -3226,7 +3249,7 @@ describe("Cyberpunk RED GM UI", () => {
         });
       }
       if (url.startsWith("/v1/chat/tree")) {
-        return jsonResponse({ campaign_id: campaign.id, nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
+        return jsonResponse({ campaign_id: campaign.id, channel_id: "main", nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
       }
       if (url.startsWith("/v1/library")) return jsonResponse({ items: [] });
       if (url === "/v1/game") {
@@ -3372,6 +3395,7 @@ describe("Cyberpunk RED GM UI", () => {
     const turnBodies: Array<Record<string, unknown>> = [];
     let branchState: {
       campaign_id: string;
+      channel_id: string;
       nodes: unknown[];
       active_branch: unknown[];
       active_leaf_id: string | null;
@@ -3379,6 +3403,7 @@ describe("Cyberpunk RED GM UI", () => {
       revision_mismatch: boolean;
     } = {
       campaign_id: campaign.id,
+      channel_id: "main",
       nodes: [],
       active_branch: [],
       active_leaf_id: null,
@@ -3451,6 +3476,7 @@ describe("Cyberpunk RED GM UI", () => {
         };
         branchState = {
           ...branchState,
+          channel_id: "main",
           nodes: [...branchState.nodes, userMsg, asstMsg],
           active_branch: [...branchState.active_branch, userMsg, asstMsg],
           active_leaf_id: asstMsg.id,
@@ -3565,6 +3591,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: campaign.id,
+          channel_id: "main",
           nodes: [],
           active_branch: [],
           active_leaf_id: null,
@@ -3693,6 +3720,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: campaign.id,
+          channel_id: "main",
           nodes: [],
           active_branch: [],
           active_leaf_id: null,
@@ -3770,6 +3798,7 @@ describe("Cyberpunk RED GM UI", () => {
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({
           campaign_id: campaign.id,
+          channel_id: "main",
           nodes: [],
           active_branch: [],
           active_leaf_id: null,
@@ -3843,6 +3872,96 @@ describe("Cyberpunk RED GM UI", () => {
       expect(document.documentElement.dataset.fontPreset).toBe("hyperlegible");
       expect(document.documentElement.dataset.hudFx).toBe("reduced");
     });
+  });
+
+  it("drops a slow chat-tree response for a scene channel the user already left", async () => {
+    const campaign = {
+      id: "camp-r",
+      name: "Race Night",
+      revision: 1,
+      session_number: 1,
+      character_ids: [],
+      state: { scene: "", summary: "", npcs: {}, objectives: {}, discoveries: {}, unresolved: {} },
+    };
+    const tree = (channel: string, text: string) => {
+      const msg = {
+        id: `m-${channel}`,
+        campaign_id: "camp-r",
+        parent_id: null,
+        role: "assistant",
+        content: text,
+        metadata: {},
+        campaign_revision: 1,
+        solo_revision: 0,
+        is_active: true,
+        created_at: "2026-01-01T00:00:00Z",
+      };
+      return {
+        campaign_id: "camp-r",
+        channel_id: channel,
+        nodes: [msg],
+        active_branch: [msg],
+        active_leaf_id: msg.id,
+        current_revisions: { campaign_revision: 1, solo_revision: 0 },
+        revision_mismatch: false,
+      };
+    };
+    let releaseDock: (() => void) | null = null;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/health") return jsonResponse({ status: "ok", rules_indexed: true });
+      if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
+      if (url.startsWith("/v1/chat/tree")) {
+        const channel = new URLSearchParams(url.split("?")[1]).get("channel_id") ?? "main";
+        if (channel === "scene-dock") {
+          return new Promise<Response>((resolve) => {
+            releaseDock = () => resolve(jsonResponse(tree("scene-dock", "Dock reply.")));
+          });
+        }
+        return jsonResponse(tree(channel, channel === "main" ? "Main reply." : "Roof reply."));
+      }
+      if (url === "/v1/game") {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.action === "list_campaigns") return jsonResponse({ result: [campaign] });
+        if (body.action === "campaign_context") {
+          return jsonResponse({
+            result: {
+              campaign,
+              characters: [],
+              party_grouping: {
+                mode: "split",
+                characters: [],
+                channels: [
+                  { id: "scene-dock", name: "Dock", location: "Zhirafa Dock", character_ids: [], handles: ["Vee"] },
+                  { id: "scene-roof", name: "Roof", location: "La Casita Rooftop", character_ids: [], handles: ["Kira"] },
+                ],
+                char_channel_map: {},
+                active_channel_id: "main",
+                active_location: "",
+                prompt_summary: "SPLIT",
+              },
+              solo: { revision: 0, runtime: { encounter: null, runs: {}, clock_minutes: 0 }, characters: {} },
+            },
+          });
+        }
+      }
+      return jsonResponse({});
+    });
+
+    render(<App />);
+    expect(await screen.findByText("Main reply.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Zhirafa Dock/i }));
+    fireEvent.click(screen.getByRole("button", { name: /La Casita Rooftop/i }));
+    expect(await screen.findByText("Roof reply.")).toBeInTheDocument();
+
+    await act(async () => {
+      releaseDock?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.queryByText("Dock reply.")).not.toBeInTheDocument();
+    expect(screen.getByText("Roof reply.")).toBeInTheDocument();
   });
 });
 

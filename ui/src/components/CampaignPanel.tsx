@@ -102,13 +102,8 @@ export function CampaignPanel({
   const [subTab, setSubTab] = useState<CampaignSubTab>("briefing");
   const [scene, setScene] = useState(campaign?.state.scene ?? "");
   const [summary, setSummary] = useState(campaign?.state.summary ?? "");
-  const contextBannerUrl = (context as { banner_url?: string } | null)?.banner_url ?? "";
-  const [bannerUrl, setBannerUrl] = useState(
-    contextBannerUrl ||
-      campaign?.state.discoveries?.["__banner_url"] ||
-      campaign?.state.discoveries?.["Banner URL"] ||
-      "",
-  );
+  const contextBannerUrl = context?.banner_url ?? "";
+  const [bannerUrl, setBannerUrl] = useState(contextBannerUrl);
   const [clocks, setClocks] = useState<WorldClock[]>([]);
   const [newClockName, setNewClockName] = useState("");
   const [newClockMax, setNewClockMax] = useState("4");
@@ -149,12 +144,7 @@ export function CampaignPanel({
   useEffect(() => {
     setScene(campaign?.state.scene ?? "");
     setSummary(campaign?.state.summary ?? "");
-    setBannerUrl(
-      contextBannerUrl ||
-        campaign?.state.discoveries?.["__banner_url"] ||
-        campaign?.state.discoveries?.["Banner URL"] ||
-        "",
-    );
+    setBannerUrl(contextBannerUrl);
     setConfirmRemove(null);
     const locs: Record<string, string> = {};
     for (const ch of context?.party_grouping?.characters ?? []) {
@@ -193,13 +183,11 @@ export function CampaignPanel({
     if (!campaign || !isAdmin || busy) return;
     setBusy(true);
     try {
-      const nextDiscoveries = { ...(campaign.state.discoveries ?? {}) };
-      delete nextDiscoveries["__banner_url"];
       await saveCampaignBanner(campaign.id, bannerUrl.trim());
       await updateCampaignState(
         campaign.id,
         campaign.revision,
-        { scene, summary, discoveries: nextDiscoveries },
+        { scene, summary },
         "Update scene and summary",
       );
       await onRefresh();
