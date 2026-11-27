@@ -23,6 +23,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { CyberFrame, HudButton, HudSlider, HudToggle } from "./cyber";
+import { safeStorageGet, safeStorageSet } from "../draftStorage";
+import { useModalFocus } from "../utils/useModalFocus";
 import {
   deleteAuthAccount,
   fetchAllSettings,
@@ -64,6 +66,8 @@ export type HudFontPreset = "cyber" | "oxanium" | "clean" | "hyperlegible";
 
 export interface SettingsModalProps {
   open: boolean;
+  /** Corebook not indexed yet: only the Connection and Corebook tabs are reachable. */
+  setupMode?: boolean;
   initialTab?: SettingsTab;
   isAdmin?: boolean;
   settings: LLMSettings | null;
@@ -304,10 +308,9 @@ const STORAGE_PROVIDER_PRESETS = "redgm:customProviderPresets";
 const STORAGE_TUNING_PRESETS = "redgm:customTuningPresets";
 
 function loadStoredList<T>(key: string): T[] {
+  const raw = safeStorageGet(key);
+  if (!raw) return [];
   try {
-    if (typeof window === "undefined" || typeof window.localStorage?.getItem !== "function") return [];
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -316,13 +319,7 @@ function loadStoredList<T>(key: string): T[] {
 }
 
 function saveStoredList<T>(key: string, items: T[]): void {
-  try {
-    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-      window.localStorage.setItem(key, JSON.stringify(items));
-    }
-  } catch {
-    // ignore storage errors
-  }
+  safeStorageSet(key, JSON.stringify(items));
 }
 
 function AutoSizeTextarea({
@@ -536,6 +533,7 @@ const PROMPT_FIELDS: Array<{
 
 export function SettingsModal({
   open,
+  setupMode = false,
   initialTab,
   isAdmin = true,
   settings,
@@ -782,14 +780,7 @@ export function SettingsModal({
     };
   }, [open, corebookStatus?.job?.status, onCorebookIndexed, onNotify]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const dialogRef = useModalFocus(open, onClose);
 
   if (!open) return null;
 
@@ -891,6 +882,8 @@ export function SettingsModal({
       const fresh = await fetchCorebookStatus().catch(() => null);
       if (fresh && typeof fresh.rules_indexed === "boolean") {
         setCorebookStatus(fresh);
+        // Small PDFs can finish before the progress poll starts; unlock the app right away.
+        if (fresh.rules_indexed && fresh.job?.status === "completed") void onCorebookIndexed?.();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload Corebook PDF");
@@ -1020,6 +1013,10 @@ export function SettingsModal({
       setError("Choose an Admin username.");
       return;
     }
+    if (bootPlayerPass.trim() && !bootPlayerUser.trim()) {
+      setError("Choose a username for the initial player account.");
+      return;
+    }
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -1028,7 +1025,7 @@ export function SettingsModal({
         bootstrap_token: bootstrapToken,
         admin_username: cleanAdmin,
         admin_password: bootAdminPass,
-        user_username: bootPlayerPass.trim() ? (bootPlayerUser.trim() || "player") : "",
+        user_username: bootPlayerPass.trim() ? bootPlayerUser.trim() : "",
         user_password: bootPlayerPass.trim(),
         user_passcode: sharedPasscode.trim(),
         allow_guest_users: allowGuests,
@@ -1215,7 +1212,7 @@ export function SettingsModal({
     }
   };
 
-  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = isAdmin
+  const allTabs: Array<{ id: SettingsTab; label: string; icon: typeof Cpu }> = isAdmin
     ? [
         { id: "connection", label: "Connection", icon: Cpu },
         { id: "corebook", label: "BYOC", icon: BookOpen },
@@ -1230,6 +1227,7 @@ export function SettingsModal({
         { id: "display", label: "Display", icon: Type },
         { id: "account", label: "Account", icon: User },
       ];
+  const tabs = setupMode ? allTabs.filter((t) => t.id === "connection" || t.id === "corebook") : allTabs;
 
   const isIndexing = corebookStatus?.job?.status === "running";
   const combinedProgress = uploadingPdf
@@ -1245,10 +1243,12 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 sm:p-4 backdrop-blur-xs outline-none"
       role="dialog"
       aria-modal="true"
       aria-label={dialogHeading}
+      ref={dialogRef}
+      tabIndex={-1}
     >
       <CyberFrame
         variant="modal"
@@ -1601,10 +1601,10 @@ export function SettingsModal({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-100">
-                      BYOC — Bring Your Own Corebook (Optional)
+                      BYOC — Bring Your Own Corebook (Required)
                     </h3>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      Upload your own Cyberpunk RED Corebook PDF to unlock official Roles, character builders, gear catalogs, and exact page citations. The file stays locally on your server.
+                      Upload your own Cyberpunk RED Corebook PDF. Campaigns, characters and play unlock once it is indexed; it powers Roles, character builders, gear catalogs, and exact page citations. The file stays locally on your server.
                     </p>
                   </div>
                   <span
@@ -1616,7 +1616,7 @@ export function SettingsModal({
                   >
                     {corebookStatus?.rules_indexed
                       ? `BYOC Ready (${corebookStatus.indexed_pages} pages)`
-                      : "No BYOC Yet (Freeform Mode)"}
+                      : "No Corebook Yet (Required)"}
                   </span>
                 </div>
 
@@ -1680,7 +1680,7 @@ export function SettingsModal({
                   <p className="mt-1 text-[11px] text-[var(--hud-muted)]">
                     {corebookStatus?.rules_indexed
                       ? "Uploading a new PDF safely replaces the existing rulebook database."
-                      : "Without a PDF, you can still create Freeform characters and homebrew rules."}
+                      : "A Corebook PDF is required before campaigns and characters unlock."}
                   </p>
                   <HudButton
                     variant="tactical"

@@ -1,3 +1,4 @@
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from "./draftStorage";
 import type {
   ActiveTurnInfo,
   AllSettingsResponse,
@@ -31,7 +32,6 @@ import type {
 const STORAGE_CLIENT_ID = "redgm:clientId";
 const STORAGE_PLAYER_NAME = "redgm:playerName";
 const STORAGE_ROOM_PIN = "redgm:roomPin";
-const STORAGE_AUTH_TOKEN = "redgm:authToken";
 const STORAGE_VIEW_ROLE = "redgm:viewRoleOverride";
 
 export function getStoredViewRoleOverride(): "admin" | "user" | null {
@@ -40,39 +40,8 @@ export function getStoredViewRoleOverride(): "admin" | "user" | null {
 }
 
 export function setStoredViewRoleOverride(role: "admin" | "user" | null): void {
-  if (!role || role === "admin") {
-    try {
-      if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
-        window.localStorage.removeItem(STORAGE_VIEW_ROLE);
-        return;
-      }
-    } catch {
-      // fall through
-    }
-    safeStorageSet(STORAGE_VIEW_ROLE, "");
-    return;
-  }
-  safeStorageSet(STORAGE_VIEW_ROLE, role);
-}
-
-function safeStorageGet(key: string): string | null {
-  try {
-    return typeof window !== "undefined" && typeof window.localStorage?.getItem === "function"
-      ? window.localStorage.getItem(key)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeStorageSet(key: string, value: string): void {
-  try {
-    if (typeof window !== "undefined" && typeof window.localStorage?.setItem === "function") {
-      window.localStorage.setItem(key, value);
-    }
-  } catch {
-    // ignore storage errors
-  }
+  if (role === "user") safeStorageSet(STORAGE_VIEW_ROLE, role);
+  else safeStorageRemove(STORAGE_VIEW_ROLE);
 }
 
 let cachedClientId: string | null = null;
@@ -108,32 +77,11 @@ export function setStoredRoomPin(pin: string): void {
   safeStorageSet(STORAGE_ROOM_PIN, pin.trim());
 }
 
-export function getStoredAuthToken(): string {
-  return safeStorageGet(STORAGE_AUTH_TOKEN) || "";
-}
-
-export function setStoredAuthToken(token: string): void {
-  const cleaned = token.trim();
-  if (!cleaned) {
-    try {
-      if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
-        window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
-        return;
-      }
-    } catch {
-      // fall through
-    }
-  }
-  safeStorageSet(STORAGE_AUTH_TOKEN, cleaned);
-}
-
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = {
     "X-RedGM-Client-Id": getClientId(),
     ...extra,
   };
-  const token = getStoredAuthToken();
-  if (token) headers["X-RedGM-Token"] = token;
   const pin = getStoredRoomPin();
   if (pin) headers["X-RedGM-Pin"] = pin;
   const viewRole = getStoredViewRoleOverride();
@@ -213,7 +161,6 @@ export async function setupInitialAuth(payload: {
     "/v1/auth/setup",
     payload,
   );
-  if (res.token) setStoredAuthToken(res.token);
   return res;
 }
 
@@ -226,7 +173,6 @@ export async function loginAuth(payload: {
     "/v1/auth/login",
     payload,
   );
-  if (res.token) setStoredAuthToken(res.token);
   return res;
 }
 
@@ -238,12 +184,10 @@ export async function registerAuth(payload: {
     "/v1/auth/register",
     payload,
   );
-  if (res.token) setStoredAuthToken(res.token);
   return res;
 }
 
 export async function logoutAuth(): Promise<void> {
-  setStoredAuthToken("");
   await postJson("/v1/auth/logout", {}).catch(() => undefined);
 }
 
@@ -265,16 +209,7 @@ export async function updateMyAccount(payload: {
     previous_username?: string;
     expires_in: number;
   }>("/v1/auth/me", payload);
-  if (res.token) setStoredAuthToken(res.token);
   return res;
-}
-
-export async function fetchAuthAccounts(): Promise<{
-  accounts: AuthAccountSummary[];
-  allow_guest_users: boolean;
-  user_passcode_configured: boolean;
-}> {
-  return jsonFetch("/v1/auth/accounts");
 }
 
 export async function updateAuthAccounts(payload: {
@@ -787,12 +722,6 @@ export async function searchLibrary(params: {
   return data.items;
 }
 
-export async function fetchLibraryEntry(entryId: string, campaignId?: string): Promise<LibraryEntry> {
-  const qs = campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : "";
-  const data = await jsonFetch<{ item: LibraryEntry }>(`/v1/library/${encodeURIComponent(entryId)}${qs}`);
-  return data.item;
-}
-
 export async function addHomebrewEntry(payload: {
   campaign_id: string;
   name: string;
@@ -1039,6 +968,7 @@ async function consumeSseStream(
 ): Promise<void> {
   const resp = await fetch(url, {
     method: "POST",
+    credentials: "same-origin",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ client_id: getClientId(), player_name: getStoredPlayerName(), ...body }),
     signal,
@@ -1073,10 +1003,7 @@ async function consumeSseStream(
     }
     switch (eventName) {
       case "rule_citation":
-        callbacks.onCitation?.(
-          (parsed.entries as LibraryEntry[]) ?? [],
-          (parsed.dice_pool as { d10: number[]; d6: number[] }) ?? { d10: [], d6: [] },
-        );
+        callbacks.onCitation?.((parsed.entries as LibraryEntry[]) ?? []);
         break;
       case "dice_roll":
         callbacks.onDiceRoll?.(parsed as unknown as Parameters<NonNullable<TurnStreamCallbacks["onDiceRoll"]>>[0]);
@@ -1156,12 +1083,6 @@ export async function mutateCampaignClock(
   },
 ): Promise<{ campaign_id: string; clocks: WorldClock[] }> {
   return postJson(`/v1/campaigns/${encodeURIComponent(campaignId)}/clocks`, payload);
-}
-
-export async function fetchCampaignBanner(
-  campaignId: string,
-): Promise<{ campaign_id: string; banner_url: string }> {
-  return jsonFetch(`/v1/campaigns/${encodeURIComponent(campaignId)}/banner`);
 }
 
 export async function saveCampaignBanner(

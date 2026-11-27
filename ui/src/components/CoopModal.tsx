@@ -17,6 +17,7 @@ import {
   setStoredRoomPin,
 } from "../api";
 import type { ActiveTurnInfo, CharacterRecord, CoopPlayer, NetworkInfo } from "../types";
+import { useModalFocus } from "../utils/useModalFocus";
 import { CyberFrame, HazardBadge, HudButton, HudToggle } from "./cyber";
 
 interface CoopModalProps {
@@ -73,14 +74,7 @@ export function CoopModal({
       .catch(() => setNetInfo(null));
   }, [open, campaignId]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const dialogRef = useModalFocus(open, onClose);
 
   if (!open) return null;
 
@@ -114,11 +108,13 @@ export function CoopModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm outline-none"
       role="dialog"
       aria-modal="true"
       aria-label="Party & LAN Multiplayer"
       onClick={onClose}
+      ref={dialogRef}
+      tabIndex={-1}
     >
       <CyberFrame
         variant="modal"

@@ -241,26 +241,6 @@ export interface AllSettingsResponse {
   runtime: RuntimeServerInfo;
 }
 
-export interface PublicSettingsResponse {
-  role: AuthRole;
-  username: string | null;
-  auth_enabled: boolean;
-  mode: "two_pass" | "single_pass_tagged";
-  gm_style: string;
-  narrator_length: string;
-  narrator_pacing?: string;
-  gm_thinking_mode?: "quality" | "balanced";
-  require_character_to_speak?: boolean;
-  enable_chronicler: boolean;
-  enable_highlights?: boolean;
-  allow_ai_homebrew?: boolean;
-  auto_compress_prompt?: boolean;
-  history_window: number;
-  compression_threshold: number;
-  citation_limit: number;
-  default_time_step_minutes: number;
-}
-
 export interface CharacterRecord {
   id: string;
   name: string;
@@ -381,6 +361,7 @@ export interface SessionZeroConfig {
 export interface CampaignContext {
   campaign: CampaignRecord;
   characters: CharacterRecord[];
+  banner_url: string;
   npc_profiles?: Record<string, NpcIdentityProfile & { personality?: string; speech_style?: string }>;
   party_grouping?: PartyGroupingState;
   campaign_meta?: CampaignMeta;
@@ -506,7 +487,7 @@ export interface ChatMessageNode {
 
 export interface ChatTreeResponse {
   campaign_id: string;
-  channel_id?: string;
+  channel_id: string;
   channels?: string[];
   nodes: ChatMessageNode[];
   active_branch: ChatMessageNode[];
@@ -519,7 +500,7 @@ export interface ChatTreeResponse {
 }
 
 export interface TurnStreamCallbacks {
-  onCitation?: (entries: LibraryEntry[], dicePool: { d10: number[]; d6: number[] }) => void;
+  onCitation?: (entries: LibraryEntry[]) => void;
   onDiceRoll?: (roll: DiceRollResult) => void;
   onStatePatch?: (patch: StatePatchEvent) => void;
   onLibraryAdded?: (entry: LibraryEntry) => void;
@@ -715,7 +696,7 @@ export interface CreationReference {
   fashion_matrix?: CreationFashionItem[];
   housing_tiers?: CreationHousingTier[];
   lifestyles?: CreationLifestyleTier[];
-  campaign_presets?: CampaignPresets;
+  campaign_presets: CampaignPresets;
   difficult_skills?: string[];
   threat_ratings?: Array<Record<string, unknown>>;
   zone_types?: Array<Record<string, unknown>>;

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { BookOpen, Search, Sparkles, X } from "lucide-react";
 import { searchLibrary } from "../api";
 import type { LibraryEntry } from "../types";
+import { useModalFocus } from "../utils/useModalFocus";
 import { classifyWeaponTiers, getWeaponTierTheme } from "../utils/weaponQuality";
 import { CyberFrame, HudButton } from "./cyber";
 
@@ -17,6 +18,7 @@ export function CommandPalette({ open, campaignId, onClose, onSelectEntry }: Com
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<LibraryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const dialogRef = useModalFocus(open, onClose);
 
   useEffect(() => {
     if (!open) return;
@@ -48,11 +50,13 @@ export function CommandPalette({ open, campaignId, onClose, onSelectEntry }: Com
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/75 p-4 pt-16 backdrop-blur-xs sm:pt-20"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/75 p-4 pt-16 backdrop-blur-xs sm:pt-20 outline-none"
       role="dialog"
       aria-modal="true"
       aria-label="Rulebook & Library Search"
       onClick={onClose}
+      ref={dialogRef}
+      tabIndex={-1}
     >
       <CyberFrame
         variant="modal"
