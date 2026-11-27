@@ -11,7 +11,28 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: npm --prefix ui ci
+      - run: npm --prefix ui test
+      - run: npm --prefix ui run build
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
