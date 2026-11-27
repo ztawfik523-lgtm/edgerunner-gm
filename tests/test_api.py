@@ -591,6 +591,9 @@ def test_server_side_player_redaction_across_tree_sse_coop_and_game(tmp_path: Pa
                 "gm_notes": "Secret GM note",
             })
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             yield "<think>Internal GM thought</think>Rain falls over Watson."
 

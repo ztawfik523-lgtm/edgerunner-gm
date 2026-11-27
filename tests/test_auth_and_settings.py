@@ -57,6 +57,9 @@ class RecordingLLM:
             })
         return json.dumps({"rolls": [], "patches": [], "library_adds": [], "clocks": []})
 
+    def pop_call_meta(self):
+        return {}
+
     async def stream(self, messages, **_kwargs):
         self.stream_calls.append(messages)
         yield "Neon static hangs over the street."

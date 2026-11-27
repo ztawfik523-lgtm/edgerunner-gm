@@ -33,6 +33,9 @@ class ScriptedLLM:
         self.planner_calls.append(messages)
         return self.complete_reply
 
+    def pop_call_meta(self):
+        return {}
+
     async def stream(self, messages, **_kwargs):
         self.narrator_calls.append(messages)
         for chunk in self.stream_chunks:
@@ -366,6 +369,9 @@ async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path, monkey
             captured_prompts.append(messages[0]["content"])
             return '{"checks":[],"state_ops":[],"new_homebrew":[],"gm_notes":"ok"}'
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, *, temperature=None, max_tokens=None):
             self.count += 1
             captured_prompts.append(messages[0]["content"])
@@ -651,6 +657,9 @@ async def test_narrator_prompt_character_voice_and_temperature_split(tmp_path: P
             self.calls.append(("complete", temperature, messages[0]["content"]))
             return await super().complete(messages, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode)
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, *, temperature=None, max_tokens=None):
             self.calls.append(("stream", temperature, messages[0]["content"]))
             async for ch in super().stream(messages, temperature=temperature, max_tokens=max_tokens):
@@ -720,6 +729,9 @@ async def test_gm_secrets_fog_of_war_persistence_and_isolation(tmp_path: Path):
             reply = json.dumps(plans[self.turn])
             self.turn += 1
             return reply
+
+        def pop_call_meta(self):
+            return {}
 
         async def stream(self, messages, *, temperature=None, max_tokens=None):
             self.narrator_prompts.append(messages[0]["content"])
@@ -814,6 +826,9 @@ async def test_luck_spend_solo_ops_and_wound_awareness(tmp_path: Path):
                     "narration_notes": "Paid advance.",
                 }
             )
+
+        def pop_call_meta(self):
+            return {}
 
         async def stream(self, messages, **_kwargs):
             yield "Vee takes the cash despite the bleeding."
@@ -916,6 +931,9 @@ async def test_world_clocks_branch_isolation_and_compress_memory(tmp_path: Path)
                 }
             )
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             self.narrator_prompts.append("\n".join(m["content"] for m in messages))
             yield "Sirens echo over Watson while Kira checks the lock."
@@ -961,11 +979,13 @@ async def test_world_clocks_branch_isolation_and_compress_memory(tmp_path: Path)
         assert "NCPD Heat" in llm.planner_prompts[-1]
         assert "Corp Hit Team" in llm.planner_prompts[-1]
 
-        # Regenerating Turn 1 branches off root and does not inherit Turn 1 post-turn clocks
+        # Regenerating Turn 1 only re-narrates it: no re-plan, and the new sibling keeps Turn 1's branch clocks.
+        planner_calls_before = llm.turn
         regen = await client.post("/v1/chat/regenerate", headers=headers, json={"campaign_id": camp_id, "message_id": user_id_1})
         assert regen.status_code == 200
+        assert llm.turn == planner_calls_before
         clocks_after_regen = (await client.get(f"/v1/campaigns/{camp_id}/clocks")).json()
-        assert clocks_after_regen["clocks"] == []
+        assert [c["name"] for c in clocks_after_regen["clocks"]] == ["NCPD Heat", "Corp Hit Team"]
 
 
 @pytest.mark.anyio
@@ -1020,6 +1040,9 @@ async def test_ai_time_management_and_multi_call_chronicler(tmp_path: Path):
                     "gm_notes": "Transit across Watson.",
                 }
             )
+
+        def pop_call_meta(self):
+            return {}
 
         async def stream(self, messages, **_kwargs):
             self.narrator_prompts.append("\n".join(m["content"] for m in messages))
@@ -2313,6 +2336,9 @@ async def test_chronicler_blocks_character_updates_and_preserves_turn1_time(tmp_
                 return self.chron_reply
             return self.planner_reply
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             yield "Twenty minutes pass in Kabuki."
 
@@ -2452,7 +2478,7 @@ def test_resolve_character_strictness_and_npc_checks(tmp_path: Path):
 
     # execute_npc_check runs non-PC check via mechanics.skill_check and lands in executed["rolls"]
     engine = TurnEngine(svc, ScriptedLLM())
-    executed = engine._execute_plan(
+    executed = engine.executor.execute_plan(
         camp_id,
         {
             "checks": [
@@ -2569,6 +2595,9 @@ async def test_smart_gm_router_mixed_ooc_solo_punctuation_and_deferred_clear(tmp
                 self.chron_user_contents.append(messages[-1]["content"])
                 return "{}"
             return "{}"
+
+        def pop_call_meta(self):
+            return {}
 
         async def stream(self, messages, **_kwargs):
             yield "The fixer slides over a datashard."
@@ -2722,6 +2751,9 @@ async def test_think_mode_zero_time_no_mutations_and_chronicler_gating(tmp_path:
             self.planner_calls.append(messages)
             return json.dumps(self.planner_plan)
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             self.narrator_calls.append(messages)
             yield "You spot the scuff marks under the counter."
@@ -2857,6 +2889,9 @@ async def test_think_mode_zero_time_no_mutations_and_chronicler_gating(tmp_path:
         async def complete(self, messages, **_kwargs):
             return "{}"
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             self.stream_msgs.append(messages)
             yield (
@@ -2974,7 +3009,7 @@ def test_latest_snapshot_leaf_ignores_orphaned_inactive_branch_nodes(tmp_path: P
         campaign_revision=revs["campaign_revision"],
         solo_revision=revs["solo_revision"],
     )
-    engine._save_branch_private_state(camp_id, a1["id"], u1["id"], {"branch": "one"}, [])
+    engine.private_state.save_branch_private_state(camp_id, a1["id"], u1["id"], {"branch": "one"}, [])
 
     # Create a newer sibling assistant branch with its own snapshot, then corrupt its is_active=1 while keeping a1 active
     a2 = engine.tree.append_message(
@@ -2985,14 +3020,14 @@ def test_latest_snapshot_leaf_ignores_orphaned_inactive_branch_nodes(tmp_path: P
         campaign_revision=revs["campaign_revision"],
         solo_revision=revs["solo_revision"],
     )
-    engine._save_branch_private_state(camp_id, a2["id"], u1["id"], {"branch": "two"}, [])
+    engine.private_state.save_branch_private_state(camp_id, a2["id"], u1["id"], {"branch": "two"}, [])
     engine.tree.switch_branch(camp_id, a1["id"])
     with closing(svc.store._connect()) as conn, conn:
         conn.execute("UPDATE chat_messages SET is_active=1 WHERE id=?", (a2["id"],))
         # Ensure a1 is still first in creation order so get_tree's active_branch follows a1
         conn.execute("UPDATE chat_messages SET is_active=1 WHERE id=?", (a1["id"],))
 
-    assert engine._latest_snapshot_leaf(camp_id) == a1["id"]
+    assert engine.private_state.latest_snapshot_leaf(camp_id) == a1["id"]
     assert engine._get_gm_secrets(camp_id) == {"branch": "one"}
 
 
@@ -3017,7 +3052,7 @@ def test_split_party_channel_seeds_private_state_from_main_leaf(tmp_path: Path):
         campaign_revision=revs["campaign_revision"],
         solo_revision=revs["solo_revision"],
     )
-    engine._save_branch_private_state(
+    engine.private_state.save_branch_private_state(
         camp_id,
         a1["id"],
         u1["id"],
@@ -3081,27 +3116,7 @@ def test_chat_tree_cycle_guards_and_export_branch_no_duplicate_rolls(tmp_path: P
 
 @pytest.mark.anyio
 async def test_campaign_compressions_per_channel_and_archivist_hides_internal_keys(tmp_path: Path):
-    from contextlib import closing
-    import sqlite3
-
     _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
-    # Simulate legacy campaign_compressions table without channel_id column
-    with closing(svc.store._connect()) as conn, conn:
-        conn.execute("DROP TABLE IF EXISTS campaign_compressions")
-        conn.execute(
-            """
-            CREATE TABLE campaign_compressions (
-                campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
-                leaf_id TEXT,
-                compressed_count INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-        conn.execute(
-            "INSERT INTO campaign_compressions (campaign_id, leaf_id, compressed_count, updated_at) VALUES (?, NULL, 3, '2026-01-01')",
-            (camp_id,),
-        )
 
     archivist_llm = ScriptedLLM(
         complete_reply=json.dumps(
@@ -3114,11 +3129,12 @@ async def test_campaign_compressions_per_channel_and_archivist_hides_internal_ke
         )
     )
     engine = TurnEngine(svc, archivist_llm)
-    assert engine._get_compressed_count(camp_id, channel_id="main") == 3
-    assert engine._get_compressed_count(camp_id, channel_id="scene-dock") == 0
-    engine._set_compressed_count(camp_id, None, 5, channel_id="scene-dock")
-    assert engine._get_compressed_count(camp_id, channel_id="main") == 3
-    assert engine._get_compressed_count(camp_id, channel_id="scene-dock") == 5
+    engine.private_state.set_compressed_count(camp_id, None, 3, channel_id="main")
+    assert engine.private_state.get_compressed_count(camp_id, channel_id="main") == 3
+    assert engine.private_state.get_compressed_count(camp_id, channel_id="scene-dock") == 0
+    engine.private_state.set_compressed_count(camp_id, None, 5, channel_id="scene-dock")
+    assert engine.private_state.get_compressed_count(camp_id, channel_id="main") == 3
+    assert engine.private_state.get_compressed_count(camp_id, channel_id="scene-dock") == 5
 
     # Seed internal __* keys into campaign discoveries and verify Archivist does not see them
     camp = svc.campaign_context(camp_id)["campaign"]
@@ -3289,6 +3305,9 @@ async def test_run_turn_resolves_channel_from_parent_and_abort_preserves_persist
                 return "{}"
             raise BaseException("Simulated Chronicler abort")
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             yield "The cargo crane groans overhead."
 
@@ -3317,6 +3336,9 @@ async def test_run_turn_resolves_channel_from_parent_and_abort_preserves_persist
         async def complete(self, messages, **_kwargs):
             return "{}"
 
+        def pop_call_meta(self):
+            return {}
+
         async def stream(self, messages, **_kwargs):
             raise RuntimeError("LLM stream dropped")
             yield ""  # pragma: no cover
@@ -3334,71 +3356,110 @@ async def test_run_turn_resolves_channel_from_parent_and_abort_preserves_persist
     assert len(dock_tree_after["active_branch"]) == 3
 
 
-@pytest.mark.anyio
-async def test_regenerate_turn_no_double_deduction_and_branch_rolls_isolated(tmp_path: Path):
-    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
-    char_before = svc.store.get_character(char_id)
-    assert char_before["luck_remaining"] == 6
-    assert char_before["humanity"] == 60
+class _CheckAndMoneyLLM:
+    """Planner always proposes one Handgun check plus money/scene updates; narrator output is scripted."""
 
-    class SequencedRegenLLM:
-        def __init__(self):
-            self.config = LLMConfig(model="stub", mode="two_pass")
-            self.turn_num = 0
+    def __init__(self, *, check_extra: dict[str, Any] | None = None, fail_first_stream: bool = False):
+        self.config = LLMConfig(model="stub", mode="two_pass")
+        self.check_extra = check_extra or {}
+        self.fail_first_stream = fail_first_stream
+        self.planner_calls = 0
+        self.stream_calls = 0
+        self.narrator_prompt = ""
 
-        async def complete(self, messages, **_kwargs):
-            self.turn_num += 1
-            return json.dumps(
-                {
-                    "checks": [{"actor": "Vee Mercer", "skill": "Handgun", "dv": 13, "reason": f"Attempt {self.turn_num}"}],
-                    "state_ops": [
-                        {"type": "update_character", "actor": "Vee Mercer", "changes": {"money": 250}, "reason": "Found credchip"},
-                        {"type": "update_campaign", "changes": {"scene": f"Alley branch {self.turn_num}"}, "reason": "Scene"},
-                    ],
-                }
-            )
-
-        async def stream(self, messages, **_kwargs):
-            yield f"Outcome {self.turn_num}"
-
-    eng = TurnEngine(svc, SequencedRegenLLM())
-    ev1 = [
-        ev
-        async for ev in eng.run_turn(
-            camp_id,
-            "Take the shot",
-            speaker_character_id=char_id,
-            luck_spend=2,
-            overclock=True,
+    async def complete(self, messages, **_kwargs):
+        self.planner_calls += 1
+        return json.dumps(
+            {
+                "checks": [{"actor": "Vee Mercer", "skill": "Handgun", "dv": 13, "reason": f"Attempt {self.planner_calls}", **self.check_extra}],
+                "state_ops": [
+                    {"type": "update_character", "actor": "Vee Mercer", "changes": {"money": 250}, "reason": "Found credchip"},
+                    {"type": "update_campaign", "changes": {"scene": f"Alley branch {self.planner_calls}"}, "reason": "Scene"},
+                ],
+            }
         )
-    ]
-    done1 = ev1[-1]["data"]
+
+    def pop_call_meta(self):
+        return {}
+
+    async def stream(self, messages, **_kwargs):
+        self.stream_calls += 1
+        self.narrator_prompt = "\n".join(m["content"] for m in messages)
+        yield f"Outcome {self.stream_calls}"
+        if self.fail_first_stream and self.stream_calls == 1:
+            raise RuntimeError("LLM stream dropped")
+
+
+@pytest.mark.anyio
+async def test_planner_cannot_spend_player_luck_or_overclock(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    eng = TurnEngine(svc, _CheckAndMoneyLLM(check_extra={"luck": 5, "overclock": True}))
+
+    done = [ev async for ev in eng.run_turn(camp_id, "Take the shot", speaker_character_id=char_id)][-1]["data"]
+    char = svc.store.get_character(char_id)
+    assert (char["luck_remaining"], char["humanity"]) == (6, 60)
+    assert done["rolls"][0]["luck_spent"] == 0 and done["rolls"][0]["overclock"] is False
+
+    done = [ev async for ev in eng.run_turn(camp_id, "Shoot again", speaker_character_id=char_id, luck_spend=1)][-1]["data"]
+    char = svc.store.get_character(char_id)
+    assert (char["luck_remaining"], char["humanity"]) == (5, 60)
+    assert done["rolls"][0]["luck_spent"] == 1
+
+
+@pytest.mark.anyio
+async def test_regenerate_renarrates_stored_outcomes_without_touching_state(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    llm = _CheckAndMoneyLLM()
+    eng = TurnEngine(svc, llm)
+    done1 = [
+        ev async for ev in eng.run_turn(camp_id, "Take the shot", speaker_character_id=char_id, luck_spend=2, overclock=True)
+    ][-1]["data"]
     a1_id = done1["assistant_message"]["id"]
-    u_id = done1["user_message"]["id"]
-    c_after_1 = svc.store.get_character(char_id)
-    assert c_after_1["luck_remaining"] == 4
-    assert c_after_1["humanity"] == 58
-    assert c_after_1["money"] == 250
+    char_after_turn = svc.store.get_character(char_id)
+    assert (char_after_turn["luck_remaining"], char_after_turn["humanity"], char_after_turn["money"]) == (4, 58, 250)
+    ctx_after_turn = svc.campaign_context(camp_id)
 
     ev2 = [ev async for ev in eng.regenerate_turn(camp_id, a1_id)]
     done2 = ev2[-1]["data"]
-    a2_id = done2["assistant_message"]["id"]
-    c_after_2 = svc.store.get_character(char_id)
-    # Regenerating must restore pre-turn baseline first so LUCK, Humanity, and money are NOT double-applied
-    assert c_after_2["luck_remaining"] == 4
-    assert c_after_2["humanity"] == 58
-    assert c_after_2["money"] == 250
 
-    a1_msg = eng.tree.get_message(camp_id, a1_id)
-    a2_msg = eng.tree.get_message(camp_id, a2_id)
-    assert a1_msg["metadata"]["rolls"][0]["reason"] == "Attempt 1"
-    assert a2_msg["metadata"]["rolls"][0]["reason"] == "Attempt 2"
-    assert eng.tree.get_message(camp_id, u_id)["metadata"]["rolls"][0]["reason"] == "Attempt 2"
+    assert llm.planner_calls == 1
+    assert not [ev for ev in ev2 if ev["event"] in {"dice_roll", "state_patch", "library_added"}]
+    assert svc.store.get_character(char_id) == char_after_turn
+    ctx_after_regen = svc.campaign_context(camp_id)
+    assert ctx_after_regen["campaign"] == ctx_after_turn["campaign"]
+    assert ctx_after_regen["solo"]["revision"] == ctx_after_turn["solo"]["revision"]
+    a2 = eng.tree.get_message(camp_id, done2["assistant_message"]["id"])
+    a1 = eng.tree.get_message(camp_id, a1_id)
+    assert a2["content"] == "Outcome 2"
+    assert a2["metadata"]["regenerated_from"] == a1_id
+    assert a2["metadata"]["rolls"] == a1["metadata"]["rolls"]
+    assert "Roll #1: Vee Mercer — Handgun" in llm.narrator_prompt and "Attempt 1" in llm.narrator_prompt
 
-    # Switching back to branch 1 restores user_msg.metadata["rolls"] to branch 1's roll without touching a2
-    eng.tree.switch_branch(camp_id, a1_id)
-    assert eng.tree.get_message(camp_id, u_id)["metadata"]["rolls"][0]["reason"] == "Attempt 1"
-    assert eng.tree.get_message(camp_id, a2_id)["metadata"]["rolls"][0]["reason"] == "Attempt 2"
+
+@pytest.mark.anyio
+async def test_failed_narration_keeps_executed_turn_and_retry_does_not_reapply(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+    llm = _CheckAndMoneyLLM(fail_first_stream=True)
+    eng = TurnEngine(svc, llm)
+
+    with pytest.raises(RuntimeError, match="LLM stream dropped"):
+        async for _ in eng.run_turn(camp_id, "Take the shot", speaker_character_id=char_id, luck_spend=1):
+            pass
+
+    branch = eng.tree.get_tree(camp_id)["active_branch"]
+    assert [m["role"] for m in branch] == ["user", "assistant"]
+    placeholder = branch[-1]
+    assert placeholder["metadata"]["narration_failed"] is True
+    assert placeholder["metadata"]["rolls"] and placeholder["metadata"]["patches"]
+    char_after_turn = svc.store.get_character(char_id)
+    assert (char_after_turn["luck_remaining"], char_after_turn["money"]) == (5, 250)
+
+    # Retrying (regenerate on the user turn) re-narrates the saved outcome instead of re-planning it.
+    done = [ev async for ev in eng.regenerate_turn(camp_id, branch[0]["id"])][-1]["data"]
+    assert llm.planner_calls == 1
+    assert svc.store.get_character(char_id) == char_after_turn
+    assert done["assistant_message"]["content"] == "Outcome 2"
+    assert done["assistant_message"]["metadata"]["regenerated_from"] == placeholder["id"]
 
 
 def test_settings_per_key_fault_tolerance(tmp_path: Path):
