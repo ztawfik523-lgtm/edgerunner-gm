@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import re
 import secrets
-import sqlite3
 from pathlib import Path
 from typing import Callable, Any
 import rules_eval
-from sourcecatalog import skills as source_skills_catalog, lookup_skill, _normalize as _catalog_normalize
+from sourcecatalog import roles as source_roles, skills as source_skills_catalog, lookup_skill, _normalize as _catalog_normalize
 from economy import HOUSING as ECONOMY_HOUSING, LIFESTYLES as ECONOMY_LIFESTYLES
 from roles import validate_role_choices
 
@@ -15,40 +14,18 @@ STATS = ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "E
 ROLES = ("Rockerboy", "Solo", "Netrunner", "Tech", "Medtech", "Media", "Lawman", "Exec", "Fixer", "Nomad")
 
 
-def _pages(path: str | Path) -> list[tuple[int, str]]:
-    try:
-        with sqlite3.connect(Path(path).expanduser().resolve().as_uri() + "?mode=ro", uri=True) as db:
-            return [(int(p), str(t)) for p, t in db.execute("SELECT pdf_page,text FROM pages ORDER BY pdf_page")]
-    except (sqlite3.Error, OSError) as exc:
-        raise ValueError(f"Cannot read rules pages: {exc}") from exc
+def _role_stats(rules_path: str | Path, role: str) -> dict[str, Any]:
+    entry = source_roles(rules_path).get(role)
+    if entry is None:
+        raise ValueError(f"Role {role!r} is not in the indexed Corebook")
+    return entry["stats"]
 
 
-def _template(pages: list[tuple[int, str]], role: str) -> list[list[int]]:
-    # The extracted page presents each cell as its own line, with a plain ▶Role heading.
-    for page, text in pages:
-        if not 74 <= page <= 78:
-            continue
-        lines = text.splitlines()
-        for i, line in enumerate(lines):
-            if not re.fullmatch(rf"\s*▶\s*{re.escape(role)}\s*", line, re.I):
-                continue
-            tokens: list[int] = []
-            for candidate in lines[i + 1:]:
-                if re.search(r"▶\s*(?:Method|Rockerboy|Solo|Netrunner|Tech|Medtech|Media|Lawman|Exec|Fixer|Nomad)", candidate, re.I):
-                    break
-                stripped = candidate.strip()
-                if re.fullmatch(r"\d+", stripped):
-                    tokens.append(int(stripped))
-                elif stripped and not re.fullmatch(r"(?:Roll|INT|REF|DEX|TECH|COOL|WILL|LUCK|MOVE|BODY|EMP)", stripped, re.I):
-                    # Non-numeric table captions are allowed, but never harvest unrelated numbers.
-                    continue
-                if len(tokens) == 110:
-                    break
-            if len(tokens) == 110:
-                rows = [tokens[n:n + 11] for n in range(0, 110, 11)]
-                if [r[0] for r in rows] == list(range(1, 11)) and all(2 <= n <= 8 for r in rows for n in r[1:]):
-                    return [r[1:] for r in rows]
-    raise ValueError(f"No validated ten-row STAT template found for role {role!r}")
+def _template(rules_path: str | Path, role: str) -> list[list[int]]:
+    rows = _role_stats(rules_path, role).get("stat_templates") or []
+    if len(rows) != 10 or any(len(r) != 10 or not all(type(n) is int and 2 <= n <= 8 for n in r) for r in rows):
+        raise ValueError(f"No validated ten-row STAT template found for role {role!r}")
+    return rows
 
 
 def _norm_skill(value: str) -> str:
@@ -76,52 +53,15 @@ def _canonical_skill_name(catalog: dict[str, dict[str, Any]], raw_name: str) -> 
     return raw_name.strip()
 
 
-def _role_skills(pages: list[tuple[int, str]], role: str, catalog: dict[str, dict[str, Any]]) -> dict[str, int]:
-    # Indexed table extraction preserves column order as pipe-delimited cells.
-    for _, text in pages:
-        lines = text.splitlines()
-        for idx, line in enumerate(lines):
-            if "|" not in line:
-                continue
-            cells = [c.strip() for c in line.split("|")]
-            if len(cells) < 10 or not any(_norm_skill(c) == _norm_skill(role) for c in cells):
-                continue
-            role_col = next(i for i, c in enumerate(cells) if _norm_skill(c) == _norm_skill(role))
-            lvl_col = role_col + 1
-            start_row = idx + 1
-            if start_row < len(lines) and "|" in lines[start_row]:
-                sub = [c.strip() for c in lines[start_row].split("|")]
-                for j in range(role_col + 1, min(len(sub), role_col + 4)):
-                    if _norm_skill(sub[j]) in ("lvl", "level"):
-                        lvl_col = j
-                        start_row += 1
-                        break
-            result: dict[str, int] = {}
-            for row_line in lines[start_row:]:
-                if "|" not in row_line:
-                    if result:
-                        break
-                    continue
-                row_cells = [c.strip() for c in row_line.split("|")]
-                if max(role_col, lvl_col) >= len(row_cells):
-                    if result:
-                        break
-                    continue
-                skill_cell = row_cells[role_col]
-                lvl_cell = row_cells[lvl_col]
-                norm = _norm_skill(skill_cell)
-                if norm in ("skill", "lvl", "level", ""):
-                    continue
-                if not re.fullmatch(r"[0-6]", lvl_cell):
-                    if result:
-                        break
-                    continue
-                canonical = _canonical_skill_name(catalog, skill_cell)
-                if canonical is not None:
-                    result[canonical] = int(lvl_cell)
-                if len(result) == 20:
-                    return result
-    raise ValueError(f"Could not validate exactly 20 source skills for {role}")
+def _role_skills(rules_path: str | Path, role: str, catalog: dict[str, dict[str, Any]]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for name, rank in (_role_stats(rules_path, role).get("streetrat_skills") or {}).items():
+        canonical = _canonical_skill_name(catalog, name)
+        if canonical is not None and type(rank) is int and 0 <= rank <= 6:
+            result[canonical] = rank
+    if len(result) != 20:
+        raise ValueError(f"Could not validate exactly 20 source skills for {role}")
+    return result
 
 
 BASIC = {_norm_skill(x) for x in ("Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth")}
@@ -288,11 +228,10 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
     method = args.get("method")
     if method not in ("streetrat", "edgerunner", "complete_package"):
         raise ValueError("method must be streetrat, edgerunner, or complete_package")
-    pages = _pages(rules_path)
     dice: list[int] = []
     supplied_rolls = args.get("template_rolls")
     if method in ("streetrat", "edgerunner"):
-        templates = _template(pages, role)
+        templates = _template(rules_path, role)
         count = 1 if method == "streetrat" else 10
         if supplied_rolls is not None:
             if not isinstance(supplied_rolls, list) or len(supplied_rolls) != count or any(type(r) is not int or not 1 <= r <= 10 for r in supplied_rolls):
@@ -312,7 +251,7 @@ def build_character(args: dict[str, Any], rules_path: str | Path, randbelow: Cal
             raise ValueError("complete_package requires all ten STATs from 2 to 8 totaling 62")
         stats = dict(raw)
     catalog = source_skills_catalog(rules_path)
-    source_skills = _role_skills(pages, role, catalog) if method in ("streetrat", "edgerunner") else {}
+    source_skills = _role_skills(rules_path, role, catalog) if method in ("streetrat", "edgerunner") else {}
     supplied = args.get("skills", {})
     if not isinstance(supplied, dict) or any(not isinstance(k, str) or type(v) is not int or not 0 <= v <= 6 for k, v in supplied.items()):
         raise ValueError("skills must map skill names to integer ranks 0..6")

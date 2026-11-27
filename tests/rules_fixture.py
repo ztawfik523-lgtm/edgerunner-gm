@@ -6,6 +6,7 @@ using invented text only.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
@@ -98,3 +99,18 @@ def pdf_page(book: Any, printed: int | None, header: str, body: str, *, fontsize
     if printed is not None:
         page.insert_text((40, page.rect.height - 20), str(printed), fontsize=fontsize)
     return page
+
+
+def add_role(path: Path, name: str, templates: list[list[int]], streetrat_skills: dict[str, int]) -> None:
+    """Insert a materialized role entry (call after anything that re-materializes the library)."""
+    stats = {"stat_templates": templates, "streetrat_skills": streetrat_skills}
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO rule_entries(id,name,norm_name,category,summary,description,stats_json,tags_json,source_sha256)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (f"corebook:role:{name.lower()}", name, name.lower(), "role", name, name, json.dumps(stats), "[]", "test"),
+        )
+        conn.commit()
+    finally:
+        conn.close()

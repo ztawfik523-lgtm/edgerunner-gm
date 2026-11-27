@@ -20,17 +20,13 @@ def rules(tmp_path):
         (9, 7, 7, 6, 4, 6, 6, 6, 5, 6, 5),
         (10, 6, 6, 8, 5, 6, 6, 5, 6, 6, 5),
     ]
-    text = "▶Solo\nRoll\nINT\nREF\nDEX\nTECH\nCOOL\nWILL\nLUCK\nMOVE\nBODY\nEMP\n" + "\n".join(str(n) for row in values for n in row)
-    skills = "| Media |  | Lawman |  | Exec |  | Fixer |  | Nomad |  | Rockerboy |  | Solo |  | Netrunner |  | Tech |  | Medtech |\n"
-    skills += "| Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl |\n"
-    skills += "\n".join(f"| Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 |" for i in range(20))
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     definitions = "\n".join(f"{name}........INT" for name in basics + [f"Skill {i}" + (" (x2)" if i == 0 else "") for i in range(20)])
     from tests import rules_fixture as rf
     rf.build(path, [
-        rf.page(74, 73, [rf.block(text, 80), rf.block(skills, 400)]),
         rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(definitions.splitlines())]),
     ], digest="test-digest")
+    rf.add_role(path, "Solo", [list(row[1:]) for row in values], {f"Skill {i}": 4 for i in range(20)})
     return path
 
 
@@ -146,25 +142,14 @@ def test_exec_empty_separator_and_creation_reference(tmp_path):
         (i + 1, 6, 7, 7, 3, 8, 6, 5, 5, 6, 5)
         for i in range(10)
     ]
-    text = "▶Exec\nRoll\nINT\nREF\nDEX\nTECH\nCOOL\nWILL\nLUCK\nMOVE\nBODY\nEMP\n" + "\n".join(str(n) for row in values for n in row)
-    # Mimics real PDF page 88 where Exec has a blank column between Skill and Lvl
-    skills = "| Media |  | Lawman |  | Exec |  |  | Fixer |  | Nomad |  | Rockerboy |  | Solo |  | Netrunner |  | Tech |  | Medtech |\n"
-    skills += "| Skill | Lvl | Skill | Lvl | Skill |  | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl |\n"
     exec_names = ["Accounting", "Bureaucracy", "Business"] + [f"Skill {i}" for i in range(3, 20)]
-    for i in range(20):
-        skills += (
-            f"| Skill {i} | 4 | Skill {i} | 4 | {exec_names[i]} |  | 4 | "
-            + " | ".join(f"Skill {i} | 4" for _ in range(7))
-            + " |\n"
-        )
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     defs = "\n".join(f"{name}........INT" for name in basics + exec_names)
     from tests import rules_fixture as rf
     rf.build(path, [
-        rf.page(78, 77, [rf.block(text, 80)]),
         rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(defs.splitlines())]),
-        rf.page(88, 87, [rf.block(skills, 80)]),
     ], digest="exec-digest")
+    rf.add_role(path, "Exec", [list(row[1:]) for row in values], dict.fromkeys(exec_names, 4))
 
     ref = build_creation_reference(path)
     assert ref["rules_indexed"] is True

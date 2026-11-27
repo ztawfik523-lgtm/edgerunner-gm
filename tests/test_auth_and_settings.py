@@ -1241,20 +1241,11 @@ def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monk
     # 4. create_player_character stamps owner_username from signed-in user at top level.
     import sqlite3
     values = [(r, 6, 7, 7, 3, 8, 6, 5, 5, 6, 5) for r in range(1, 11)]
-    solo_text = "▶Solo\nRoll\nINT\nREF\nDEX\nTECH\nCOOL\nWILL\nLUCK\nMOVE\nBODY\nEMP\n" + "\n".join(str(n) for row in values for n in row)
-    skills_tbl = "| Media |  | Lawman |  | Exec |  | Fixer |  | Nomad |  | Rockerboy |  | Solo |  | Netrunner |  | Tech |  | Medtech |\n"
-    skills_tbl += "| Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl | Skill | Lvl |\n"
-    skills_tbl += "\n".join(f"| Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 |" for i in range(20))
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     defs = "\n".join(f"{name}........INT" for name in basics + [f"Skill {i}" + (" (x2)" if i == 0 else "") for i in range(20)])
-    p74_txt = solo_text + "\n" + skills_tbl
-    with sqlite3.connect(rules_db) as rconn:
-        rconn.execute(
-            "INSERT OR REPLACE INTO pages(pdf_page, printed_page, header, text, chars) VALUES(74, 73, '', ?, ?)",
-            (p74_txt, len(p74_txt)),
-        )
-    from tests.rules_fixture import add_skill_definitions
+    from tests.rules_fixture import add_role, add_skill_definitions
     add_skill_definitions(rules_db, defs.splitlines())
+    add_role(rules_db, "Solo", [list(row[1:]) for row in values], {f"Skill {i}": 4 for i in range(20)})
 
     created_pc_res = client.post(
         "/v1/game",

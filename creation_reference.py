@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import corebook_gm_data as cgd
-from creation import BASIC, ROLES, STATS, _norm_skill, _pages, _role_skills, _template
+from creation import BASIC, ROLES, STATS, _norm_skill, _role_skills, _template
 from creation_catalog import (
     build_campaign_presets,
     build_corebook_ammo_attachments_exotics,
@@ -20,7 +20,7 @@ from creation_catalog import (
     build_corebook_weapons,
     parse_hl_int,
 )
-from library import search_library
+from library import list_category
 from sourcecatalog import skills as source_skills_catalog
 
 STAT_INFO: dict[str, dict[str, Any]] = {
@@ -1537,19 +1537,18 @@ def build_creation_reference(rules_path: str | Path | None) -> dict[str, Any]:
     }
 
     if rules_indexed and path is not None:
-        pages = _pages(path)
         catalog = source_skills_catalog(path)
         lib_skills = {
             entry["name"].casefold(): entry
-            for entry in search_library(path, category="skill", limit=100)
+            for entry in list_category(path, "skill")
         }
         for role in ROLES:
             try:
-                templates[role] = _template(pages, role)
+                templates[role] = _template(path, role)
             except ValueError:
                 pass
             try:
-                role_skills[role] = _role_skills(pages, role, catalog)
+                role_skills[role] = _role_skills(path, role, catalog)
             except ValueError:
                 pass
         for name, meta in sorted(catalog.items(), key=lambda kv: kv[0].casefold()):
@@ -1568,7 +1567,7 @@ def build_creation_reference(rules_path: str | Path | None) -> dict[str, Any]:
                 "description": (lib_entry or {}).get("description") or f"{name} is governed by {meta['stat']} (IP/creation multiplier x{meta['cost']}).",
             })
         for cat_name in ("cyberware", "gear", "program"):
-            entries = search_library(path, category=cat_name, limit=250)
+            entries = list_category(path, cat_name)
             cleaned: list[dict[str, Any]] = []
             seen: set[str] = set()
             for entry in entries:
