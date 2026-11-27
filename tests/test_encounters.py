@@ -58,6 +58,17 @@ def test_ranged_attack_spends_ammo_uses_canonical_damage_and_armor_head_multipli
     assert out["characters"][defender]["hp"] <= cs[defender]["hp"]
 
 
+def test_attack_ablation_comes_from_weapon_and_ammo_not_arguments():
+    gun = {"id": "gun", "type": "Heavy Pistol", "loaded": 8, "ammo_kind": "H Pistol"}
+    chars = [character("a", ref=8, weapon=gun), character("b", ref=2, armor=[{"id": "vest", "sp": 4, "location": "body"}])]
+    e, cs = begun(chars, init_sequence=[9, 0])
+    # Attack d10=8 (no explosion) vs pistol DV; damage 6,6,1 = 13 penetrates SP 4 without a critical.
+    rolls = iter([7, 5, 5, 0])
+    out = apply_action(e, cs, "a", "attack", {"target_id": "b", "weapon_id": "gun", "range_m": 4, "ablation": 4}, lambda _: next(rolls, 0))
+    assert out["result"]["attacks"][0]["hit"]
+    assert out["characters"]["b"]["detail"]["equipment"]["armor"][0]["sp"] == 3
+
+
 def test_empty_ammo_autofire_and_reload_full_mag_only():
     gun = {"id": "smg", "type": "SMG", "loaded": 0, "ammo_kind": "M Pistol"}
     chars = [character("a", weapon=gun), character("b", ref=3)]
@@ -595,11 +606,9 @@ def test_validation_out_of_turn_hold_and_partial_special_ammo_reload():
     b = character("b", ref=2)
     e, cs = begun([a, b], init_sequence=[9, 0])
 
-    # Negative range_m and bool ablation rejected
+    # Negative range_m rejected
     with pytest.raises(ValueError):
         apply_action(e, cs, "a", "attack", {"target_id": "b", "weapon_id": "p", "range_m": -1}, lambda _: 5)
-    with pytest.raises(ValueError):
-        apply_action(e, cs, "a", "attack", {"target_id": "b", "weapon_id": "p", "range_m": 5, "ablation": True}, lambda _: 9)
     with pytest.raises(ValueError):
         apply_action(e, cs, "a", "grab", {"target_id": "b", "range_m": -2}, lambda _: 5)
 

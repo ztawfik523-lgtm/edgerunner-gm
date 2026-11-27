@@ -1111,11 +1111,6 @@ def _attack(e, cs, actor_id, args, randbelow):
     if type(defender_dodge) is not bool:
         raise ValueError("dodge must be boolean")
 
-    raw_ablation = args.get("ablation")
-    if raw_ablation is not None:
-        if type(raw_ablation) is not int or raw_ablation < 0:
-            raise ValueError("ablation must be a non-negative integer")
-
     weapon = None
     definition = None
     if mode in ("brawling", "martial_arts"):
@@ -1278,8 +1273,6 @@ def _attack(e, cs, actor_id, args, randbelow):
                 ablation = 2
             elif is_rubber:
                 ablation = 0
-            elif raw_ablation is not None:
-                ablation = raw_ablation
             elif definition and definition.get("ablation") is not None:
                 ablation = definition["ablation"]
 
