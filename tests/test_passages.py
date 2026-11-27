@@ -9,14 +9,14 @@ import pymupdf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import redkb
+from tests.rules_fixture import pdf_page
 
 
 def test_passages_have_exact_source_offsets(tmp_path):
     pdf = tmp_path / 'book.pdf'
     with pymupdf.open() as book:
-        page = book.new_page()
-        text = '130\nRULES\n' + '\n'.join(' '.join(['alpha', 'beta', 'gamma', 'delta'] * 4) for _ in range(28))
-        page.insert_text((40, 40), text, fontsize=8)
+        text = '\n'.join('alpha beta ' + ' '.join(f'w{line}x{n}' for n in range(14)) for line in range(28))
+        pdf_page(book, 130, 'RULES', text, fontsize=8)
         book.save(pdf)
     db = tmp_path / 'book.sqlite'
     redkb.build_index(pdf, db)
@@ -33,20 +33,10 @@ def test_passages_have_exact_source_offsets(tmp_path):
     assert hits[0]['excerpt'] in [row[2] for row in passages]
 
 
-def test_legacy_index_requests_rebuild(tmp_path):
-    db = tmp_path / 'old.sqlite'
-    with sqlite3.connect(db) as conn:
-        conn.execute('CREATE TABLE metadata(key TEXT, value TEXT)')
-        conn.execute("INSERT INTO metadata VALUES ('schema_version','1')")
-    with pytest.raises(ValueError, match='[Rr]ebuild|index'):
-        redkb.search_pages(db, 'critical success')
-
-
 def test_actual_fts_index_integrity(tmp_path):
     pdf = tmp_path / 'book.pdf'
     with pymupdf.open() as book:
-        page = book.new_page()
-        page.insert_text((40, 40), '130\nRULES\nCritical success: natural 10. Armor reduces damage.')
+        pdf_page(book, 130, 'RULES', 'Critical success: natural 10. Armor reduces damage.')
         book.save(pdf)
     db = tmp_path / 'book.sqlite'
     redkb.build_index(pdf, db)
@@ -60,7 +50,7 @@ def test_actual_fts_index_integrity(tmp_path):
 def test_ingestion_hashes_extracted_snapshot(tmp_path, monkeypatch):
     pdf = tmp_path / 'book.pdf'
     with pymupdf.open() as book:
-        book.new_page().insert_text((40, 40), '130\nRULES\nCritical success')
+        pdf_page(book, 130, 'RULES', 'Critical success')
         book.save(pdf)
     expected = hashlib.sha256(pdf.read_bytes()).hexdigest()
     original_open = pymupdf.open
@@ -77,16 +67,17 @@ def test_ingestion_hashes_extracted_snapshot(tmp_path, monkeypatch):
 def test_mid_ingestion_failure_preserves_index(tmp_path, monkeypatch):
     pdf = tmp_path / 'book.pdf'
     with pymupdf.open() as book:
-        book.new_page().insert_text((40, 40), '130\nRULES\nCritical success')
+        pdf_page(book, 130, 'RULES', 'Critical success')
         book.save(pdf)
     db = tmp_path / 'book.sqlite'
     redkb.build_index(pdf, db)
     original = db.read_bytes()
 
-    def fail(text):
+    def fail(*args, **kwargs):
         raise RuntimeError('interrupted extraction')
 
-    monkeypatch.setattr(redkb, 'clean_text', fail)
+    import layout
+    monkeypatch.setattr(layout, 'read_page', fail)
     with pytest.raises(RuntimeError, match='interrupted'):
         redkb.build_index(pdf, db)
     assert db.read_bytes() == original

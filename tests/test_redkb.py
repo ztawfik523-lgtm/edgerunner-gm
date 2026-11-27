@@ -8,6 +8,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import redkb
+from tests.rules_fixture import pdf_page
 
 
 @pytest.fixture()
@@ -19,8 +20,7 @@ def fixture_db(tmp_path):
         (130, "Critical Success: when you roll a natural 10, roll another 1d10 and add it. Critical Failure: on a natural 1, subtract another 1d10."),
         (131, "Awareness Skills: Concentration and Perception."),
     ]:
-        page = book.new_page()
-        page.insert_text((50, 60), f"{n}\nGETTING IT DONE\n{content}", fontsize=10)
+        pdf_page(book, n, "GETTING IT DONE", content)
     book.save(pdf)
     book.close()
     db = tmp_path / "rules.sqlite"
@@ -45,12 +45,11 @@ def test_keyword_retrieval(fixture_db):
 
 
 def test_explicit_page_routing(fixture_db):
-    printed = redkb.search_pages(fixture_db, "Read printed page 130 and tell me the critical failures")[0]
+    printed = redkb.search_pages(fixture_db, "Read printed page 130")[0]
     assert printed["printed_page"] == 130
     assert printed["pdf_page"] == 2
     assert printed["citation"] == "Corebook printed p.130 (PDF p.2)"
     assert "Critical Failure" in printed["text"]
-    assert "Critical Failure" in printed["excerpt"]
 
     pdf = redkb.search_pages(fixture_db, "open PDF page 2")[0]
     assert pdf["pdf_page"] == 2
@@ -61,8 +60,11 @@ def test_explicit_page_routing(fixture_db):
 
     assert redkb.search_pages(fixture_db, "PDF page 130") == []
     assert redkb.search_pages(fixture_db, "printed page 2") == []
-    assert redkb.search_pages(fixture_db, "page 1000 critical success") == []
-    assert redkb.search_pages(fixture_db, "page 0 critical success") == []
+    # A page mention inside a content question searches the content instead.
+    mention = redkb.search_pages(fixture_db, "Read printed page 129 and tell me the critical failures")[0]
+    assert mention["printed_page"] == 130
+    assert "Critical Failure" in mention["excerpt"]
+    assert redkb.search_pages(fixture_db, "page 1000 critical success")[0]["printed_page"] == 130
     assert "1" in redkb._terms("natural 1")
 
 
@@ -82,12 +84,6 @@ def test_golden_evaluator(fixture_db, tmp_path):
     cases = tmp_path / "golden.json"
     cases.write_text(json.dumps([{"query": "critical success natural 10", "expected_printed_pages": [130], "top_k": 2}]))
     assert redkb.evaluate(fixture_db, cases)["passed"] == 1
-
-
-def test_no_page_number_invented():
-    assert redkb.get_printed_page("GETTING IT DONE\nText") is None
-    assert redkb.get_printed_page("130\nGETTING IT DONE\nText") == 130
-    assert redkb.get_printed_page("BY NEIL BRANQUINHO\n189\nFRIDAY NIGHT FIREFIGHT") == 189
 
 
 def test_api_cors_is_opt_in(fixture_db):

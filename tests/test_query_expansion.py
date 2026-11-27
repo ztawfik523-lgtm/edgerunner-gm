@@ -6,13 +6,13 @@ import fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import redkb
+from tests.rules_fixture import pdf_page
 
 
 def test_vehicle_collision_query_expands_for_ramming_passage(tmp_path):
     pdf = tmp_path / "synthetic.pdf"
     with fitz.open() as book:
-        page = book.new_page()
-        page.insert_text((40, 50), "192\nVEHICLE COMBAT\nRamming a vehicle causes a crash. Resolve impact damage with 6d6.")
+        pdf_page(book, 192, "VEHICLE COMBAT", "Ramming a vehicle causes a crash. Resolve impact damage with 6d6.")
         book.save(pdf)
     db = tmp_path / "rules.sqlite"
     redkb.build_index(pdf, db)
@@ -26,9 +26,8 @@ def test_vehicle_collision_query_expands_for_ramming_passage(tmp_path):
 def test_unrelated_crash_query_is_not_expanded(tmp_path):
     pdf = tmp_path / "synthetic.pdf"
     with fitz.open() as book:
-        page = book.new_page()
-        page.insert_text((40, 50), "192\nVEHICLE COMBAT\nRamming a vehicle causes a crash.")
-        book.new_page().insert_text((40, 50), "193\nSOFTWARE\nThe application crash reports an error.")
+        pdf_page(book, 192, "VEHICLE COMBAT", "Ramming a vehicle causes a crash.")
+        pdf_page(book, 193, "SOFTWARE", "The application crash reports an error.")
         book.save(pdf)
     db = tmp_path / "rules.sqlite"
     redkb.build_index(pdf, db)

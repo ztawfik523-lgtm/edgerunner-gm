@@ -18,98 +18,52 @@ import library
 import redkb
 
 
-def _create_rules_db(path: Path, *, materialize: bool = True) -> Path:
-    conn = sqlite3.connect(path)
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE pages (
-                id INTEGER PRIMARY KEY,
-                pdf_page INTEGER NOT NULL UNIQUE,
-                printed_page INTEGER,
-                header TEXT NOT NULL,
-                text TEXT NOT NULL,
-                chars INTEGER NOT NULL
-            );
-            CREATE TABLE source_sections (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                start_pdf INTEGER NOT NULL,
-                end_pdf INTEGER NOT NULL,
-                printed_start INTEGER
-            );
-            CREATE TABLE source_tables (
-                pdf_page INTEGER NOT NULL,
-                ordinal INTEGER NOT NULL,
-                bbox_json TEXT,
-                cells_json TEXT NOT NULL,
-                PRIMARY KEY(pdf_page, ordinal)
-            );
-            """
-        )
-        conn.execute("INSERT INTO metadata VALUES ('source_sha256', 'deadbeef1234')")
-        skill_page_text = "\n".join(
-            [
-                "82",
-                "Handgun ......................... REF",
-                "Skill for accurately firing one-handed ranged weapons like pistols.",
-                "Covers semi-auto pistols and revolvers in Night City firefights.",
-                "Martial Arts (x2) ............... DEX",
-                "Specialized close-quarters fighting styles such as Karate or Aikido.",
-                "Requires x2 Improvement Points to advance.",
-                "Interface ....................... INT",
-                "Netrunner Role Ability skill; actually wait listed for test layout.",
-            ]
-        )
-        weapon_page_text = "340\nRanged Weapons\nStandard firearms sold across Night City."
-        cyber_page_text = "360\nCyberware\nNeural and optical implants."
-        role_page_text = "142\nSolo\nCombat Sense specialists who rule the street."
-        pages = [
-            (82, 82, "Skills", skill_page_text, len(skill_page_text)),
-            (142, 142, "Roles: Solo", role_page_text, len(role_page_text)),
-            (340, 340, "Ranged Weapons", weapon_page_text, len(weapon_page_text)),
-            (360, 360, "Cyberware", cyber_page_text, len(cyber_page_text)),
-        ]
-        for pdf_p, printed_p, header, txt, chars in pages:
-            conn.execute(
-                "INSERT INTO pages(pdf_page, printed_page, header, text, chars) VALUES (?,?,?,?,?)",
-                (pdf_p, printed_p, header, txt, chars),
-            )
-        conn.execute("INSERT INTO source_sections VALUES ('solo-142', 'Solo', 142, 143, 142)")
-        conn.execute("INSERT INTO source_sections VALUES ('friday-night-firefight-168', 'Friday Night Firefight', 340, 340, 340)")
+def _create_rules_db(path: Path) -> Path:
+    """Build a small synthetic index through the real extraction pipeline."""
+    from tests import rules_fixture as rf
 
-        weapon_table = [
-            ["Weapon Type", "Skill", "Damage", "Magazine", "ROF", "Hands", "Concealable", "Cost"],
-            ["Heavy Pistol", "Handgun", "3d6", "8", "2", "1", "Yes", "100eb"],
-            ["Assault Rifle", "Shoulder Arms", "5d6", "25", "1", "2", "No", "500eb"],
-        ]
-        armor_table = [
-            ["Armor Type", "SP", "Armor Penalty", "Cost"],
-            ["Light Armorjack", "11", "0", "100eb"],
-        ]
-        cyber_table = [
-            ["Cyberware Name", "Install", "HL", "Description", "Cost"],
-            ["Kerenzikov", "Clinic", "14", "Neural speedware adding +2 to Initiative.", "500eb"],
-        ]
-        conn.execute(
-            "INSERT INTO source_tables VALUES (340, 1, 'null', ?)",
-            (json.dumps(weapon_table),),
-        )
-        conn.execute(
-            "INSERT INTO source_tables VALUES (340, 2, 'null', ?)",
-            (json.dumps(armor_table),),
-        )
-        conn.execute(
-            "INSERT INTO source_tables VALUES (360, 1, 'null', ?)",
-            (json.dumps(cyber_table),),
-        )
-        if materialize:
-            library.build_library(conn)
-        conn.commit()
-    finally:
-        conn.close()
-    return path
+    skills = rf.page(83, 82, [
+        rf.block("Handgun ......................... REF", 74),
+        rf.block("Skill for accurately firing one-handed ranged weapons like pistols.\n"
+                 "Covers semi-auto pistols and revolvers in Night City firefights.", 95),
+        rf.heading("Fighting Skills", 140),
+        rf.block("Martial Arts (x2) ............... DEX", 170),
+        rf.block("Specialized close-quarters fighting styles such as Karate or Aikido.\n"
+                 "Requires x2 Improvement Points to advance.", 190),
+        rf.block("Interface ....................... INT", 240),
+        rf.block("Netrunner Role Ability skill listed for test layout.", 260),
+    ])
+    role_lists = rf.page(89, 88, [rf.table([
+        ["Rockerboy Skills", "Solo Skills", "Netrunner Skills"],
+        ["Athletics", "Athletics", "Athletics"],
+        ["Handgun", "Handgun", "Interface"],
+    ], 100)])
+    role = rf.page(143, 142, [
+        rf.heading("SOLO", 18, size=36.0),
+        rf.block("Combat Sense specialists who rule the street.", 231),
+        rf.heading("▶Role Ability: Combat Awareness", 566, size=12.5),
+        rf.block("The Solo's Role Ability is Combat Awareness, sharpening reflexes in a firefight.", 587),
+    ])
+    gear = rf.page(341, 340, [
+        rf.heading("Ranged Weapons", 60),
+        rf.table([rf.RANGED_HEADER,
+                  ["Medium Pistol", "Handgun", "2d6", "12 (M Pistol)", "2", "1", "YES", "50eb (Costly)"],
+                  ["Alt. Fire Modes & Special Features: None", "", "", "", "", "", "", ""],
+                  ["Heavy Pistol", "Handgun", "3d6", "8 (H Pistol)", "2", "1", "YES", "100eb (Premium)"],
+                  ["Alt. Fire Modes & Special Features: None", "", "", "", "", "", "", ""],
+                  ["Assault Rifle", "Shoulder Arms", "5d6", "25 (Rifle)", "1", "2", "NO", "500eb (Expensive)"],
+                  ["Alt. Fire Modes & Special Features: Autofire (4)", "", "", "", "", "", "", ""]], 90),
+        rf.table([rf.ARMOR_HEADER,
+                  ["Light Armorjack", "A woven mesh of synthetic fibers and plates.", "11", "None", "100eb (Premium)"]], 300),
+    ])
+    cyber = rf.page(361, 360, [
+        rf.heading("▶Neuralware (Foundational Cyberware: Neural Link)", 68, size=12.5),
+        rf.table([rf.CYBERWARE_HEADER,
+                  ["Kerenzikov", "Clinic", "Neural speedware adding +2 to Initiative.", "500eb (Expensive)", "14 (4d6)"]], 97),
+    ])
+    toc = [[1, "Fitted for the Future", 82], [2, "Skills", 83], [1, "Getting it Done", 140], [2, "Solo", 143],
+           [1, "The New Street Economy", 340], [2, "Ranged Weapons", 341]]
+    return rf.build(path, [skills, role_lists, role, gear, cyber], toc, digest="deadbeef1234")
 
 
 def _setup_campaign(tmp_path: Path, rules_db: Path):
@@ -120,7 +74,7 @@ def _setup_campaign(tmp_path: Path, rules_db: Path):
 
 
 def test_corebook_library_skills_items_and_roles(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
 
     handgun_hits = library.search_library(rules_db, q="Handgun", category="skill")
     assert len(handgun_hits) == 1
@@ -146,38 +100,18 @@ def test_corebook_library_skills_items_and_roles(tmp_path: Path):
     assert armor["stats"]["cost_eb"] == 100
 
     ker = library.search_library(rules_db, q="Kerenzikov", category="cyberware")[0]
-    assert ker["stats"]["humanity_loss"] == 14
+    assert ker["stats"]["humanity_loss"] == "4d6"
+    assert ker["stats"]["hl"] == 14
     assert ker["stats"]["install"] == "Clinic"
     assert "+2 to Initiative" in ker["description"]
 
     solo = library.search_library(rules_db, q="Solo", category="role")[0]
     assert solo["category"] == "role"
-    assert solo["section_id"] == "solo-142"
-
-
-def test_unmaterialized_cache_and_one_time_materialize(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules_lazy.sqlite", materialize=False)
-    library._MEMORY_CACHE.clear()
-
-    first = library.search_library(rules_db, q="Heavy Pistol")
-    assert first[0]["name"] == "Heavy Pistol"
-    assert len(library._MEMORY_CACHE) == 1
-    second = library.search_library(rules_db, q="Kerenzikov")
-    assert second[0]["name"] == "Kerenzikov"
-    assert len(library._MEMORY_CACHE) == 1  # cached by file stat + sha
-
-    info = library.materialize_library(rules_db)
-    assert info["entries"] >= 7
-    conn = sqlite3.connect(rules_db)
-    try:
-        count = conn.execute("SELECT COUNT(*) FROM rule_entries").fetchone()[0]
-    finally:
-        conn.close()
-    assert count == info["entries"]
+    assert solo["section_id"] == "solo-143"
 
 
 def test_campaign_homebrew_validation_and_search(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
     lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
 
@@ -224,7 +158,7 @@ def test_campaign_homebrew_validation_and_search(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_library_http_endpoints(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db, _, camp_id = _setup_campaign(tmp_path, rules_db)
     app = redkb.make_api(rules_db, allowed_origins=("http://localhost:5173",), campaign_path=camp_db)
 
@@ -272,7 +206,7 @@ def test_strict_names_and_deduplication(tmp_path: Path):
     import sqlite3
     import library
 
-    rules_db = _create_rules_db(tmp_path / "rules_dup.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules_dup.sqlite")
     # Insert a duplicate Cyberarm entry on an earlier printed_page to verify dedup keeps earliest page.
     with sqlite3.connect(rules_db) as conn:
         for idx, page in enumerate((358, 366), start=1):
@@ -326,7 +260,7 @@ def test_strict_names_and_deduplication(tmp_path: Path):
 
 
 def test_upsert_and_dossier_categories(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
     lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
 
@@ -390,8 +324,7 @@ def test_upsert_and_dossier_categories(tmp_path: Path):
 
 
 def test_corebook_curated_catalogs_indexed_for_ai_search(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=False)
-    library._MEMORY_CACHE.clear()
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
 
     mal = library.search_library(rules_db, q="Malorian Arms 3516", category="weapon")
     assert mal and mal[0]["name"] == "Malorian Arms 3516"
@@ -407,7 +340,7 @@ def test_corebook_curated_catalogs_indexed_for_ai_search(tmp_path: Path):
 
 
 def test_upsert_preserves_existing_fields_and_library_events_idempotency(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
     lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
 
@@ -472,7 +405,7 @@ def test_upsert_preserves_existing_fields_and_library_events_idempotency(tmp_pat
 def test_search_and_get_library_entry_readonly_no_write_lock(tmp_path: Path):
     import os
 
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db, svc, camp_id = _setup_campaign(tmp_path, rules_db)
     lib = library.CampaignLibrary(svc.store, rules_path=rules_db)
     entry = lib.add_entry(

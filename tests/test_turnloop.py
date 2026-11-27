@@ -56,7 +56,7 @@ def _parse_sse(raw: str) -> list[dict[str, Any]]:
 
 
 def _seed_campaign(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db = tmp_path / "campaign.sqlite"
     svc = GameplayService(camp_db, rules_db)
     camp = svc.execute("create_campaign", {"name": "Kabuki Heist", "operation_id": "seed-c1"})["result"]
@@ -1523,7 +1523,7 @@ async def test_npc_privacy_user_account_update_and_split_scene_channels(tmp_path
     from auth import AuthManager
     from redkb import make_api
 
-    db_path = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    db_path = _create_rules_db(tmp_path / "rules.sqlite")
     camp_path = tmp_path / "campaign.sqlite"
     settings_path = tmp_path / "settings.json"
 
@@ -2123,16 +2123,9 @@ async def test_openai_compatible_llm_resilience_and_metadata(monkeypatch):
 
 @pytest.mark.anyio
 async def test_execute_solo_op_combat_outcomes_gear_and_roll_sanitization(tmp_path: Path):
-    import sqlite3
     from sourcecatalog import items as catalog_items
 
     rules_db, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
-    with sqlite3.connect(rules_db) as db:
-        db.execute("INSERT INTO pages VALUES(NULL, 200, 199, 'Weapons', '', 0)")
-        db.execute(
-            "INSERT INTO source_tables VALUES(200, 1, NULL, ?)",
-            (json.dumps([["Name", "WeaponType", "Cost"], ["Medium Pistol", "Medium Pistol", "50eb"]]),),
-        )
     pistol_id = next(k for k, v in catalog_items(rules_db).items() if v["name"] == "Medium Pistol")
 
     # Set street handle + hidden real_name + backstory + owner on PC1, and attach PC2 as combat target

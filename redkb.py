@@ -7,7 +7,7 @@ Search is deterministic and returns actual source pages, never LLM-generated rul
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import hashlib
 import json
 import os
@@ -33,21 +33,105 @@ STOP_WORDS = set("a an and are as at be by can could do does for from how i in i
 
 
 def clean_text(text: str) -> str:
-    """Normalize noisy PDF characters without throwing away paragraph boundaries."""
+    """Normalize noisy PDF characters in queries and phrases."""
     return unicodedata.normalize("NFKC", text).replace("\u00ad", "").replace("\u200b", "").replace("\x00", "").strip()
 
 
-def get_printed_page(text: str) -> int | None:
-    """Read the actual running header; never invent printed page numbers."""
-    lines = [s.strip() for s in text.splitlines() if s.strip()]
-    # Some illustrated pages put an artist credit before their page header.
-    # Only look near the top; never infer a missing printed number from the PDF index.
-    for line in lines[:4]:
-        if re.fullmatch(r"\d{1,3}", line):
-            number = int(line)
-            if 1 <= number <= 456:
-                return number
-    return None
+def _sweep_stale_builds(db_path: Path) -> None:
+    """Remove temporary databases left behind by a killed build (caller holds the index lock)."""
+    for stale in db_path.parent.glob(db_path.name + ".building-*"):
+        stale.unlink(missing_ok=True)
+
+
+def _write_pages(conn: sqlite3.Connection, pages: list[dict[str, Any]]) -> tuple[int, int]:
+    """Insert furniture-free page text and overlapping passages."""
+    from layout import body_text
+    populated = without_printed = 0
+    for page in pages:
+        text = body_text(page)
+        if text:
+            populated += 1
+        printed = page.get("printed_page")
+        if printed is None:
+            without_printed += 1
+        headings = (" ".join(b["text"].split()) for b in page["blocks"] if b.get("role") == "heading")
+        header = page.get("running_header") or next(headings, "")
+        conn.execute(
+            "INSERT INTO pages(pdf_page, printed_page, header, text, chars) VALUES(?,?,?,?,?)",
+            (page["pdf_page"], printed, header[:180], text, len(text)),
+        )
+        page_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        words = text.split()
+        for start in range(0, len(words), 75):
+            end = min(start + 150, len(words))
+            conn.execute("INSERT INTO passages(page_id,start_word,end_word,text) VALUES(?,?,?,?)",
+                         (page_id, start, end, " ".join(words[start:end])))
+    return populated, without_printed
+
+
+def write_index(
+    conn: sqlite3.Connection,
+    pages: list[dict[str, Any]],
+    toc: list[Any],
+    metadata: dict[str, str],
+    emit: Callable[..., None] = lambda *a, **k: None,
+) -> None:
+    """Write every index table from one layout pass (``layout.read_page`` dicts)."""
+    import layout
+    from knowledge import build_structure
+    from library import build_library
+
+    conn.executescript("""
+        CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE pages (
+            id INTEGER PRIMARY KEY,
+            pdf_page INTEGER NOT NULL UNIQUE,
+            printed_page INTEGER,
+            header TEXT NOT NULL,
+            text TEXT NOT NULL,
+            chars INTEGER NOT NULL
+        );
+        CREATE INDEX printed_page_idx ON pages(printed_page);
+        CREATE TABLE passages (
+            id INTEGER PRIMARY KEY,
+            page_id INTEGER NOT NULL REFERENCES pages(id),
+            start_word INTEGER NOT NULL,
+            end_word INTEGER NOT NULL,
+            text TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE page_fts USING fts5(
+            text, header, content='pages', content_rowid='id',
+            tokenize='porter unicode61'
+        );
+        CREATE VIRTUAL TABLE passage_fts USING fts5(
+            text, content='passages', content_rowid='id',
+            tokenize='porter unicode61'
+        );
+    """)
+    count = len(pages)
+    layout.merge_drop_caps(pages)
+    layout.apply_hyphenation(pages)
+    evidence = layout.classify_blocks(pages)
+    emit("structure", 78, "Organizing Corebook chapters and sections...", current=count, total=count)
+    populated, without_printed = _write_pages(conn, pages)
+    build_structure(conn, toc, pages)
+    for key, value in {
+        "schema_version": "3",
+        "extraction_method": "layout_blocks+line_tables_v2",
+        "passage_window_words": "150",
+        "passage_stride_words": "75",
+        "pdf_page_count": str(count),
+        "populated_pages": str(populated),
+        "pages_without_printed_number": str(without_printed),
+        "body_font_size": str(evidence["body_size"]),
+        **metadata,
+    }.items():
+        conn.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, value))
+    emit("library", 86, "Building searchable skills, roles, gear & cyberware library...", current=count, total=count)
+    build_library(conn)
+    emit("fts", 94, "Building fast keyword search index...", current=count, total=count)
+    conn.execute("INSERT INTO page_fts(page_fts) VALUES('rebuild')")
+    conn.execute("INSERT INTO passage_fts(passage_fts) VALUES('rebuild')")
 
 
 def build_index(
@@ -59,6 +143,7 @@ def build_index(
 ) -> dict[str, Any]:
     """Build a fresh index atomically; incomplete runs do not corrupt the old DB."""
     import pymupdf as fitz
+    import layout
 
     def _emit(stage: str, percent: int, message: str, *, current: int = 0, total: int = 0) -> None:
         if progress_cb is not None:
@@ -76,103 +161,45 @@ def build_index(
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
     _emit("reading", 2, "Opening PDF file...")
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=db_path.name + ".building-", dir=db_path.parent)
-    os.close(fd)
-    temp_path = Path(temporary)
-    conn = sqlite3.connect(temp_path)
-    try:
-        conn.executescript("""
-            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE pages (
-                id INTEGER PRIMARY KEY,
-                pdf_page INTEGER NOT NULL UNIQUE,
-                printed_page INTEGER,
-                header TEXT NOT NULL,
-                text TEXT NOT NULL,
-                chars INTEGER NOT NULL
-            );
-            CREATE INDEX printed_page_idx ON pages(printed_page);
-            CREATE TABLE passages (
-                id INTEGER PRIMARY KEY,
-                page_id INTEGER NOT NULL REFERENCES pages(id),
-                start_word INTEGER NOT NULL,
-                end_word INTEGER NOT NULL,
-                text TEXT NOT NULL
-            );
-            CREATE VIRTUAL TABLE page_fts USING fts5(
-                text, header, content='pages', content_rowid='id',
-                tokenize='porter unicode61'
-            );
-            CREATE VIRTUAL TABLE passage_fts USING fts5(
-                text, content='passages', content_rowid='id',
-                tokenize='porter unicode61'
-            );
-        """)
-        # Hash precisely the immutable byte snapshot used for extraction.
-        source_bytes = pdf_path.read_bytes()
-        source_sha256 = hashlib.sha256(source_bytes).hexdigest()
-        with fitz.open(stream=source_bytes, filetype="pdf") as pdf:
-            count, populated, without_printed = len(pdf), 0, 0
-            _emit("extracting", 5, f"Reading {count} pages from Corebook PDF...", current=0, total=count)
-            for index, page in enumerate(pdf):
-                text = clean_text(page.get_text("text", sort=False))
-                # Keep the original extraction intact. Supplemental rows preserve
-                # cell boundaries only where conservative table detection succeeds.
-                from layout import extract_tables, table_text
-                structured = table_text(extract_tables(page))
-                if structured:
-                    text += "\n\nSupplemental extracted table rows (verify against page):\n" + structured
-                if text:
-                    populated += 1
-                printed = get_printed_page(text)
-                if printed is None:
-                    without_printed += 1
-                lines = [v.strip() for v in text.splitlines() if v.strip()]
-                header = next((v for v in lines[:6] if v != str(printed) and not v.startswith("BY ")), "")
-                conn.execute(
-                    "INSERT INTO pages(pdf_page, printed_page, header, text, chars) VALUES(?,?,?,?,?)",
-                    (index + 1, printed, header[:180], text, len(text)),
-                )
-                page_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                words = text.split()
-                for start in range(0, len(words), 75):
-                    end = min(start + 150, len(words))
-                    if start >= len(words):
-                        break
-                    conn.execute("INSERT INTO passages(page_id,start_word,end_word,text) VALUES(?,?,?,?)",
-                                  (page_id, start, end, " ".join(words[start:end])))
-                if count > 0 and ((index + 1) % 5 == 0 or index + 1 == count):
-                    pct = 5 + int(((index + 1) / count) * 70)
-                    _emit("extracting", pct, f"Reading page {index + 1} of {count}...", current=index + 1, total=count)
-            _emit("structure", 78, "Organizing Corebook chapters and sections...", current=count, total=count)
-            from knowledge import build_structure
-            build_structure(conn, pdf)
-        for key, value in {
-            "schema_version": "2",
-            "extraction_method": "plain_text+conservative_line_tables_v1",
-            "passage_window_words": "150",
-            "passage_stride_words": "75",
-            "source_filename": (source_filename or pdf_path.name),
-            "source_sha256": source_sha256,
-            "pdf_page_count": str(count),
-            "populated_pages": str(populated),
-            "pages_without_printed_number": str(without_printed),
-        }.items():
-            conn.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, value))
-        _emit("library", 86, "Building searchable skills, roles, gear & cyberware library...", current=count, total=count)
-        from library import build_library
-        build_library(conn)
-        _emit("fts", 94, "Building fast keyword search index...", current=count, total=count)
-        conn.execute("INSERT INTO page_fts(page_fts) VALUES('rebuild')")
-        conn.execute("INSERT INTO passage_fts(passage_fts) VALUES('rebuild')")
-        conn.commit()
-    except BaseException:
-        conn.close()
-        temp_path.unlink(missing_ok=True)
-        raise
-    conn.close()
-    _emit("saving", 98, "Saving Corebook database...", current=count, total=count)
+    # One build at a time per index: the lock makes sweeping stale temp files safe.
     with index_lock(db_path):
+        _sweep_stale_builds(db_path)
+        fd, temporary = tempfile.mkstemp(prefix=db_path.name + ".building-", dir=db_path.parent)
+        os.close(fd)
+        temp_path = Path(temporary)
+        conn = sqlite3.connect(temp_path)
+        try:
+            # Hash precisely the immutable byte snapshot used for extraction.
+            source_bytes = pdf_path.read_bytes()
+            source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+            with fitz.open(stream=source_bytes, filetype="pdf") as pdf:
+                count = len(pdf)
+                _emit("extracting", 5, f"Reading {count} pages from Corebook PDF...", current=0, total=count)
+                pages = []
+                for index, page in enumerate(pdf):
+                    pages.append(layout.read_page(page, index + 1))
+                    if count > 0 and ((index + 1) % 5 == 0 or index + 1 == count):
+                        pct = 5 + int(((index + 1) / count) * 70)
+                        _emit("extracting", pct, f"Reading page {index + 1} of {count}...", current=index + 1, total=count)
+                toc = pdf.get_toc() or []
+            metadata = {"source_filename": source_filename or pdf_path.name, "source_sha256": source_sha256}
+            if db_path.is_file():
+                # Optional retrieval add-ons that do not depend on extracted text survive a rebuild.
+                with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as old:
+                    try:
+                        row = old.execute("SELECT value FROM metadata WHERE key='reranker_model'").fetchone()
+                    except sqlite3.Error:
+                        row = None
+                if row and row[0]:
+                    metadata["reranker_model"] = row[0]
+            write_index(conn, pages, toc, metadata, _emit)
+            conn.commit()
+        except BaseException:
+            conn.close()
+            temp_path.unlink(missing_ok=True)
+            raise
+        conn.close()
+        _emit("saving", 98, "Saving Corebook database...", current=count, total=count)
         os.replace(temp_path, db_path)
     info = inspect_index(db_path)
     _emit("done", 100, f"Corebook ready ({info.get('indexed_pages', count)} pages).", current=count, total=count)
@@ -198,8 +225,7 @@ def inspect_index(db_path: Path) -> dict[str, Any]:
         meta = dict(conn.execute("SELECT key,value FROM metadata").fetchall())
         meta["indexed_pages"] = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
         meta["fts_rows"] = conn.execute("SELECT COUNT(*) FROM page_fts").fetchone()[0]
-        if meta.get("schema_version") == "2":
-            meta["indexed_passages"] = conn.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
+        meta["indexed_passages"] = conn.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
         meta["db_path"] = str(db_path.expanduser().resolve())
     return meta
 
@@ -250,21 +276,38 @@ def _excerpt(text: str, terms: list[str], max_length: int = 1000) -> str:
     return ("…" if start else "") + flat[start:end] + ("…" if end < len(flat) else "")
 
 
+_PAGE_REF = re.compile(r"(?:(pdf)\s+|printed\s+)?(?:page|pg\.?|p\.)\s*(\d+)", re.I)
+# Words that may surround a bare page request without making it a content query.
+_PAGE_FILLER = frozenset(
+    "open read show display give pull up go to goto jump turn flip look at see check the a an of on in from is are "
+    "what whats does do did say says said written there tell me about can could you i please corebook book rulebook "
+    "rules rule text contents content".split())
+
+
+def _page_reference(query: str) -> tuple[int, str] | None:
+    """Route to a page only when the query is essentially just a page reference."""
+    match = _PAGE_REF.search(query)
+    if not match:
+        return None
+    rest = (query[:match.start()] + " " + query[match.end():]).casefold()
+    if any(word not in _PAGE_FILLER for word in re.findall(r"[a-z0-9]+", rest)):
+        return None
+    numbering = "pdf" if match.group(1) and match.group(1).lower() == "pdf" else "printed"
+    return int(match.group(2)), numbering
+
+
 def search_pages(db_path: Path, query: str, limit: int = 5, *, lexical_only: bool = False) -> list[dict[str, Any]]:
     """Exact pages bypass search; otherwise rank passages lexically or with local hybrid RRF."""
     limit = max(1, min(int(limit), 20))
-    page_match = re.search(r"\b(?:(pdf)\s+|printed\s+)?(?:page|pg\.?|p\.)\s*(\d+)\b", query, re.I)
-    if page_match:
-        numbering = "pdf" if page_match.group(1) and page_match.group(1).lower() == "pdf" else "printed"
-        number = int(page_match.group(2))
+    page_ref = _page_reference(query)
+    if page_ref is not None:
+        number, numbering = page_ref
         if number < 1:
             return []
         result = read_page(db_path, number, numbering)
         if result is None:
             return []
         result["excerpt"] = _excerpt(result["text"], _terms(query))
-        result["citation"] = (f"Corebook printed p.{result['printed_page']} (PDF p.{result['pdf_page']})"
-                              if result["printed_page"] else f"Corebook PDF p.{result['pdf_page']}")
         return [result]
     expanded_query = _expanded_vehicle_query(query)
     retrieval_query = expanded_query or query
@@ -273,9 +316,6 @@ def search_pages(db_path: Path, query: str, limit: int = 5, *, lexical_only: boo
         return []
     quoted = ['"' + t.replace('"', '""') + '"' for t in terms]
     with _open(db_path) as conn:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
-        if "passages" not in tables or "passage_fts" not in tables:
-            raise ValueError("This index predates passage search; rebuild the index with the current version")
         meta = dict(conn.execute("SELECT key,value FROM metadata"))
         rows = conn.execute(
             """SELECT ps.id,p.pdf_page,p.printed_page,p.header,ps.text,ps.start_word,ps.end_word,
@@ -543,7 +583,6 @@ def cli() -> None:
     p.add_argument("cases", type=Path)
     sub.add_parser("status", help="Report index and ingestion statistics")
     sub.add_parser("catalog", help="List source-derived Corebook sections")
-    sub.add_parser("build-library", help="Materialize the organized rulebook library tables on an existing rules index")
     p = sub.add_parser("section", help="Read a bounded source-derived section")
     p.add_argument("section_id")
     p.add_argument("--offset", type=int, default=0)
@@ -573,9 +612,6 @@ def cli() -> None:
         elif args.command == "catalog":
             from knowledge import catalog
             result = catalog(args.db)
-        elif args.command == "build-library":
-            from library import materialize_library
-            result = materialize_library(args.db)
         elif args.command == "section":
             from knowledge import section
             result = section(args.db, args.section_id, args.offset, args.limit)
