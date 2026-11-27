@@ -1,37 +1,39 @@
 """HTTP security, request limits, auth/session context, CORS, and ownership gates."""
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
 import logging
 import os
 import sqlite3
-import sys
 import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from server.coop import _CoopHub
 
-_DEFAULT_AUTH_JSON_MAX_BYTES = 64 * 1024
-_DEFAULT_JSON_MAX_BYTES = 8 * 1024 * 1024
-_AUTH_JSON_MAX_BYTES = _DEFAULT_AUTH_JSON_MAX_BYTES
-_JSON_MAX_BYTES = _DEFAULT_JSON_MAX_BYTES
+_AUTH_JSON_MAX_BYTES = 64 * 1024
+_JSON_MAX_BYTES = 8 * 1024 * 1024
 
 
-def _resolve_json_limits() -> tuple[int, int]:
-    """Read JSON body limits, honoring monkeypatches on either redkb or server.security."""
-    auth_limit = _AUTH_JSON_MAX_BYTES
-    body_limit = _JSON_MAX_BYTES
-    redkb_mod = sys.modules.get("redkb")
-    if redkb_mod is not None:
-        redkb_auth = getattr(redkb_mod, "_AUTH_JSON_MAX_BYTES", _DEFAULT_AUTH_JSON_MAX_BYTES)
-        redkb_body = getattr(redkb_mod, "_JSON_MAX_BYTES", _DEFAULT_JSON_MAX_BYTES)
-        if redkb_auth != _DEFAULT_AUTH_JSON_MAX_BYTES:
-            auth_limit = redkb_auth
-        if redkb_body != _DEFAULT_JSON_MAX_BYTES:
-            body_limit = redkb_body
-    return int(auth_limit), int(body_limit)
+def is_loopback_host(host: str) -> bool:
+    """True when a bind host only accepts connections from this machine."""
+    cleaned = (host or "").strip().strip("[]").lower()
+    if cleaned == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(cleaned).is_loopback
+    except ValueError:
+        return False
+
+
+def url_origin(url: Any) -> tuple[str, str]:
+    """(scheme, netloc) of a URL, lowercased, for same-origin credential checks."""
+    parts = urlsplit(str(url or "").strip())
+    return parts.scheme.lower(), parts.netloc.lower()
 
 
 class _JsonBodyLimitMiddleware:
@@ -75,8 +77,7 @@ class _JsonBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        auth_limit, body_limit = _resolve_json_limits()
-        limit = auth_limit if path.startswith("/v1/auth/") else body_limit
+        limit = _AUTH_JSON_MAX_BYTES if path.startswith("/v1/auth/") else _JSON_MAX_BYTES
         raw_length = headers.get(b"content-length")
         if raw_length:
             try:
@@ -128,10 +129,43 @@ def _in_docker() -> bool:
     return bool(os.environ.get("REDGM_MANAGED_BY_DOCKER")) or Path("/.dockerenv").exists()
 
 
-def setup_app_middleware(app: Any, dynamic_origins: set[str]) -> None:
-    """Install JSON size limit middleware, operational 503 handlers, and CORS."""
+class _SessionMiddleware:
+    """Resolve the caller's auth session once per HTTP request, off the event loop.
+
+    Token verification and passcode-PIN checks may run scrypt; doing it here
+    once means routes read a cached session and a wrong PIN counts once
+    against the PIN rate limit.
+    """
+
+    def __init__(self, app, ctx: "ServerContext"):
+        self.app = app
+        self.ctx = ctx
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            from starlette.requests import Request
+            request = Request(scope)
+            session = await asyncio.to_thread(self.ctx.resolve_session, request)
+            scope.setdefault("state", {})["redgm_session"] = session
+        await self.app(scope, receive, send)
+
+
+def _settings_cors_middleware(ctx: "ServerContext"):
+    """CORSMiddleware whose allowed origins are read live from settings + CLI flags."""
+    from fastapi.middleware.cors import CORSMiddleware
+
+    class _LiveOriginCORSMiddleware(CORSMiddleware):
+        def is_allowed_origin(self, origin: str) -> bool:
+            return origin in ctx.current_allowed_origins()
+
+    return _LiveOriginCORSMiddleware
+
+
+def setup_app_middleware(app: Any, ctx: "ServerContext") -> None:
+    """Install session resolution, JSON size limits, operational 503 handlers, and CORS."""
     from fastapi.responses import JSONResponse
 
+    app.add_middleware(_SessionMiddleware, ctx=ctx)
     app.add_middleware(_JsonBodyLimitMiddleware)
 
     async def unavailable(request, exc):
@@ -152,25 +186,20 @@ def setup_app_middleware(app: Any, dynamic_origins: set[str]) -> None:
     for error_type in (OSError, sqlite3.Error, RuntimeError, ValueError):
         app.add_exception_handler(error_type, unavailable)
 
-    if dynamic_origins:
-        from fastapi.middleware.cors import CORSMiddleware
-
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=sorted(dynamic_origins),
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "DELETE"],
-            allow_headers=[
-                "Accept",
-                "Authorization",
-                "Content-Type",
-                "X-Filename",
-                "X-RedGM-Client-Id",
-                "X-RedGM-Pin",
-                "X-RedGM-Token",
-                "X-RedGM-View-Role",
-            ],
-        )
+    app.add_middleware(
+        _settings_cors_middleware(ctx),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=[
+            "Accept",
+            "Authorization",
+            "Content-Type",
+            "X-Filename",
+            "X-RedGM-Client-Id",
+            "X-RedGM-Pin",
+            "X-RedGM-View-Role",
+        ],
+    )
 
 
 class ServerContext:
@@ -188,7 +217,7 @@ class ServerContext:
         room_pin: str,
         allow_server_control: bool,
         auth: Any,
-        dynamic_origins: set[str],
+        cli_origins: tuple[str, ...],
         coop: _CoopHub,
         entrypoint_path: Path | None = None,
     ):
@@ -202,7 +231,7 @@ class ServerContext:
         self.allow_server_control = allow_server_control
         self.auth = auth
         self.resolved_pin = auth.room_pin
-        self.dynamic_origins = dynamic_origins
+        self.cli_origins = tuple(cli_origins)
         self.coop = coop
         self.entrypoint_path = entrypoint_path or (Path(__file__).resolve().parent.parent / "redkb.py")
         self._service = None
@@ -221,15 +250,6 @@ class ServerContext:
             "started_at": None,
             "finished_at": None,
         }
-
-        # Aliases matching original redkb.py helper names
-        self._extract_token = self.extract_token
-        self._session = self.session
-        self._current_allowed_origins = self.current_allowed_origins
-        self._effective_role = self.effective_role
-        self._can_view_gm_private_state = self.can_view_gm_private_state
-        self._resolve_active_llm = self.resolve_active_llm
-        self._sse_response = self.sse_response
 
     def resolved_settings_path(self) -> Path:
         if self.settings_path is not None:
@@ -265,35 +285,31 @@ class ServerContext:
 
     @staticmethod
     def extract_token(request: Any) -> str | None:
-        hdr = (request.headers.get("x-redgm-token") or "").strip()
-        if hdr:
-            return hdr
+        """Browsers send the httpOnly ``redgm_token`` cookie; other clients send ``Authorization: Bearer``."""
         auth_hdr = (request.headers.get("authorization") or "").strip()
         if auth_hdr.lower().startswith("bearer "):
-            return auth_hdr[7:].strip()
-        cookie_tok = (request.cookies.get("redgm_token") or "").strip()
-        if cookie_tok:
-            return cookie_tok
-        qp_tok = (request.query_params.get("token") or "").strip()
-        return qp_tok or None
+            return auth_hdr[7:].strip() or None
+        return (request.cookies.get("redgm_token") or "").strip() or None
 
-    def session(self, request: Any) -> dict[str, Any]:
+    def resolve_session(self, request: Any) -> dict[str, Any]:
+        """Verify the request's credentials (may hash); called once per request by _SessionMiddleware."""
         pin = (request.headers.get("x-redgm-pin") or request.query_params.get("pin") or "").strip()
         client_host = request.client.host if request.client else "local"
         return self.auth.resolve_session(self.extract_token(request), pin=pin, pin_bucket=client_host)
 
+    @staticmethod
+    def session(request: Any) -> dict[str, Any]:
+        return request.state.redgm_session
+
     def current_allowed_origins(self) -> set[str]:
         from turnloop import load_server_settings
-        origins = set(self.dynamic_origins)
+        origins = set(self.cli_origins)
         origins.update(load_server_settings(self.resolved_settings_path()).get("allowed_origins") or [])
         return origins
 
     def require_player(self, request: Any, request_id: str):
         from fastapi.responses import JSONResponse
-        sess = self.session(request)
-        if not self.auth.auth_enabled():
-            return None
-        if sess["authenticated"]:
+        if self.session(request)["authenticated"]:
             return None
         return JSONResponse(status_code=401, content={"detail": "Sign in required", "auth_required": True, "request_id": request_id})
 
@@ -348,9 +364,6 @@ class ServerContext:
             and (request.headers.get("x-redgm-view-role") or "").strip().lower() != "user"
         )
 
-    def is_admin_or_pin_only(self, request: Any, sess: dict[str, Any]) -> bool:
-        return self.can_view_gm_private_state(request, sess)
-
     @staticmethod
     def filter_llm_override_for_role(cfg_raw: dict[str, Any] | None, *, eff_role: str | None = None) -> dict[str, Any] | None:
         """Restrict per-request LLM overrides to admin/open callers."""
@@ -363,19 +376,14 @@ class ServerContext:
             raise PermissionError("Admin privileges required for per-request LLM overrides")
         if self.llm is not None:
             return self.llm
-        from urllib.parse import urlsplit
         from turnloop import LLMConfig, OpenAICompatibleLLM, load_llm_settings
         saved = load_llm_settings(self.resolved_settings_path())
         merged = dict(saved)
         filtered = self.filter_llm_override_for_role(cfg_raw, eff_role=eff_role)
         if isinstance(filtered, dict):
             if "base_url" in filtered and filtered["base_url"] is not None:
-                saved_parts = urlsplit(str(saved.get("base_url") or "").strip())
-                new_parts = urlsplit(str(filtered["base_url"] or "").strip())
-                saved_origin = (saved_parts.scheme.lower(), saved_parts.netloc.lower())
-                new_origin = (new_parts.scheme.lower(), new_parts.netloc.lower())
                 explicit_key = "api_key" in filtered and filtered["api_key"] is not None
-                if new_origin != saved_origin and not explicit_key:
+                if url_origin(filtered["base_url"]) != url_origin(saved.get("base_url")) and not explicit_key:
                     merged["api_key"] = ""
             for key in (
                 "base_url",
@@ -574,16 +582,16 @@ def create_server_context(
 ) -> ServerContext:
     """Initialize auth, settings, CORS/limit middleware, and shared ServerContext."""
     from auth import AuthManager
-    from turnloop import default_settings_path, load_server_settings
+    from turnloop import default_settings_path
 
     resolved_settings = Path(settings_path) if settings_path is not None else default_settings_path()
-    auth = AuthManager(resolved_settings, room_pin=room_pin or os.environ.get("REDGM_ROOM_PIN", ""))
-    dynamic_origins: set[str] = set(allowed_origins)
-    dynamic_origins.update(load_server_settings(resolved_settings).get("allowed_origins") or [])
-
-    setup_app_middleware(app, dynamic_origins)
+    auth = AuthManager(
+        resolved_settings,
+        room_pin=room_pin or os.environ.get("REDGM_ROOM_PIN", ""),
+        allow_open=is_loopback_host(server_host),
+    )
     coop = _CoopHub()
-    return ServerContext(
+    ctx = ServerContext(
         db_path=db_path,
         campaign_path=campaign_path,
         llm=llm,
@@ -593,7 +601,9 @@ def create_server_context(
         room_pin=room_pin,
         allow_server_control=allow_server_control,
         auth=auth,
-        dynamic_origins=dynamic_origins,
+        cli_origins=allowed_origins,
         coop=coop,
         entrypoint_path=entrypoint_path,
     )
+    setup_app_middleware(app, ctx)
+    return ctx

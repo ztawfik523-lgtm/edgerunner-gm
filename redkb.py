@@ -20,13 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from index_lock import index_lock
-from server.coop import _CoopHub
-from server.security import (
-    _AUTH_JSON_MAX_BYTES,
-    _JSON_MAX_BYTES,
-    _JsonBodyLimitMiddleware,
-    create_server_context,
-)
+from server.security import create_server_context, is_loopback_host
 
 DEFAULT_DB = Path(os.environ.get("REDKB_DB", Path.home() / ".local/share/cyberpunk-red-gm/rules.sqlite"))
 STOP_WORDS = set("a an and are as at be by can could do does for from how i in into is it me of on or page pages please red rule rules show tell the this to under use using what when where with you cyberpunk corebook happens work my character book say".split())
@@ -453,7 +447,24 @@ def make_api(
     return app
 
 
-create_app = make_api
+def check_public_bind_auth(bind_host: str, room_pin: str = "", settings_path: Path | None = None) -> None:
+    """Refuse a non-loopback bind while auth is unconfigured, unless first-run Admin setup is armed.
+
+    Unconfigured auth means every caller would be an unauthenticated admin. With
+    REDGM_BOOTSTRAP_TOKEN set the server may start for browser setup; callers stay
+    anonymous (not admin) until an Admin account exists.
+    """
+    if is_loopback_host(bind_host):
+        return
+    from auth import AuthManager
+    auth = AuthManager(settings_path, room_pin=room_pin or os.environ.get("REDGM_ROOM_PIN", ""))
+    if auth.auth_enabled() or len(os.environ.get("REDGM_BOOTSTRAP_TOKEN", "")) >= 32:
+        return
+    raise ValueError(
+        f"Refusing to listen on {bind_host} without authentication. Configure an Admin "
+        "(REDGM_ADMIN_PASS, or REDGM_BOOTSTRAP_TOKEN of at least 32 characters for browser setup) "
+        "or a room PIN (--pin / REDGM_ROOM_PIN), or bind to 127.0.0.1."
+    )
 
 
 def serve_mcp(db_path: Path, campaign_path=None) -> None:
@@ -590,8 +601,9 @@ def cli() -> None:
             from urllib.parse import urlsplit
             from turnloop import load_server_settings
             srv_cfg = load_server_settings()
+            # Settings-file origins are read live per request; only CLI origins are fixed here.
             origins: list[str] = []
-            for raw_origin in [*(args.allow_origin or []), *(srv_cfg.get("allowed_origins") or [])]:
+            for raw_origin in args.allow_origin or []:
                 cleaned_origin = str(raw_origin).strip().rstrip("/")
                 if cleaned_origin and cleaned_origin not in origins:
                     origins.append(cleaned_origin)
@@ -611,6 +623,7 @@ def cli() -> None:
                 local_origin = f"http://{bind_host}:{bind_port}"
                 if local_origin not in origins:
                     origins.append(local_origin)
+            check_public_bind_auth(bind_host, args.pin)
             uvicorn.run(
                 make_api(
                     args.db,

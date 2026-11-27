@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from gameplay import GameplayService
 import redkb
+from server.coop import _CoopHub
 from tests.test_library import _create_rules_db
 from turnloop import ChatTreeStore, LLMConfig, OpenAICompatibleLLM, TurnEngine
 
@@ -389,7 +390,7 @@ async def test_delete_update_guided_regen_export_and_coop(tmp_path: Path, monkey
         )
         assert setup_res.status_code == 200
         admin_token = setup_res.json()["token"]
-        admin_headers = {"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json", "X-RedGM-Token": admin_token}
+        admin_headers = {"Origin": "http://127.0.0.1:8765", "Host": "127.0.0.1:8765", "Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
 
         # Create campaign as admin
         camp_res = await client.post(
@@ -572,13 +573,13 @@ async def test_prompts_include_inventory_and_state_ops_merge_safely(tmp_path: Pa
 async def test_readonly_game_actions_do_not_publish_sync_events(tmp_path: Path, monkeypatch):
     rules_db, camp_db, _, camp_id, _ = _seed_campaign(tmp_path)
     published: list[tuple[str, str, dict[str, Any]]] = []
-    orig_publish = redkb._CoopHub.publish
+    orig_publish = _CoopHub.publish
 
     def spy_publish(self, campaign_id: str, event: str, data: dict[str, Any]) -> None:
         published.append((campaign_id, event, data))
         orig_publish(self, campaign_id, event, data)
 
-    monkeypatch.setattr(redkb._CoopHub, "publish", spy_publish)
+    monkeypatch.setattr(_CoopHub, "publish", spy_publish)
     app = redkb.make_api(rules_db, allowed_origins=("http://localhost:5173",), campaign_path=camp_db)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

@@ -74,7 +74,14 @@ Keep PDFs, `rules.sqlite`, `campaign.sqlite`, `settings.json`, `.env`, and play 
 
 ## 4. HTTP API Overview
 
-Mutating endpoints enforce trusted-origin checks (`--allow-origin` / `allowed_origins`) and role-based auth (`admin` vs `user`) when auth is configured. A room PIN grants player access only; it never grants Admin privileges. Initial browser Admin setup requires the operator-configured `REDGM_BOOTSTRAP_TOKEN` (at least 32 characters); preconfigured Admin credentials bypass browser bootstrap. JSON request bodies are limited to 64 KiB on `/v1/auth/*` and 8 MiB on other routes; Corebook PDF uploads retain their separate 512 MiB streamed limit. Login throttling is in-memory and per server process, so public multi-worker deployments should also apply shared rate limiting at a trusted proxy. Saved-account tokens are revoked per account on password/role changes and deletion; changing a shared player passcode revokes all sessions. Existing sessions from before this token format change will need to sign in again.
+Mutating endpoints enforce trusted-origin checks (`--allow-origin` / `allowed_origins`) and role-based auth (`admin` vs `user`) when auth is configured. A room PIN grants player access only; it never grants Admin privileges. Initial browser Admin setup requires the operator-configured `REDGM_BOOTSTRAP_TOKEN` (at least 32 characters); preconfigured Admin credentials bypass browser bootstrap. JSON request bodies are limited to 64 KiB on `/v1/auth/*` and 8 MiB on other routes; Corebook PDF uploads retain their separate 512 MiB streamed limit. Login throttling is in-memory and per server process, so public multi-worker deployments should also apply shared rate limiting at a trusted proxy. Saved-account tokens are revoked per account on password/role changes and deletion; changing a shared player passcode revokes all sessions.
+
+Authentication details:
+- Browsers authenticate with the httpOnly `redgm_token` cookie set by `/v1/auth/login`, `/v1/auth/register` and `/v1/auth/setup`. Non-browser clients (the SillyTavern extension, `gm_probe.py`) send `Authorization: Bearer <token>`. A room PIN may be sent as `X-RedGM-Pin` (or `?pin=` for EventSource).
+- Shared-passcode and room-PIN sessions are all the same identity, `player`, whatever username is typed. `player` is reserved: saved accounts cannot use it, so shared players never own an account's characters.
+- Account renames move character ownership and chat authorship in the same commit as the account change; deleting an account releases its characters (they become unclaimed) and clears its chat authorship.
+- With no Admin, account or PIN configured, callers get admin-equivalent `open` access only when the server is bound to loopback. `redkb.py serve` refuses a non-loopback bind in that state unless `REDGM_BOOTSTRAP_TOKEN` is set; until browser setup creates the Admin, public callers are anonymous.
+- Browser origins allowed for CORS and mutations are `--allow-origin` flags plus the saved `allowed_origins` setting, read on every request, so saving new origins takes effect without a restart.
 
 - **Health & Corebook Upload:**
   - `GET /health` — Backend status, `rules_indexed`, `indexed_pages`, `lan_enabled`, `auth_enabled`
@@ -108,7 +115,7 @@ See [.env.example](../.env.example) for all Docker/server variables:
 - `REDKB_DB`, `REDGM_CAMPAIGN_DB`, `REDGM_SETTINGS_FILE`
 - `REDGM_HOST`, `REDGM_PORT`, `REDGM_PUBLIC_URL`, `REDGM_ALLOWED_ORIGINS`
 - `REDGM_LLM_URL`, `REDGM_LLM_MODEL`, `REDGM_LLM_API_KEY`
-- `REDGM_ADMIN_USER`, `REDGM_ADMIN_PASS`, `REDGM_USER_USER`, `REDGM_USER_PASS`, `REDGM_AUTH_SECRET`, `REDGM_PIN`
+- `REDGM_ADMIN_USER`, `REDGM_ADMIN_PASS`, `REDGM_USER_USER`, `REDGM_USER_PASS`, `REDGM_ROOM_PIN`
 - `REDGM_BOOTSTRAP_TOKEN` — required for initial browser Admin setup; generate a random secret of at least 32 characters
 - `INSTALL_SEMANTIC=true` (Docker build arg to include `requirements-semantic.txt`)
 

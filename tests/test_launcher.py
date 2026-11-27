@@ -23,10 +23,7 @@ def setup_tree(tmp_path):
 def test_install_generates_single_managed_unit_and_desktop(tmp_path, monkeypatch):
     project = setup_tree(tmp_path)
     config, data = tmp_path / "config", tmp_path / "data"
-    # Pre-seed an old managed SillyTavern unit to confirm cleanup.
     units = config / "systemd/user"
-    units.mkdir(parents=True)
-    (units / launcher.LEGACY_ST_UNIT).write_text(launcher.MARKER)
 
     calls = []
     monkeypatch.setattr(
@@ -43,8 +40,6 @@ def test_install_generates_single_managed_unit_and_desktop(tmp_path, monkeypatch
     assert "serve --host 127.0.0.1 --port 8765" in back
     assert "Terminal=false" in desktop and "Actions=Stop;" in desktop
     assert "WantedBy=default.target" in back
-    assert not (units / launcher.LEGACY_ST_UNIT).exists()
-    assert ("stop", launcher.LEGACY_ST_UNIT) in calls
     assert ("daemon-reload",) in calls
 
 

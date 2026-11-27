@@ -607,11 +607,11 @@ def test_server_side_player_redaction_across_tree_sse_coop_and_game(tmp_path: Pa
                     "bootstrap_token": "test-bootstrap-token-" + ("a" * 40),
                 },
             )
-            admin_headers = {"X-RedGM-Token": boot.json()["token"]}
+            admin_headers = {"Authorization": "Bearer " + boot.json()["token"]}
             client.cookies.clear()
-            alice_headers = {"X-RedGM-Token": (await client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})).json()["token"]}
+            alice_headers = {"Authorization": "Bearer " + (await client.post("/v1/auth/register", json={"username": "alice", "password": "alice-password"})).json()["token"]}
             client.cookies.clear()
-            bob_headers = {"X-RedGM-Token": (await client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"})).json()["token"]}
+            bob_headers = {"Authorization": "Bearer " + (await client.post("/v1/auth/register", json={"username": "bob", "password": "bob-password"})).json()["token"]}
             client.cookies.clear()
 
             camp = (await client.post("/v1/game", headers=admin_headers, json={"action": "create_campaign", "arguments": {"name": "Redaction Run", "operation_id": "red-c1"}})).json()["result"]

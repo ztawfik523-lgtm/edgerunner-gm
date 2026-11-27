@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from server.redaction import redact_chat_message, redact_chat_tree, redact_sse_event
+from server.redaction import redact_campaign, redact_chat_message, redact_chat_tree, redact_sse_event
 from server.security import ServerContext
 
 _THINK_CMD_RE = re.compile(r"^/think(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
@@ -264,7 +264,6 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        is_admin = ctx.is_admin_or_pin_only(request, sess)
         uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
@@ -273,6 +272,9 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             scope = body.get("scope", "branch")
             if not isinstance(scope, str) or scope not in {"branch", "single"}:
                 raise ValueError("scope must be 'branch' or 'single'")
+            if scope != "single" and not is_gm:
+                # A branch delete removes every descendant, including other players' messages.
+                return JSONResponse(status_code=403, content={"detail": "Only Admin can delete a whole branch; players may delete single messages.", "request_id": request_id})
             target = await asyncio.to_thread(
                 lambda: ChatTreeStore(ctx.gameplay_service()).get_message(body["campaign_id"], body["message_id"])
             )
@@ -281,7 +283,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             allowed_channels, _, chars = await asyncio.to_thread(
                 lambda: _allowed_channels_for(body["campaign_id"], is_gm=is_gm, uname=uname)
             )
-            if not is_admin:
+            if not is_gm:
                 target_chan = ChatTreeStore._norm_channel(target.get("channel_id"))
                 if allowed_channels is not None and target_chan not in allowed_channels:
                     return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
@@ -290,7 +292,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     eff_role=eff_role,
                     uname=uname,
                     chars=chars,
-                    pin_only_mode=is_admin,
+                    pin_only_mode=is_gm,
                     request_id=request_id,
                 )
                 if denied is not None:
@@ -313,7 +315,6 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        is_admin = ctx.is_admin_or_pin_only(request, sess)
         uname = str(sess.get("username") or "").strip()
         try:
             body = await request.json()
@@ -327,7 +328,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             allowed_channels, _, chars = await asyncio.to_thread(
                 lambda: _allowed_channels_for(body["campaign_id"], is_gm=is_gm, uname=uname)
             )
-            if not is_admin:
+            if not is_gm:
                 target_chan = ChatTreeStore._norm_channel(target.get("channel_id"))
                 if allowed_channels is not None and target_chan not in allowed_channels:
                     return JSONResponse(status_code=403, content={"detail": "You do not have access to this split-party channel.", "request_id": request_id})
@@ -336,7 +337,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                     eff_role=eff_role,
                     uname=uname,
                     chars=chars,
-                    pin_only_mode=is_admin,
+                    pin_only_mode=is_gm,
                     request_id=request_id,
                 )
                 if denied is not None:
@@ -357,7 +358,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to export story logs.", "request_id": request_id})
         try:
             exported = ChatTreeStore(ctx.gameplay_service()).export_branch(campaign_id, leaf_id, channel_id=channel_id)
@@ -518,12 +519,11 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
             is_gm = ctx.can_view_gm_private_state(request, sess)
-            is_admin = ctx.is_admin_or_pin_only(request, sess)
             uname = str(sess.get("username") or "").strip()
-            if is_intro and not is_admin:
+            if is_intro and not is_gm:
                 return JSONResponse(status_code=403, content={"detail": "Admin permission required for intro turns.", "request_id": request_id})
             raw_guidance = body.get("guidance")
-            if raw_guidance is not None and str(raw_guidance).strip() and not is_admin:
+            if raw_guidance is not None and str(raw_guidance).strip() and not is_gm:
                 return JSONResponse(status_code=403, content={"detail": "Admin permission required for Director guidance.", "request_id": request_id})
             llm_cfg = load_llm_settings(ctx.resolved_settings_path())
 
@@ -540,7 +540,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 eff_role=eff_role,
                 uname=uname,
                 is_intro=is_intro,
-                pin_only_mode=is_admin,
+                pin_only_mode=is_gm,
                 require_character_to_speak=bool(llm_cfg.get("require_character_to_speak", True)),
                 request_id=request_id,
             )
@@ -651,7 +651,6 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
             is_gm = ctx.can_view_gm_private_state(request, sess)
-            is_admin = ctx.is_admin_or_pin_only(request, sess)
             uname = str(sess.get("username") or "").strip()
             channel_id = ChatTreeStore._norm_channel(body.get("channel_id"))
             allowed_channels, grouping, _ = await asyncio.to_thread(
@@ -671,7 +670,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                         raise ValueError("Character not found")
                     d = char.get("detail") or {}
                     owner = str(d.get("owner_username") or "").strip()
-                    if not is_admin and owner and (not uname or owner.lower() != uname.lower()):
+                    if not is_gm and owner and (not uname or owner.lower() != uname.lower()):
                         raise PermissionError(f"You cannot roll for {char.get('name')} (owned by {owner}).")
                     try:
                         check_res = svc.execute(
@@ -814,7 +813,6 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
-        is_admin = ctx.is_admin_or_pin_only(request, sess)
         uname = str(sess.get("username") or "").strip()
         from turnloop import TurnEngine
         try:
@@ -824,7 +822,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
             campaign_id = body["campaign_id"]
             message_id = body["message_id"]
             guidance = body.get("guidance")
-            if guidance is not None and str(guidance).strip() and not is_admin:
+            if guidance is not None and str(guidance).strip() and not is_gm:
                 return JSONResponse(status_code=403, content={"detail": "Admin permission required for Director guidance.", "request_id": request_id})
             client_id = str(body.get("client_id") or request.headers.get("x-redgm-client-id") or request_id)
             player_name = str(body.get("player_name") or "Player")
@@ -864,7 +862,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 overclock=body["overclock"] if "overclock" in body and body["overclock"] is not None else None,
                 luck_spend=regen_luck,
                 mode=body.get("mode"),
-                guidance=guidance if is_admin else None,
+                guidance=guidance if is_gm else None,
             ),
             campaign_id=campaign_id,
             channel_id=target_channel,
@@ -890,7 +888,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to compress campaign memory.", "request_id": request_id})
         eff_role = ctx.effective_role(request, sess)
         from turnloop import TurnEngine
@@ -936,7 +934,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify world clocks.", "request_id": request_id})
         from turnloop import TurnEngine
         try:
@@ -963,12 +961,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         from turn_engine.chat_tree import ChatTreeStore, PrivateStateStore
         try:
             svc = ctx.gameplay_service()
-            camp_ctx = svc.campaign_context(campaign_id)
-            store = PrivateStateStore(svc, ChatTreeStore(svc))
-            banner_url = store.get_banner(campaign_id)
-            if not banner_url:
-                disc = (camp_ctx.get("campaign") or {}).get("state", {}).get("discoveries") or {}
-                banner_url = str(disc.get("__banner_url") or disc.get("Banner URL") or "")
+            banner_url = PrivateStateStore(svc, ChatTreeStore(svc)).get_banner(campaign_id)
             return {"campaign_id": campaign_id, "banner_url": banner_url, "request_id": request_id}
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -980,7 +973,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to update campaign banner.", "request_id": request_id})
         from turn_engine.chat_tree import ChatTreeStore, PrivateStateStore
         try:
@@ -1011,7 +1004,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify NPC identities.", "request_id": request_id})
         from turnloop import TurnEngine, _normalize_campaign_changes, build_npc_profiles
         try:
@@ -1109,7 +1102,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                 camp_ctx = svc.campaign_context(campaign_id)
                 camp = camp_ctx["campaign"]
                 chars = camp_ctx["characters"]
-                if not ctx.is_admin_or_pin_only(request, sess):
+                if not ctx.can_view_gm_private_state(request, sess):
                     if action == "reunite":
                         raise PermissionError("Only the GM/Admin can reunite all party members at once.")
                     if isinstance(pc_locations, dict):
@@ -1166,7 +1159,10 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
                         metadata={"party_transition": after_grouping["mode"]},
                     )
                 tree_store.sync_all_active_leaf_revisions(campaign_id)
-                return {"campaign": updated_camp, "party_grouping": after_grouping}
+                return {
+                    "campaign": redact_campaign(updated_camp, is_gm=ctx.can_view_gm_private_state(request, sess)),
+                    "party_grouping": after_grouping,
+                }
 
             res = await asyncio.to_thread(_apply)
             ctx.coop.publish(campaign_id, "sync", {"campaign_id": campaign_id, "kind": "all"})
@@ -1183,7 +1179,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify campaign setup.", "request_id": request_id})
         from library import CampaignLibrary
         from turnloop import (
@@ -1506,7 +1502,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to set primary campaign.", "request_id": request_id})
         try:
             res = await asyncio.to_thread(
@@ -1524,7 +1520,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        if not ctx.is_admin_or_pin_only(request, sess):
+        if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to delete campaign.", "request_id": request_id})
         try:
             res = await asyncio.to_thread(

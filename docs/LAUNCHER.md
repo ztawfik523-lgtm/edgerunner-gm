@@ -27,7 +27,7 @@ Once installed, open **Cyberpunk RED GM** from your application menu. It starts 
 
 ### Technical Notes & Troubleshooting
 
-- Installs a user-level systemd unit (`redgm-backend.service`) and desktop entry (cleans up any older `redgm-sillytavern.service` unit if present). Does not require root or auto-start at login.
+- Installs a user-level systemd unit (`redgm-backend.service`) and desktop entry. Does not require root or auto-start at login.
 - Fails safely if port `8765` is already used by another process; stop any manually started server before launching.
 - If startup fails, inspect logs with:
   ```bash

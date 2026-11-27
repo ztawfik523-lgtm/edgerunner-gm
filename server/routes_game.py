@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from lifecycle import SOLO_ACTIONS
-from server.redaction import redact_campaign, redact_campaign_context, redact_character
+from server.redaction import redact_campaign_context, redact_game_result
 from server.security import ServerContext
 
 
@@ -33,24 +33,24 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
             auto_revision = bool(body.get("auto_revision", False))
             sess = ctx.session(request)
             eff_role = ctx.effective_role(request, sess)
-            is_gm = ctx.is_admin_or_pin_only(request, sess)
-            include_hidden = ctx.can_view_gm_private_state(request, sess)
+            is_gm = ctx.can_view_gm_private_state(request, sess)
             uname = str(sess.get("username") or "").strip()
 
+            if action_name in {"delete_campaign", "set_primary_campaign"}:
+                raise ValueError(f"Use the /v1/campaigns REST routes for '{action_name}'.")
             admin_gm_actions = {
                 "create_campaign",
                 "update_campaign",
                 "rename_campaign",
                 "start_session",
                 "undo_campaign",
-                "delete_campaign",
-                "set_primary_campaign",
                 "attach_character",
                 "start_encounter",
                 "end_encounter",
                 "create_architecture",
                 "start_netrun",
                 "advance_time",
+                "undo_action",
             }
             if action_name in admin_gm_actions and not is_gm:
                 return JSONResponse(
@@ -81,6 +81,29 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                     )
                 denied = ctx.check_character_ownership(
                     actor_char,
+                    eff_role=eff_role,
+                    uname=uname,
+                    action_name=action_name,
+                    request_id=request_id,
+                )
+                if denied is not None:
+                    return denied
+
+            if action_name == "net_action" and not is_gm:
+                camp_for_run = body.get("campaign_id")
+                run_id = args_payload.get("run_id")
+                if not isinstance(camp_for_run, str) or not camp_for_run or not isinstance(run_id, str):
+                    raise ValueError("net_action requires campaign_id and run_id")
+                run = (await asyncio.to_thread(
+                    lambda: ctx.gameplay_service().solo.context(camp_for_run)
+                ))["runtime"]["runs"].get(run_id)
+                if run is None:
+                    return JSONResponse(status_code=404, content={"detail": f"Unknown NET run: {run_id}", "request_id": request_id})
+                runner = await asyncio.to_thread(
+                    lambda: ctx.gameplay_service().store.get_character(run["run"]["character_id"])
+                )
+                denied = ctx.check_character_ownership(
+                    runner,
                     eff_role=eff_role,
                     uname=uname,
                     action_name=action_name,
@@ -267,21 +290,18 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                         chars_obj = ctx_res.get("characters") or []
                         eng_ctx = TurnEngine(svc, None)
                         secrets_obj = eng_ctx._get_gm_secrets(camp_id_ctx) if camp_id_ctx else {}
-                        ctx_res["npc_profiles"] = build_npc_profiles(state_obj, secrets_obj, include_hidden=include_hidden)
+                        ctx_res["npc_profiles"] = build_npc_profiles(state_obj, secrets_obj, include_hidden=is_gm)
                         ctx_res["party_grouping"] = compute_party_grouping(chars_obj, state_obj)
                         ctx_res["campaign_meta"] = parse_campaign_meta(state_obj)
                         ctx_res["session_zero"] = parse_session_zero(state_obj)
                         if camp_id_ctx:
                             ctx_res["clocks"] = (
                                 eng_ctx.list_all_clocks(camp_id_ctx)
-                                if include_hidden
+                                if is_gm
                                 else eng_ctx.list_public_clocks(camp_id_ctx)
                             )
-                            ctx_res["banner_url"] = (
-                                eng_ctx.private_state.get_banner(camp_id_ctx)
-                                or str((state_obj.get("discoveries") or {}).get("__banner_url") or (state_obj.get("discoveries") or {}).get("Banner URL") or "")
-                            )
-                        if include_hidden:
+                            ctx_res["banner_url"] = eng_ctx.private_state.get_banner(camp_id_ctx)
+                        if is_gm:
                             ctx_res["gm_secrets"] = {
                                 str(k): str(v)
                                 for k, v in secrets_obj.items()
@@ -289,38 +309,26 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                             }
                     except Exception:
                         pass
-                    res_out["result"] = redact_campaign_context(ctx_res, is_gm=include_hidden, viewer_username=uname)
-                elif not include_hidden:
-                    if action_name == "get_campaign" and isinstance(res_out.get("result"), dict):
-                        res_out["result"] = redact_campaign(res_out["result"], is_gm=False)
-                    elif action_name == "get_character" and isinstance(res_out.get("result"), dict):
-                        res_out["result"] = redact_character(res_out["result"], is_gm=False, viewer_username=uname)
-                    elif action_name == "list_characters" and isinstance(res_out.get("result"), list):
-                        res_out["result"] = [
-                            redact_character(c, is_gm=False, viewer_username=uname)
-                            for c in res_out["result"]
-                        ]
+                    res_out["result"] = redact_campaign_context(ctx_res, is_gm=is_gm, viewer_username=uname)
+                elif not is_gm:
+                    res_out["result"] = redact_game_result(
+                        action_name, res_out.get("result"), solo_actions=SOLO_ACTIONS, viewer_username=uname
+                    )
                 return res_out
 
             if "campaign_id" in body:
                 if not isinstance(body["campaign_id"], str) or not body["campaign_id"]:
                     raise ValueError("campaign_id must be a nonempty string")
                 result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(body["campaign_id"]))
-                if action_name == "delete_campaign":
-                    ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "campaign_deleted"})
-                    ctx.coop.clear_campaign(body["campaign_id"])
-                elif action_name not in read_only_actions:
+                if action_name not in read_only_actions:
                     ctx.coop.publish(body["campaign_id"], "sync", {"campaign_id": body["campaign_id"], "kind": "game", "action": action_name})
             else:
                 result = await asyncio.to_thread(lambda: _exec_with_optional_auto_rev(None))
-                if action_name == "delete_campaign":
-                    deleted_id = args_payload.get("campaign_id")
-                    if isinstance(deleted_id, str) and deleted_id:
-                        ctx.coop.publish(deleted_id, "sync", {"campaign_id": deleted_id, "kind": "campaign_deleted"})
-                        ctx.coop.clear_campaign(deleted_id)
             return {**result, "request_id": request_id}
         except HTTPException:
             raise
+        except KeyError as exc:
+            return JSONResponse(status_code=400, content={"detail": f"Missing or unknown argument: {exc}", "request_id": request_id})
         except (TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
         except (sqlite3.Error, OSError) as exc:

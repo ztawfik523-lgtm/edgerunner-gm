@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import importlib.util
 import json
 import os
@@ -18,17 +17,10 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from server.security import ServerContext, _in_docker
+import redkb
+from server.security import ServerContext, _in_docker, url_origin
 
 _COREBOOK_MAX_BYTES = 512 * 1024 * 1024
-
-
-def _redkb_attr(name: str):
-    """Look up corebook helpers on the loaded redkb module so monkeypatches take effect."""
-    mod = sys.modules.get("redkb")
-    if mod is None:
-        import redkb as mod
-    return getattr(mod, name)
 
 
 def _semantic_available() -> bool:
@@ -50,7 +42,7 @@ def _check_auth_origin(ctx: ServerContext, request: Request, request_id: str) ->
 
 def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
     """Register auth, corebook, search/lookup, settings, health, and network endpoints."""
-    from auth import AuthError, AuthRateLimitError
+    from auth import AuthError, AuthRateLimitError, _secret_eq
     from turnloop import (
         DEFAULT_PROMPT_TEMPLATES,
         load_llm_settings,
@@ -96,7 +88,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
             except AuthRateLimitError as exc:
                 return JSONResponse(status_code=429, content={"detail": str(exc), "request_id": request_id})
             supplied_secret = body.get("bootstrap_token")
-            if not isinstance(supplied_secret, str) or not hmac.compare_digest(supplied_secret, bootstrap_secret):
+            if not isinstance(supplied_secret, str) or not _secret_eq(supplied_secret, bootstrap_secret):
                 ctx.auth._record_failure(bucket)
                 return JSONResponse(status_code=403, content={"detail": "Invalid Admin bootstrap token.", "request_id": request_id})
             ctx.auth._clear_failures(bucket)
@@ -128,11 +120,13 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
             if not isinstance(body, dict):
                 raise ValueError("Request body must be an object")
             bucket = request.client.host if request.client else "local"
-            res = ctx.auth.authenticate(
-                mode=str(body.get("mode") or "auto"),
-                username=str(body.get("username") or ""),
-                password=str(body.get("password") or body.get("passcode") or body.get("pin") or ""),
-                bucket=bucket,
+            res = await asyncio.to_thread(
+                lambda: ctx.auth.authenticate(
+                    mode=str(body.get("mode") or "auto"),
+                    username=str(body.get("username") or ""),
+                    password=str(body.get("password") or ""),
+                    bucket=bucket,
+                )
             )
             resp = JSONResponse(content={**res, "request_id": request_id})
             resp.set_cookie("redgm_token", res["token"], max_age=res["expires_in"], httponly=True, samesite="lax")
@@ -183,32 +177,38 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
             return blocked
         sess = ctx.session(request)
         cur_uname = str(sess.get("username") or "").strip()
-        if not cur_uname or not sess.get("authenticated") or sess.get("pin_only_mode"):
+        if not cur_uname or sess.get("token_kind") != "account":
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Sign in with a named account to update username or password.", "request_id": request_id},
             )
+        affected_camps: set[str] = set()
+
+        def _owner_transfer(old: str, new: str | None):
+            return ctx.gameplay_service().store.transfer_owner(old, new, affected_camps)
+
         try:
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("Request body must be an object")
+            bucket = request.client.host if request.client else "local"
             res = await asyncio.to_thread(
                 lambda: ctx.auth.update_self_account(
                     cur_uname,
                     current_password=str(body.get("current_password") or ""),
                     new_username=body.get("new_username"),
                     new_password=body.get("new_password"),
+                    bucket=bucket,
+                    owner_transfer=_owner_transfer,
                 )
             )
-            if res["username"].lower() != cur_uname.lower() or res["username"] != cur_uname:
-                affected_camps = await asyncio.to_thread(
-                    lambda: ctx.gameplay_service().store.rename_owner_username(cur_uname, res["username"])
-                )
-                for cid in affected_camps:
-                    ctx.coop.publish(cid, "sync", {"campaign_id": cid, "kind": "campaign"})
+            for cid in affected_camps:
+                ctx.coop.publish(cid, "sync", {"campaign_id": cid, "kind": "campaign"})
             resp = JSONResponse(content={**res, "request_id": request_id})
             resp.set_cookie("redgm_token", res["token"], max_age=res["expires_in"], httponly=True, samesite="lax")
             return resp
+        except AuthRateLimitError as exc:
+            return JSONResponse(status_code=429, content={"detail": str(exc), "request_id": request_id})
         except (AuthError, TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
 
@@ -239,8 +239,15 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.check_mutable_origin(request, request_id, require_json=False, min_role="admin")
         if blocked is not None:
             return blocked
+        affected_camps: set[str] = set()
+
+        def _owner_transfer(old: str, new: str | None):
+            return ctx.gameplay_service().store.transfer_owner(old, new, affected_camps)
+
         try:
-            res = await asyncio.to_thread(lambda: ctx.auth.delete_account(username))
+            res = await asyncio.to_thread(lambda: ctx.auth.delete_account(username, owner_transfer=_owner_transfer))
+            for cid in affected_camps:
+                ctx.coop.publish(cid, "sync", {"campaign_id": cid, "kind": "campaign"})
             return {**res, "request_id": request_id}
         except (AuthError, TypeError, ValueError) as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
@@ -262,7 +269,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
             if sess["role"] in {"open", "admin"}:
                 payload["db_path"] = str(resolved)
             return payload
-        info = _redkb_attr("inspect_index")(ctx.db_path)
+        info = redkb.inspect_index(ctx.db_path)
         if sess["role"] not in {"open", "admin"}:
             info = {k: v for k, v in info.items() if k != "db_path"}
         return {
@@ -286,7 +293,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         rules_indexed = resolved.is_file()
         if rules_indexed:
             try:
-                indexed_info = _redkb_attr("inspect_index")(ctx.db_path)
+                indexed_info = redkb.inspect_index(ctx.db_path)
             except (OSError, sqlite3.Error):
                 rules_indexed = False
         with ctx.corebook_job_lock:
@@ -395,7 +402,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
                     "message": str(ev.get("message") or ""),
                 })
 
-        build_index_fn = _redkb_attr("build_index")
+        build_index_fn = redkb.build_index
 
         def _worker(pdf_file: Path, orig_name: str, want_semantic: bool) -> None:
             try:
@@ -455,7 +462,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.require_player(request, uuid.uuid4().hex)
         if blocked is not None:
             return blocked
-        results = _redkb_attr("search_pages")(ctx.db_path, q, limit)
+        results = redkb.search_pages(ctx.db_path, q, limit)
         return {
             "query": q,
             "results": results,
@@ -469,7 +476,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         try:
-            result = _redkb_attr("read_page")(ctx.db_path, page, numbering)
+            result = redkb.read_page(ctx.db_path, page, numbering)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if result is None:
@@ -483,7 +490,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.require_player(request, uuid.uuid4().hex)
         if blocked is not None:
             return blocked
-        return {"query": q, "results": _redkb_attr("find_phrase")(ctx.db_path, q, limit)}
+        return {"query": q, "results": redkb.find_phrase(ctx.db_path, q, limit)}
 
     @app.get("/v1/catalog")
     def source_catalog(request: Request):
@@ -535,7 +542,7 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         lan_enabled = ctx.server_host in {"0.0.0.0", "::"}
-        ips = _redkb_attr("_detect_lan_ips")() if lan_enabled else []
+        ips = redkb._detect_lan_ips() if lan_enabled else []
         host_header = request.headers.get("host") or f"127.0.0.1:{ctx.server_port}"
         scheme = request.url.scheme or "http"
         suffix = f"/?campaign={campaign_id}" if campaign_id else "/"
@@ -675,7 +682,6 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
         try:
             body = await request.json()
             saved = await asyncio.to_thread(lambda: save_server_settings(body, ctx.resolved_settings_path()))
-            ctx.dynamic_origins.update(saved.get("allowed_origins") or [])
             return {
                 "server": saved,
                 "active_host": ctx.server_host,
@@ -748,7 +754,13 @@ def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
             base_url = str(body.get("base_url") or saved["base_url"]).strip().rstrip("/")
             if not (base_url.startswith("http://") or base_url.startswith("https://")):
                 raise ValueError("base_url must start with http:// or https://")
-            api_key = str(body["api_key"]).strip() if isinstance(body.get("api_key"), str) and body["api_key"].strip() else str(saved.get("api_key") or "")
+            if isinstance(body.get("api_key"), str) and body["api_key"].strip():
+                api_key = body["api_key"].strip()
+            elif url_origin(base_url) == url_origin(saved["base_url"]):
+                api_key = str(saved.get("api_key") or "")
+            else:
+                # Never send the saved key to a different provider origin.
+                api_key = ""
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             models_url = base_url[:-len("/chat/completions")] + "/models" if base_url.endswith("/chat/completions") else f"{base_url}/models"
             async with httpx.AsyncClient(timeout=10.0) as client:

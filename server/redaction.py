@@ -204,6 +204,8 @@ def redact_campaign_context(ctx: dict[str, Any], *, is_gm: bool, viewer_username
             redact_character(c, is_gm=False, viewer_username=viewer_username)
             for c in out["characters"]
         ]
+    if isinstance(out.get("solo"), dict):
+        out["solo"] = _redact_solo_characters(out["solo"], viewer_username)
     if isinstance(out.get("clocks"), list):
         out["clocks"] = [
             c for c in out["clocks"] if isinstance(c, dict) and c.get("visibility") != "secret"
@@ -213,3 +215,58 @@ def redact_campaign_context(ctx: dict[str, Any], *, is_gm: bool, viewer_username
             if isinstance(prof, dict) and prof.get("real_name_hidden"):
                 prof.pop("real_name", None)
     return out
+
+
+def _redact_solo_characters(payload: dict[str, Any], viewer_username: str) -> dict[str, Any]:
+    """Redact the ``characters`` list (solo action responses) or id map (solo_context)."""
+    out = dict(payload)
+    chars = out.get("characters")
+    if isinstance(chars, list):
+        out["characters"] = [redact_character(c, is_gm=False, viewer_username=viewer_username) for c in chars]
+    elif isinstance(chars, dict):
+        out["characters"] = {
+            k: redact_character(c, is_gm=False, viewer_username=viewer_username) for k, c in chars.items()
+        }
+    return out
+
+
+def _redact_campaign_event(event: Any) -> Any:
+    if not isinstance(event, dict):
+        return event
+    out = dict(event)
+    for key in ("result", "before", "after"):
+        if isinstance(out.get(key), dict):
+            out[key] = redact_campaign(out[key], is_gm=False)
+    payload = out.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("changes"), dict):
+        out["payload"] = {**payload, "changes": _redact_patch_section(payload["changes"])}
+    return out
+
+
+def _redact_character_event(event: Any, viewer_username: str) -> Any:
+    if not isinstance(event, dict):
+        return event
+    out = dict(event)
+    for key in ("before", "after"):
+        if isinstance(out.get(key), dict):
+            out[key] = redact_character(out[key], is_gm=False, viewer_username=viewer_username)
+    return out
+
+
+def redact_game_result(action: str, result: Any, *, solo_actions: frozenset[str] | set[str], viewer_username: str = "") -> Any:
+    """Strip GM-only campaign/character data from a non-GM ``/v1/game`` result (campaign_context excluded)."""
+    if action in solo_actions:
+        return _redact_solo_characters(result, viewer_username) if isinstance(result, dict) else result
+    if action == "get_campaign" and isinstance(result, dict):
+        return redact_campaign(result, is_gm=False)
+    if action == "list_campaigns" and isinstance(result, list):
+        return [redact_campaign(c, is_gm=False) for c in result]
+    if action == "campaign_history" and isinstance(result, list):
+        return [_redact_campaign_event(e) for e in result]
+    if action == "get_character" and isinstance(result, dict):
+        return redact_character(result, is_gm=False, viewer_username=viewer_username)
+    if action == "list_characters" and isinstance(result, list):
+        return [redact_character(c, is_gm=False, viewer_username=viewer_username) for c in result]
+    if action == "history" and isinstance(result, list):
+        return [_redact_character_event(e, viewer_username) for e in result]
+    return result
