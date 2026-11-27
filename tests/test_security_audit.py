@@ -183,7 +183,7 @@ def test_public_bind_never_grants_unauthenticated_admin(tmp_path, monkeypatch):
 def test_account_rename_moves_ownership_atomically_and_delete_releases_it(tmp_path, monkeypatch):
     import auth as auth_module
     from gameplay import GameplayService
-    from turnloop import ChatTreeStore
+    from turn_engine import ChatTreeStore
 
     client, admin = _table(tmp_path)
     alice = _register(client, "alice")

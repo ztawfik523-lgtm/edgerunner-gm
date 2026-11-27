@@ -599,7 +599,7 @@ def cli() -> None:
         elif args.command == "serve":
             import uvicorn
             from urllib.parse import urlsplit
-            from turnloop import load_server_settings
+            from turn_engine import load_server_settings
             srv_cfg = load_server_settings()
             # Settings-file origins are read live per request; only CLI origins are fixed here.
             origins: list[str] = []

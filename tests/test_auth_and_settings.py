@@ -19,7 +19,7 @@ from gameplay import GameplayService
 import redkb
 import server.security
 from tests.test_library import _create_rules_db
-from turnloop import (
+from turn_engine import (
     DEFAULT_PROMPT_TEMPLATES,
     LLMConfig,
     TurnEngine,
@@ -863,7 +863,7 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
 def test_recreated_username_invalidates_tokens_no_temp_keys_and_auth_body_limit(tmp_path, monkeypatch):
     import json
     from auth import AuthManager, hash_password
-    from turnloop import read_settings_doc
+    from turn_engine import read_settings_doc
 
     rules_db = tmp_path / "rules.sqlite"
     camp_db = tmp_path / "campaign.sqlite"

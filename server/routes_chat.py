@@ -33,7 +33,7 @@ def _parse_luck_spend(raw: Any) -> int:
 
 def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
     """Register chat, turn streaming, co-op SSE/presence, clocks, and campaign routes."""
-    from turnloop import ChatTreeStore, compute_party_grouping, load_llm_settings
+    from turn_engine import ChatTreeStore, compute_party_grouping, load_llm_settings
 
     def _allowed_channels_for(
         campaign_id: str,
@@ -481,7 +481,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
-        from turnloop import ChatTreeStore, TurnEngine
+        from turn_engine import ChatTreeStore, TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("user_text"), str):
@@ -614,7 +614,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         blocked = ctx.check_mutable_origin(request, request_id, require_json=True)
         if blocked is not None:
             return blocked
-        from turnloop import ChatTreeStore
+        from turn_engine import ChatTreeStore
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("character_id"), str):
@@ -814,7 +814,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         eff_role = ctx.effective_role(request, sess)
         is_gm = ctx.can_view_gm_private_state(request, sess)
         uname = str(sess.get("username") or "").strip()
-        from turnloop import TurnEngine
+        from turn_engine import TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not isinstance(body.get("message_id"), str):
@@ -891,7 +891,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to compress campaign memory.", "request_id": request_id})
         eff_role = ctx.effective_role(request, sess)
-        from turnloop import TurnEngine
+        from turn_engine import TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("campaign_id"), str) or not body["campaign_id"].strip():
@@ -916,7 +916,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         sess = ctx.session(request)
-        from turnloop import TurnEngine
+        from turn_engine import TurnEngine
         try:
             eng = TurnEngine(ctx.gameplay_service(), None, settings_path=ctx.resolved_settings_path())
             if ctx.can_view_gm_private_state(request, sess):
@@ -936,7 +936,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify world clocks.", "request_id": request_id})
-        from turnloop import TurnEngine
+        from turn_engine import TurnEngine
         try:
             body = await request.json()
             if not isinstance(body, dict):
@@ -1006,7 +1006,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify NPC identities.", "request_id": request_id})
-        from turnloop import TurnEngine, _normalize_campaign_changes, build_npc_profiles
+        from turn_engine import TurnEngine, _normalize_campaign_changes, build_npc_profiles
         try:
             body = await request.json()
             if not isinstance(body, dict):
@@ -1087,7 +1087,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         sess = ctx.session(request)
         eff_role = ctx.effective_role(request, sess)
         uname = str(sess.get("username") or "").strip().lower()
-        from turnloop import ChatTreeStore, _normalize_campaign_changes, _resolve_character, compute_party_grouping
+        from turn_engine import ChatTreeStore, _normalize_campaign_changes, _resolve_character, compute_party_grouping
         try:
             body = await request.json()
             if not isinstance(body, dict):
@@ -1182,7 +1182,7 @@ def register_chat_routes(app: FastAPI, ctx: ServerContext) -> None:
         if not ctx.can_view_gm_private_state(request, sess):
             return JSONResponse(status_code=403, content={"detail": "Admin permission required to modify campaign setup.", "request_id": request_id})
         from library import CampaignLibrary
-        from turnloop import (
+        from turn_engine import (
             TurnEngine,
             _encode_npc_identities_json,
             encode_campaign_meta_json,

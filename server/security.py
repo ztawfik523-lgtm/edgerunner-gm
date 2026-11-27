@@ -254,7 +254,7 @@ class ServerContext:
     def resolved_settings_path(self) -> Path:
         if self.settings_path is not None:
             return Path(self.settings_path)
-        from turnloop import default_settings_path
+        from turn_engine import default_settings_path
         return default_settings_path()
 
     def campaign_db_path(self) -> Path:
@@ -302,7 +302,7 @@ class ServerContext:
         return request.state.redgm_session
 
     def current_allowed_origins(self) -> set[str]:
-        from turnloop import load_server_settings
+        from turn_engine import load_server_settings
         origins = set(self.cli_origins)
         origins.update(load_server_settings(self.resolved_settings_path()).get("allowed_origins") or [])
         return origins
@@ -376,7 +376,7 @@ class ServerContext:
             raise PermissionError("Admin privileges required for per-request LLM overrides")
         if self.llm is not None:
             return self.llm
-        from turnloop import LLMConfig, OpenAICompatibleLLM, load_llm_settings
+        from turn_engine import LLMConfig, OpenAICompatibleLLM, load_llm_settings
         saved = load_llm_settings(self.resolved_settings_path())
         merged = dict(saved)
         filtered = self.filter_llm_override_for_role(cfg_raw, eff_role=eff_role)
@@ -582,7 +582,7 @@ def create_server_context(
 ) -> ServerContext:
     """Initialize auth, settings, CORS/limit middleware, and shared ServerContext."""
     from auth import AuthManager
-    from turnloop import default_settings_path
+    from turn_engine import default_settings_path
 
     resolved_settings = Path(settings_path) if settings_path is not None else default_settings_path()
     auth = AuthManager(

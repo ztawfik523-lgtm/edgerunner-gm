@@ -43,7 +43,7 @@ def _check_auth_origin(ctx: ServerContext, request: Request, request_id: str) ->
 def register_settings_routes(app: FastAPI, ctx: ServerContext) -> None:
     """Register auth, corebook, search/lookup, settings, health, and network endpoints."""
     from auth import AuthError, AuthRateLimitError, _secret_eq
-    from turnloop import (
+    from turn_engine import (
         DEFAULT_PROMPT_TEMPLATES,
         load_llm_settings,
         load_prompt_settings,

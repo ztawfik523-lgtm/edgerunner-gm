@@ -1,6 +1,6 @@
 # Gameplay & Mechanics Tools
 
-The backend owns dice rolls, skill checks, character stats, HP, Humanity, LUCK, money, inventory, and undo history. The AI GM applies changes during play through the two-pass turn loop (`turnloop.py`) or tool calls, recording before/after snapshots for every mutation.
+The backend owns dice rolls, skill checks, character stats, HP, Humanity, LUCK, money, inventory, and undo history. The AI GM applies changes during play through the two-pass turn loop (`turn_engine/`) or tool calls, recording before/after snapshots for every mutation.
 
 ## Interfaces
 

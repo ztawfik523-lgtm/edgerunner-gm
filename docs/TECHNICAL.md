@@ -11,7 +11,7 @@ For user-facing setup and gameplay instructions, see [README.md](../README.md) a
 | Path | Responsibility |
 | :--- | :--- |
 | [redkb.py](../redkb.py) | FastAPI HTTP server, CLI entry point, PDF indexer (`build_index`), BM25/RRF search, Corebook upload worker, and stdio MCP server |
-| [turnloop.py](../turnloop.py) | OpenAI-compatible LLM adapter, settings/prompt persistence (`settings.json`), branching chat tree, and two-pass / single-pass turn loop |
+| [turn_engine/](../turn_engine/) | OpenAI-compatible LLM adapter, settings/prompt persistence (`settings.json`), branching chat tree, and two-pass / single-pass turn loop |
 | [library.py](../library.py) | Corebook `rule_entries` materializer and campaign-scoped homebrew catalog |
 | [campaign.py](../campaign.py), [gameplay.py](../gameplay.py), [mechanics.py](../mechanics.py) | SQLite campaign store (`campaign.sqlite`), `d10`/`d6` rolls, skill checks, wound penalties, and undo history |
 | [creation.py](../creation.py), [creation_reference.py](../creation_reference.py), [creation_catalog.py](../creation_catalog.py) | Character creation validation, BYOC reference assembly, gear catalogs, and AI narrative co-writer |

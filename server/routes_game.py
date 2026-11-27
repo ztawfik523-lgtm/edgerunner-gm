@@ -247,7 +247,7 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                 )
                 if action_name == "start_session" and isinstance(res_out.get("result"), dict):
                     try:
-                        from turnloop import ChatTreeStore
+                        from turn_engine import ChatTreeStore
                         camp_obj = res_out["result"]
                         sess_num = int(camp_obj.get("session_number") or 1)
                         target_camp = camp_id or camp_obj.get("id")
@@ -270,14 +270,14 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
                         pass
                 if auto_revision and camp_id and action_name not in read_only_actions:
                     try:
-                        from turnloop import ChatTreeStore
+                        from turn_engine import ChatTreeStore
                         ChatTreeStore(svc).sync_all_active_leaf_revisions(camp_id)
                     except Exception:
                         pass
                 if action_name == "campaign_context" and isinstance(res_out.get("result"), dict):
                     ctx_res = res_out["result"]
                     try:
-                        from turnloop import (
+                        from turn_engine import (
                             TurnEngine,
                             build_npc_profiles,
                             compute_party_grouping,

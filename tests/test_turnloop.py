@@ -17,7 +17,7 @@ from gameplay import GameplayService
 import redkb
 from server.coop import _CoopHub
 from tests.test_library import _create_rules_db
-from turnloop import ChatTreeStore, LLMConfig, OpenAICompatibleLLM, TurnEngine
+from turn_engine import ChatTreeStore, LLMConfig, OpenAICompatibleLLM, TurnEngine
 
 
 class ScriptedLLM:
@@ -1215,7 +1215,7 @@ async def test_start_encounter_normalizes_actors_and_failure_ledger(tmp_path: Pa
 @pytest.mark.anyio
 async def test_gm_thinking_mode_balanced_and_quality(tmp_path: Path):
     import httpx
-    from turnloop import LLMConfig, OpenAICompatibleLLM, _validate_llm_settings
+    from turn_engine import LLMConfig, OpenAICompatibleLLM, _validate_llm_settings
 
     assert _validate_llm_settings({"gm_thinking_mode": "balanced"})["gm_thinking_mode"] == "balanced"
     with pytest.raises(ValueError, match="gm_thinking_mode"):
@@ -1261,7 +1261,7 @@ async def test_gm_thinking_mode_balanced_and_quality(tmp_path: Path):
 
 
 def test_delete_message_single_and_branch_preserves_active_invariants(tmp_path: Path):
-    from turnloop import ChatTreeStore
+    from turn_engine import ChatTreeStore
 
     _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
     tree = ChatTreeStore(svc)
@@ -1297,7 +1297,7 @@ def test_delete_message_single_and_branch_preserves_active_invariants(tmp_path: 
 @pytest.mark.anyio
 async def test_intro_turn_uses_dedicated_prompt_token_limit_and_reports_generation_stats(tmp_path: Path):
     import httpx
-    from turnloop import LLMConfig, OpenAICompatibleLLM
+    from turn_engine import LLMConfig, OpenAICompatibleLLM
 
     seen_payloads: list[dict[str, object]] = []
 
@@ -1344,7 +1344,7 @@ async def test_intro_turn_uses_dedicated_prompt_token_limit_and_reports_generati
 @pytest.mark.anyio
 async def test_coop_gatekeeper_manual_chat_roll_identity_privacy_and_ownership(tmp_path: Path):
     import httpx
-    from turnloop import _summarize_character
+    from turn_engine import _summarize_character
 
     rules_db, camp_db, svc, camp_id, char_id = _seed_campaign(tmp_path)
 
@@ -1728,7 +1728,7 @@ async def test_npc_privacy_user_account_update_and_split_scene_channels(tmp_path
 
 
 def test_summarize_character_equipped_and_anti_rain_prompt():
-    from turnloop import DEFAULT_PROMPT_TEMPLATES, _summarize_character
+    from turn_engine import DEFAULT_PROMPT_TEMPLATES, _summarize_character
 
     summary = _summarize_character({
         "id": "c-eq-1",
@@ -1757,7 +1757,7 @@ def test_summarize_character_equipped_and_anti_rain_prompt():
 
 
 def test_expanded_style_length_pacing_and_npc_personality_recall(tmp_path: Path):
-    from turnloop import (
+    from turn_engine import (
         _GM_STYLE_HINTS,
         _LENGTH_HINTS,
         _PACING_HINTS,
@@ -1817,7 +1817,7 @@ def test_expanded_style_length_pacing_and_npc_personality_recall(tmp_path: Path)
 
 
 def test_session_zero_and_campaign_meta_flow_into_turnloop_prompts(tmp_path):
-    from turnloop import encode_campaign_meta_json, encode_session_zero_json
+    from turn_engine import encode_campaign_meta_json, encode_session_zero_json
 
     _, _, svc, camp_id, _ = _seed_campaign(tmp_path)
     camp = svc.memory.get_campaign(camp_id)
@@ -1862,7 +1862,7 @@ def test_session_zero_and_campaign_meta_flow_into_turnloop_prompts(tmp_path):
 
 
 def test_stream_sanitizer_and_strip_gm_tags_hardening():
-    from turnloop import StreamSanitizer, strip_gm_tags
+    from turn_engine import StreamSanitizer, strip_gm_tags
 
     # strip_gm_tags strips closed & unclosed <think>, <gm_ops>, and [[GM_STATE:...]]
     assert strip_gm_tags("<THINK>hidden</think>\n\nNeon rain.") == "Neon rain."
@@ -1929,7 +1929,7 @@ def test_stream_sanitizer_and_strip_gm_tags_hardening():
 
 
 def test_extract_gm_plan_balanced_braces_think_and_fences():
-    from turnloop import extract_gm_plan
+    from turn_engine import extract_gm_plan
 
     # Empty / non-JSON / unclosed <think> return None, while valid {} returns {}
     assert extract_gm_plan("") is None
@@ -1976,7 +1976,7 @@ def test_extract_gm_plan_balanced_braces_think_and_fences():
 @pytest.mark.anyio
 async def test_openai_compatible_llm_resilience_and_metadata(monkeypatch):
     import asyncio
-    from turnloop import LLMConfig, OpenAICompatibleLLM
+    from turn_engine import LLMConfig, OpenAICompatibleLLM
 
     # Default max_tokens aligned with settings._default_llm_dict
     assert LLMConfig().max_tokens == 2400
@@ -2291,7 +2291,7 @@ async def test_execute_solo_op_combat_outcomes_gear_and_roll_sanitization(tmp_pa
 
 
 def test_format_roll_ledger_tied_dv_and_solo_results():
-    from turnloop import format_roll_ledger
+    from turn_engine import format_roll_ledger
 
     tied = {
         "outcomes": {
@@ -2448,7 +2448,7 @@ async def test_overclock_luck_default_actor_targeting_and_emp_sync(tmp_path: Pat
 
 
 def test_resolve_character_strictness_and_npc_checks(tmp_path: Path):
-    from turnloop import _resolve_character
+    from turn_engine import _resolve_character
 
     _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
     c1 = svc.store.get_character(char_id)
@@ -2532,7 +2532,7 @@ def test_verify_skill_non_string_guard_and_static_fallback(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_smart_gm_router_mixed_ooc_solo_punctuation_and_deferred_clear(tmp_path: Path):
-    from turnloop import should_gm_intervene
+    from turn_engine import should_gm_intervene
 
     _, _, svc, camp_id, c1_id = _seed_campaign(tmp_path)
     c1 = svc.store.get_character(c1_id)
@@ -3068,7 +3068,7 @@ def test_split_party_channel_seeds_private_state_from_main_leaf(tmp_path: Path):
 
 
 def test_merge_gm_secrets_pins_npc_real_keys_during_eviction():
-    from turnloop import BranchPrivateStateStore
+    from turn_engine import BranchPrivateStateStore
 
     current = {"__npc_real:Vex": "Viktor K.", "__npc_real:Nyx": "Nadia R."}
     updates = {f"note_{i}": f"Secret note {i}" for i in range(60)}
@@ -3216,7 +3216,7 @@ def test_sync_all_active_leaf_revisions(tmp_path: Path):
 
 def test_normalize_campaign_changes_protects_internal_keys_and_enforces_caps(tmp_path: Path):
     from campaign import _json
-    from turnloop import _encode_party_locations_json, _normalize_campaign_changes, parse_npc_identities_public
+    from turn_engine import _encode_party_locations_json, _normalize_campaign_changes, parse_npc_identities_public
 
     _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
     ctx = svc.campaign_context(camp_id)
@@ -3464,7 +3464,7 @@ async def test_failed_narration_keeps_executed_turn_and_retry_does_not_reapply(t
 
 
 def test_settings_per_key_fault_tolerance(tmp_path: Path):
-    from turnloop import (
+    from turn_engine import (
         DEFAULT_PROMPT_TEMPLATES,
         load_llm_settings,
         load_prompt_settings,

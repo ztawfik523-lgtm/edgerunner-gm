@@ -17,7 +17,7 @@ import uuid
 from typing import Any, Callable, ContextManager
 
 from index_lock import index_lock
-from turnloop import _SETTINGS_LOCK, default_settings_path, read_settings_doc, write_settings_doc
+from turn_engine import _SETTINGS_LOCK, default_settings_path, read_settings_doc, write_settings_doc
 
 _TOKEN_TTL_SECONDS = 7 * 24 * 3600
 _MAX_LOGIN_FAILURES = 12

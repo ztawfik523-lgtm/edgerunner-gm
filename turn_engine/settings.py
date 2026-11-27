@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sys
 import tempfile
 import threading
 from typing import Any
@@ -27,11 +26,6 @@ def default_settings_path() -> Path:
     env_override = os.environ.get("REDGM_SETTINGS_FILE", "").strip()
     if env_override:
         return Path(env_override).expanduser()
-    facade = sys.modules.get("turnloop")
-    if facade is not None:
-        facade_path = getattr(facade, "DEFAULT_SETTINGS_PATH", None)
-        if facade_path is not None and facade_path != DEFAULT_SETTINGS_PATH:
-            return Path(facade_path).expanduser()
     return DEFAULT_SETTINGS_PATH.expanduser()
 
 

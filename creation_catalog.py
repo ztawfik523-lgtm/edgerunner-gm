@@ -1382,7 +1382,7 @@ async def generate_creation_ai_assist(
         "lifepath": {k: v for k, v in lifepath.items() if k not in {"friends", "enemies", "tragic_love_affairs"} and v},
     }
 
-    from turnloop import DEFAULT_PROMPT_TEMPLATES, load_llm_settings, load_prompt_settings
+    from turn_engine import DEFAULT_PROMPT_TEMPLATES, load_llm_settings, load_prompt_settings
 
     resolved_settings = Path(settings_path) if settings_path else None
     prompt_cfg = load_prompt_settings(resolved_settings) if resolved_settings is not None else dict(DEFAULT_PROMPT_TEMPLATES)

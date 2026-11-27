@@ -2,7 +2,7 @@
 
 ## Authority and Scope
 
-- **Status:** Implemented backend runtime in [library.py](../library.py), [turnloop.py](../turnloop.py), and [redkb.py](../redkb.py), built specifically to power the custom React Web UI (`ui/`) without requiring SillyTavern or a specific LLM.
+- **Status:** Implemented backend runtime in [library.py](../library.py), [turn_engine/](../turn_engine/), and [redkb.py](../redkb.py), built specifically to power the custom React Web UI (`ui/`) without requiring SillyTavern or a specific LLM.
 - **Database boundary (BYOC):** Official indexed Corebook entries live read-only/derived inside `rules.sqlite` (optional under Bring-Your-Own-Corebook; when absent, `/health` reports `rules_indexed: false` and structured reference catalogs in `corebook_gm_data.py` / `creation_catalog.py` plus campaign homebrew remain active); all campaign-created homebrew entries, message trees, dice rolls, character sheets, and audit trails live in `campaign.sqlite`.
 
 ---
@@ -28,7 +28,7 @@ Every entry returned by `search_library` / `get_library_entry` / `/v1/library` h
 
 ---
 
-## 2. AI Turn Loop & Message Tree ([turnloop.py](../turnloop.py))
+## 2. AI Turn Loop & Message Tree ([turn_engine/](../turn_engine/))
 
 ### Model-Agnostic LLM Adapter (`OpenAICompatibleLLM` + `LLMConfig`)
 - Connects via `httpx` to any OpenAI-compatible `/v1/chat/completions` endpoint (Ollama, llama.cpp, KoboldCpp, OpenRouter, or cloud APIs) with configurable `base_url`, `model`, `api_key`, `temperature`, `max_tokens`, `timeout_s`, and `mode`.
@@ -93,8 +93,8 @@ When built (`ui/dist/index.html` present), [redkb.py](../redkb.py) also serves t
 ### Turn Loop Mechanics & Memory Extensions
 
 - **Categories & Upsert ([library.py](../library.py)):** `ALLOWED_CATEGORIES` includes `npc`, `faction`, and `location` alongside gear/cyberware/skills/rules, and `CampaignLibrary.upsert_entry` updates or inserts named dossiers cleanly.
-- **Pre-Roll `luck_spend`, Time & `solo_ops` ([turnloop.py](../turnloop.py), [lifecycle.py](../lifecycle.py)):** `TurnEngine.run_turn` (and `regenerate_turn` for a not-yet-resolved turn) accept `luck_spend` (committed on the primary check only when a check executes), Planner `time_elapsed_minutes` / `SoloService.advance_time` syncing `runtime.clock_minutes` with character `detail.clock_minutes`, and `solo_ops` routed through `SoloService.execute`. For live `OpenAICompatibleLLM` calls, a 3rd post-turn Chronicler pass reconciles newly narrated NPCs/clues/time after streaming completes, with 429/503 retry backoff.
-- **Branch-Scoped Private State & Clocks ([turnloop.py](../turnloop.py)):** `turn_gm_snapshots` isolates `gm_secrets` and `campaign_clocks` (`public` vs `secret`) per timeline leaf across regenerates/branches/forks; `compress_memory()` updates `campaign_compressions` and `[Category: Name]` auto-retrieval citations without exposing `gm_secrets`.
+- **Pre-Roll `luck_spend`, Time & `solo_ops` ([turn_engine/](../turn_engine/), [lifecycle.py](../lifecycle.py)):** `TurnEngine.run_turn` (and `regenerate_turn` for a not-yet-resolved turn) accept `luck_spend` (committed on the primary check only when a check executes), Planner `time_elapsed_minutes` / `SoloService.advance_time` syncing `runtime.clock_minutes` with character `detail.clock_minutes`, and `solo_ops` routed through `SoloService.execute`. For live `OpenAICompatibleLLM` calls, a 3rd post-turn Chronicler pass reconciles newly narrated NPCs/clues/time after streaming completes, with 429/503 retry backoff.
+- **Branch-Scoped Private State & Clocks ([turn_engine/](../turn_engine/)):** `turn_gm_snapshots` isolates `gm_secrets` and `campaign_clocks` (`public` vs `secret`) per timeline leaf across regenerates/branches/forks; `compress_memory()` updates `campaign_compressions` and `[Category: Name]` auto-retrieval citations without exposing `gm_secrets`.
 
 ---
 

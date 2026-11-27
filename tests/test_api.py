@@ -492,7 +492,7 @@ def test_server_side_player_redaction_across_tree_sse_coop_and_game(tmp_path: Pa
         redact_state_patch,
     )
     from tests.test_library import _create_rules_db
-    from turnloop import LLMConfig
+    from turn_engine import LLMConfig
 
     # 1. Unit tests for redaction helpers
     sample_patch = {
