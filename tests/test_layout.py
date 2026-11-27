@@ -29,8 +29,9 @@ def test_extracts_normalized_source_cells_and_preserves_empty_cells():
     table = FakeTable([[" A\n B ", None], ["C", " D  E"], ["F", "G"]])
     page = FakePage([table])
     assert layout.extract_tables(page) == [
-        {"bbox": (1, 2, 3, 4), "rows": [["A B", ""], ["C", "D E"], ["F", "G"]]}
+        {"bbox": [1.0, 2.0, 3.0, 4.0], "rows": [["A\nB", ""], ["C", "D E"], ["F", "G"]]}
     ]
+    assert layout.cell_text("A\nB") == "A B"
     assert page.strategy == "lines"
 
 
@@ -47,17 +48,3 @@ def test_rejects_tables_without_two_populated_rows():
 def test_requires_at_least_two_rows_and_columns():
     page = FakePage([FakeTable([["a", "b"]]), FakeTable([["a"], ["b"]])])
     assert layout.extract_tables(page) == []
-
-
-def test_serialization_numbers_tables_and_keeps_empty_cells():
-    tables = [
-        {"bbox": (0, 0, 1, 1), "rows": [["Name", "Value"], ["item", ""]]},
-        {"bbox": (1, 1, 2, 2), "rows": [["left", "right"]]},
-    ]
-    assert layout.table_text(tables) == (
-        "Table 1:\nName | Value\nitem | \n\nTable 2:\nleft | right"
-    )
-
-
-def test_empty_serialization_is_empty():
-    assert layout.table_text([]) == ""

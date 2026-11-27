@@ -768,7 +768,8 @@ def test_corebook_upload_and_expanded_settings_prompts(tmp_path, monkeypatch):
     # Build a small valid in-memory PDF with PyMuPDF
     doc = pymupdf.open()
     p1 = doc.new_page()
-    p1.insert_text((72, 72), "129\nSkill Checks\nRoll 1d10 + STAT + Skill against a DV.")
+    p1.insert_text((72, 72), "Skill Checks\nRoll 1d10 + STAT + Skill against a DV.")
+    p1.insert_text((30, p1.rect.height - 30), "129")
     pdf_bytes = doc.tobytes()
     doc.close()
 
@@ -1119,7 +1120,7 @@ def test_admin_and_pin_only_permission_gates(tmp_path: Path, monkeypatch):
 
 
 def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monkeypatch):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite", materialize=True)
+    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
     camp_db = tmp_path / "campaign.sqlite"
     settings_path = tmp_path / "settings.json"
     monkeypatch.setenv("REDGM_SETTINGS_FILE", str(settings_path))
@@ -1252,10 +1253,8 @@ def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monk
             "INSERT OR REPLACE INTO pages(pdf_page, printed_page, header, text, chars) VALUES(74, 73, '', ?, ?)",
             (p74_txt, len(p74_txt)),
         )
-        rconn.execute(
-            "INSERT OR REPLACE INTO pages(pdf_page, printed_page, header, text, chars) VALUES(83, 82, '', ?, ?)",
-            (defs, len(defs)),
-        )
+    from tests.rules_fixture import add_skill_definitions
+    add_skill_definitions(rules_db, defs.splitlines())
 
     created_pc_res = client.post(
         "/v1/game",

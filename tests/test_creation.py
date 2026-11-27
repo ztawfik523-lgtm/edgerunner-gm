@@ -26,12 +26,11 @@ def rules(tmp_path):
     skills += "\n".join(f"| Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 | Skill {i} | 4 |" for i in range(20))
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     definitions = "\n".join(f"{name}........INT" for name in basics + [f"Skill {i}" + (" (x2)" if i == 0 else "") for i in range(20)])
-    with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE metadata(key TEXT, value TEXT)")
-        db.execute("INSERT INTO metadata VALUES('source_sha256','test-digest')")
-        db.execute("CREATE TABLE pages(pdf_page INTEGER, printed_page INTEGER, text TEXT)")
-        db.execute("INSERT INTO pages VALUES(74, 73, ?)", (text + "\n" + skills,))
-        db.execute("INSERT INTO pages VALUES(83, 82, ?)", (definitions,))
+    from tests import rules_fixture as rf
+    rf.build(path, [
+        rf.page(74, 73, [rf.block(text, 80), rf.block(skills, 400)]),
+        rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(definitions.splitlines())]),
+    ], digest="test-digest")
     return path
 
 
@@ -160,13 +159,12 @@ def test_exec_empty_separator_and_creation_reference(tmp_path):
         )
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     defs = "\n".join(f"{name}........INT" for name in basics + exec_names)
-    with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE metadata(key TEXT, value TEXT)")
-        db.execute("INSERT INTO metadata VALUES('source_sha256','exec-digest')")
-        db.execute("CREATE TABLE pages(pdf_page INTEGER, printed_page INTEGER, text TEXT)")
-        db.execute("INSERT INTO pages VALUES(78, 77, ?)", (text,))
-        db.execute("INSERT INTO pages VALUES(83, 82, ?)", (defs,))
-        db.execute("INSERT INTO pages VALUES(88, 87, ?)", (skills,))
+    from tests import rules_fixture as rf
+    rf.build(path, [
+        rf.page(78, 77, [rf.block(text, 80)]),
+        rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(defs.splitlines())]),
+        rf.page(88, 87, [rf.block(skills, 80)]),
+    ], digest="exec-digest")
 
     ref = build_creation_reference(path)
     assert ref["rules_indexed"] is True

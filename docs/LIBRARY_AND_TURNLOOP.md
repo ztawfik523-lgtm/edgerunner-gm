@@ -9,17 +9,21 @@
 
 ## 1. Organized Rulebook Library ([library.py](../library.py))
 
-### Corebook Materialization & Caching
-- **Build once on index:** `build_index` in `redkb.py` automatically calls `library.build_library(conn)` after writing index metadata, populating `rule_entries` and `rule_entries_fts` inside `rules.sqlite`.
-- **One-time upgrade for existing indexes:** Run `.venv/bin/python redkb.py build-library` (`materialize_library`) under `index_lock` to materialize tables without re-extracting the PDF.
-- **Unmaterialized DB fallback:** If queried against an older read-only `rules.sqlite` that lacks `rule_entries`, entries are extracted once and cached in memory keyed by `(path, mtime_ns, size, source_sha256)`.
+### Corebook Extraction & Materialization
+- **One layout pass:** `build_index` in `redkb.py` reads each PDF page once (`layout.read_page`: text blocks with font size/bold, line-detected tables) and hands everything to `write_index`. Cells keep their intra-cell line breaks.
+- **Structural cleanup (no page-number recipes):** line-break hyphenation is repaired against the book's own vocabulary; drop caps are re-attached; edge-of-page page numbers and running headers (margin strings repeated across pages in the modal margin font size), artist credits and doubled render layers are tagged in `source_blocks.role` and kept out of page text, passages and excerpts. Printed page numbers come from the edge page-number block.
+- **Sections:** outline entries are anchored to their heading block near the outline target (`source_sections.anchor_ordinal`/`end_ordinal`, `level`, `parent_id`, `kind` = `section`/`sidebar`), so a section's text runs from its heading block to the next section heading.
+- **Tables:** `sourcecatalog.REGISTRY` classifies tables by column-header signature; `rule_tables` stores every normalized table (kind, caption title, section, columns, rows, continuation-row notes).
+- **Entries:** `library.build_library(conn)` materializes `rule_entries` (+ `rule_entries_fts`) from skills (dot-leader headers), catalog tables, outline sections, roles (description, ability, skills, Streetrat skill levels, STAT templates, starter kits) and mapped outline nodes (corporations, districts, martial arts forms). `rule_entries.source_json` keeps the source table id, columns and cells.
+- **No unmaterialized fallback:** request-time readers only read the materialized tables; an index without them must be rebuilt. Optional reranker activation survives a rebuild; stale `*.building-*` files from a killed build are removed at the start of the next build (under the index lock).
+- **Readers:** `sourcecatalog.entries(path, category)` / `library.list_category` (all rows, no cap), `sourcecatalog.items` (priced entries keyed by entry id), `sourcecatalog.skills`, `sourcecatalog.roles`, `sourcecatalog.rule_tables(path, kind)`.
 
 ### Entry Schema & Categories
 Every entry returned by `search_library` / `get_library_entry` / `/v1/library` has a uniform JSON shape:
-- **Categories (`ALLOWED_CATEGORIES`):** `skill`, `weapon`, `armor`, `cyberware`, `program`, `hardware`, `gear`, `fashion`, `role`, `rule`
+- **Categories (`ALLOWED_CATEGORIES`):** `skill`, `weapon`, `armor`, `cyberware`, `program`, `hardware`, `gear`, `fashion`, `drug`, `ammo`, `attachment`, `vehicle`, `service`, `housing`, `faction`, `location`, `role`, `rule` (plus campaign-only dossier categories)
 - **Fields:** `id`, `name`, `category`, `source` (`"corebook"` or `"homebrew"`), `created_by` (`"corebook"`, `"user"`, `"gm"`, or `"ai"`), `summary`, `description`, `stats`, `tags`, `pdf_page`, `printed_page`, `section_id`, `source_sha256`, `campaign_id`
-- **Skills (pp. 82–85):** Attach the full prose description beneath each dot-leader header plus `stats` (`stat`, `cost_multiplier`, `specializable`).
-- **Gear / Cyberware / Weapons / Armor:** Parse structured columns into `stats` (`cost_eb`, `damage`, `rof`, `sp`, `armor_penalty`, `humanity_loss`, `install`, `skill`, `magazine`, `hands`, `concealable`) alongside descriptions and page numbers.
+- **Skills:** Pages carrying several dot-leader `Name.....STAT` headers define skills; each skill keeps its longest description plus `stats` (`stat`, `cost_multiplier`, `specializable`).
+- **Catalog entries:** Real Corebook column headers map into normalized `stats` (`cost_eb`, `price_category`, `damage`, `rof`, `magazine`, `ammo_type`, `hands`, `concealable`, `sp`, `armor_penalty`, `humanity_loss` dice + `hl` average, `install`, `class`/`atk`/`def`/`rez`, …). Brand weapons combine the quality-cost and brand-example tables with the base weapon rows.
 
 ### Campaign-Scoped Homebrew (`CampaignLibrary`)
 - Stores custom user/GM/AI creations in `campaign_library` inside `campaign.sqlite`, isolated per `campaign_id`.

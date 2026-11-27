@@ -1,21 +1,14 @@
-import json
-import sqlite3
-
 from gear import apply_action
+from tests import rules_fixture as rf
 
 
 def rules_db(path):
-    with sqlite3.connect(path) as db:
-        db.executescript("CREATE TABLE metadata(key TEXT,value TEXT); CREATE TABLE pages(pdf_page INTEGER,printed_page INTEGER,text TEXT); CREATE TABLE source_tables(pdf_page INTEGER,ordinal INTEGER,bbox_json TEXT,cells_json TEXT);")
-        db.execute("INSERT INTO metadata VALUES('source_sha256',?)", ('c' * 64,))
-        db.execute("INSERT INTO pages VALUES(200,199,'')")
-        rows = [
-            [["Name", "WeaponType", "Cost"], ["Medium Pistol", "Medium Pistol", "50eb"]],
-            [["Name", "ArmorType", "Cost", "SP", "ArmorPenalty"], ["Test Armor", "Armorjack", "100eb", "11", "2"]],
-            [["Name", "Cost"], ["Consumable", "20eb"]],
-        ]
-        db.executemany("INSERT INTO source_tables VALUES(?,?,NULL,?)",
-                       [(200, i, json.dumps(table)) for i, table in enumerate(rows, 1)])
+    rf.build(path, [rf.page(200, 199, [
+        rf.table([rf.RANGED_HEADER,
+                  ["Medium Pistol", "Handgun", "2d6", "12 (M Pistol)", "2", "1", "YES", "50eb (Costly)"]], 80),
+        rf.table([rf.ARMOR_HEADER, ["Test Armor", "Layered synthetic weave.", "11", "-2 REF, DEX, and MOVE", "100eb (Premium)"]], 200),
+        rf.table([rf.GEAR_HEADER, ["Consumable", "Single-use test supply.", "20eb (Everyday)"]], 320),
+    ])], digest="c" * 64)
 
 
 def test_canonical_purchase_price_and_deep_copy(tmp_path):
@@ -48,7 +41,7 @@ def test_rejects_unowned_or_arbitrary_catalog_data(tmp_path):
     path = tmp_path / "rules.sqlite"
     rules_db(path)
     from sourcecatalog import items
-    item_id = next(iter(items(path)))
+    item_id = next(k for k, v in items(path).items() if v["name"] == "Medium Pistol")
     import pytest
     with pytest.raises(ValueError, match="owned"):
         apply_action({}, "equip_weapon", {"item_id": item_id}, path, lambda n: 0)
@@ -57,54 +50,37 @@ def test_rejects_unowned_or_arbitrary_catalog_data(tmp_path):
 
 
 def _extended_rules_db(path):
-    with sqlite3.connect(path) as db:
-        db.executescript(
-            "CREATE TABLE metadata(key TEXT,value TEXT);"
-            "CREATE TABLE pages(pdf_page INTEGER,printed_page INTEGER,text TEXT);"
-            "CREATE TABLE source_tables(pdf_page INTEGER,ordinal INTEGER,bbox_json TEXT,cells_json TEXT);"
-        )
-        db.execute("INSERT INTO metadata VALUES('source_sha256',?)", ("d" * 64,))
-        db.execute("INSERT INTO pages VALUES(350,350,'')")
-        tables = [
-            [["Name", "WeaponType", "Cost"], ["Heavy Pistol", "Heavy Pistol", "100eb"]],
-            [
-                ["Armor Type", "Stopping Power (SP)", "Armor Penalty (Minimum 0)", "Cost"],
-                ["Leathers", "4", "None", "20eb"],
-                ["Kevlar", "7 SP", "-", "50eb"],
-                ["Light Armorjack", "11", "0", "100eb"],
-                ["Bodyweight Suit", "11", "None", "1000eb"],
-                ["Medium Armorjack", "12", "-2 REF, DEX, and MOVE", "100eb"],
-                ["Heavy Armorjack", "13", "-2", "500eb"],
-                ["Flak", "15", "-4 REF, DEX, and MOVE", "500eb"],
-                ["Metalgear", "18", "-4 REF, DEX, and MOVE", "5000eb"],
-                ["Bulletproof Shield", "10 HP shield", "Requires 1 arm", "100eb"],
-            ],
-            [
-                ["Name", "Slots", "Cost", "Description"],
-                ["Cyberdeck (Poor Quality)", "5", "100eb", "5-slot entry deck"],
-                ["Cyberdeck (Standard Quality)", "", "500eb", "Standard cyberdeck"],
-                ["Cyberdeck (Excellent Quality)", "9 Slots", "1000eb", "High-end 9-slot deck"],
-                ["Cyberdeck", "", "500eb", "Default slot cyberdeck"],
-            ],
-            [
-                ["Name", "Class", "REZ", "Cost"],
-                ["Eraser", "Booster", "7", "20eb"],
-                ["Speedygonzalez", "Booster", "7", "100eb"],
-                ["Armor", "Defender", "7", "50eb"],
-                ["Hellhound", "Black ICE", "20", "500eb"],
-            ],
-            [
-                ["Name", "Slots", "Cost"],
-                ["Backup Drive (Cyberdeck · 2 Slots)", "2", "100eb"],
-                ["Range Upgrade (Cyberdeck · 1 Slot)", "1", "100eb"],
-                ["KRASH Barrier", "2", "100eb"],
-            ],
-            [["Name", "Cost"], ["Kibble", "10eb"]],
-        ]
-        db.executemany(
-            "INSERT INTO source_tables VALUES(?,?,NULL,?)",
-            [(350, i, json.dumps(table)) for i, table in enumerate(tables, 1)],
-        )
+    rf.build(path, [rf.page(350, 350, [
+        rf.table([rf.RANGED_HEADER,
+                  ["Heavy Pistol", "Handgun", "3d6", "8 (H Pistol)", "2", "1", "YES", "100eb (Premium)"]], 60),
+        rf.table([rf.ARMOR_HEADER,
+                  ["Leathers", "Road leathers.", "4", "None", "20eb (Everyday)"],
+                  ["Kevlar", "Woven vest.", "7", "None", "50eb (Costly)"],
+                  ["Light Armorjack", "Mesh and plates.", "11", "None", "100eb (Premium)"],
+                  ["Bodyweight Suit", "Full skinsuit.", "11", "None", "1,000eb (V. Expensive)"],
+                  ["Medium Armorjack", "Heavier plates.", "12", "-2 REF, DEX, and MOVE", "100eb (Premium)"],
+                  ["Heavy Armorjack", "Thickest plates.", "13", "-2 REF, DEX, and MOVE", "500eb (Expensive)"],
+                  ["Flak", "Flak vest and pants.", "15", "-4 REF, DEX, and MOVE", "500eb (Expensive)"],
+                  ["Metalgear", "Rigid shell.", "18", "-4 REF, DEX and MOVE", "5,000eb (Luxury)"],
+                  ["Bulletproof Shield", "Transparent shield.", "10 HP, which is reduced by damage",
+                   "None, but always takes up one arm", "100eb (Premium)"]], 110),
+        rf.table([rf.GEAR_HEADER,
+                  ["Cyberdeck (Poor Quality)", "Entry deck. 5 slots.", "100eb (Premium)"],
+                  ["Cyberdeck (Standard Quality)", "Standard cyberdeck.", "500eb (Expensive)"],
+                  ["Cyberdeck (Excellent Quality)", "High-end deck. 9 slots.", "1,000eb (V. Expensive)"],
+                  ["Cyberdeck", "Default cyberdeck.", "500eb (Expensive)"],
+                  ["Kibble", "Dry rations.", "10eb (Cheap)"]], 300),
+        rf.table([rf.PROGRAM_HEADER,
+                  ["Eraser", "Booster", "0", "0", "7", "Boosts cloaking.", "20eb (Everyday)"],
+                  ["Speedygonzalez", "Booster", "0", "0", "7", "Boosts speed.", "100eb (Premium)"],
+                  ["Armor", "Defender", "0", "0", "7", "Reduces brain damage.", "50eb (Costly)"]], 420),
+        rf.table([rf.BLACK_ICE_HEADER,
+                  ["Hellhound", "Anti-Personnel Black ICE", "6", "6", "6", "2", "20", "Burns the intruder.", "500eb (Expensive)"]], 520),
+        rf.table([rf.HARDWARE_HEADER,
+                  ["Backup Drive (Cyberdeck · 2 Slots)", "Stores destroyed programs.", "100eb (Premium)"],
+                  ["Range Upgrade (Cyberdeck · 1 Slot)", "Longer access range.", "100eb (Premium)"],
+                  ["KRASH Barrier", "Blocks forced jack-outs.", "100eb (Premium)"]], 580),
+    ])])
 
 
 def test_equip_armor_corebook_headers_penalties_and_monotonic_index(tmp_path):
@@ -113,7 +89,7 @@ def test_equip_armor_corebook_headers_penalties_and_monotonic_index(tmp_path):
     from sourcecatalog import items
 
     catalog = items(path)
-    by_name = {v["name"]: k for k, v in catalog.items()}
+    by_name = {v["name"]: k for k, v in catalog.items() if v["category"] == "armor"}
     inv = {by_name[name]: 1 for name in (
         "Leathers", "Kevlar", "Light Armorjack", "Bodyweight Suit",
         "Medium Armorjack", "Heavy Armorjack", "Flak", "Metalgear", "Bulletproof Shield",

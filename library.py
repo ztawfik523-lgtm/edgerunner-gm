@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
-import threading
 import unicodedata
 from contextlib import closing
 from datetime import datetime, timezone
@@ -13,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from campaign import CampaignStore, STAT_NAMES, _json
-from index_lock import index_lock
 from memory import CampaignMemory
 import sourcecatalog
 
@@ -43,9 +40,6 @@ ALLOWED_CATEGORIES = frozenset(
         "encounter",
         "screamsheet",
     }
-)
-ROLE_NAMES = frozenset(
-    {"solo", "netrunner", "tech", "medtech", "media", "exec", "lawman", "fixer", "nomad", "rockerboy"}
 )
 _DICE_RE = re.compile(r"^\d{1,2}d(?:6|10)(?:\s*[+-]\s*\d{1,2})?$", re.I)
 _CATEGORY_ALIASES = {
@@ -77,10 +71,6 @@ _CATEGORY_ALIASES = {
     "exotics": "weapon",
 }
 
-_CACHE_LOCK = threading.Lock()
-_MEMORY_CACHE: dict[tuple[str, int, int, str], list[dict[str, Any]]] = {}
-
-
 def _slug(value: str) -> str:
     ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-") or "entry"
@@ -101,319 +91,30 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
 
 
-def _summarize(text: str, limit: int = 180) -> str:
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    if not cleaned:
-        return ""
-    sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0]
-    chosen = sentence if len(sentence) <= limit else cleaned
-    if len(chosen) <= limit:
-        return chosen
-    return chosen[: limit - 1].rstrip() + "…"
+_summarize = sourcecatalog._summarize
 
 
-def _clean_prose(lines: list[str]) -> str:
-    joined = "\n".join(line.strip() for line in lines if line.strip())
-    joined = re.sub(r"(\w)-\n(\w)", r"\1\2", joined)
-    joined = re.sub(r"\s*\n+\s*", " ", joined)
-    return re.sub(r"\s+", " ", joined).strip()
+def _hardcoded_topup(entries: list[dict[str, Any]], digest: str) -> None:
+    """TEMPORARY: append hand-typed catalog rows the extraction does not yet cover.
 
+    Delete this function and its single call in build_library once consumers
+    read rule_entries only.
+    """
+    import creation_catalog
 
-def _extract_skill_entries(
-    pages: list[sqlite3.Row], digest: str
-) -> list[dict[str, Any]]:
-    entries: list[dict[str, Any]] = []
-    seen_norm: set[str] = set()
-    current: dict[str, Any] | None = None
-    body_lines: list[str] = []
-
-    def flush() -> None:
-        nonlocal current, body_lines
-        if current is None:
-            return
-        desc = _clean_prose(body_lines)
-        stat = current["stat"]
-        cost = current["cost"]
-        specializable = current["specializable"]
-        if not desc:
-            spec_note = " Specializable skill." if specializable else ""
-            cost_note = " (2x Improvement Point cost)" if cost == 2 else ""
-            desc = f"{current['name']} ({stat}){cost_note}.{spec_note}".strip()
-        tags = ["skill", stat.lower()]
-        if cost == 2:
-            tags.append("x2")
-        if specializable:
-            tags.append("specializable")
-        entries.append(
-            {
-                "id": f"corebook:skill:{_slug(current['name'])}",
-                "name": current["name"],
-                "norm_name": sourcecatalog._normalize(current["name"]),
-                "category": "skill",
-                "source": "corebook",
-                "summary": _summarize(desc),
-                "description": desc,
-                "stats": {
-                    "stat": stat,
-                    "cost_multiplier": cost,
-                    "specializable": specializable,
-                },
-                "tags": tags,
-                "pdf_page": current["pdf_page"],
-                "printed_page": current["printed_page"],
-                "section_id": None,
-                "source_sha256": digest,
-            }
-        )
-        current = None
-        body_lines = []
-
-    for row in pages:
-        printed = row["printed_page"]
-        if printed is None:
-            printed = next(
-                (int(line.strip()) for line in str(row["text"]).splitlines()[:4]
-                 if re.fullmatch(r"8[2-5]", line.strip())),
-                None,
-            )
-        if printed is None or not 82 <= int(printed) <= 85:
+    seen_pairs = {(e["category"], e["norm_name"]) for e in entries}
+    seen_ids = {e["id"] for e in entries}
+    for cur in creation_catalog.build_library_corebook_entries(digest):
+        pair = (cur["category"], cur["norm_name"])
+        if pair in seen_pairs or cur["id"] in seen_ids:
             continue
-        for raw_line in str(row["text"]).splitlines():
-            stripped = raw_line.strip()
-            if not stripped or stripped == str(printed):
-                continue
-            match = sourcecatalog._HEADER.fullmatch(stripped)
-            if match:
-                raw_name, stat = match.groups()
-                cost = 2 if re.search(r"\(\s*x\s*2\s*\)\s*$", raw_name, re.I) else 1
-                name = re.sub(r"\s*\(\s*x\s*2\s*\)\s*$", "", raw_name, flags=re.I)
-                name = re.sub(r"[.\s]+$", "", name).strip()
-                norm = sourcecatalog._normalize(name)
-                flush()
-                if norm in seen_norm:
-                    continue
-                seen_norm.add(norm)
-                current = {
-                    "name": name,
-                    "norm_name": norm,
-                    "stat": stat.upper(),
-                    "cost": cost,
-                    "specializable": norm in sourcecatalog._SPECIALIZABLE,
-                    "pdf_page": int(row["pdf_page"]),
-                    "printed_page": int(printed),
-                }
-            elif current is not None:
-                if stripped.startswith("Supplemental extracted table rows"):
-                    continue
-                body_lines.append(stripped)
-    flush()
-    return entries
-
-
-def _parse_item_stats(headers: list[str], cells: list[str], cost_eb: int) -> tuple[dict[str, Any], list[str]]:
-    stats: dict[str, Any] = {"cost_eb": cost_eb}
-    notes: list[str] = []
-    for idx, header in enumerate(headers):
-        if idx >= len(cells):
-            break
-        val = cells[idx].strip()
-        if not val:
-            continue
-        norm_h = re.sub(r"[^a-z]", "", header.casefold())
-        if norm_h in {"name", "item", "weaponname", "cyberwarename", "weapontype", "meleeweapontype", "armortype", "cost", "price", "costeb", "priceeb"}:
-            continue
-        if norm_h in {"description", "notes", "effect", "data", "details", "examples"}:
-            notes.append(val)
-            continue
-        if norm_h in {"dmg", "damage"}:
-            stats["damage"] = val
-        elif norm_h == "rof":
-            stats["rof"] = int(val) if val.isdigit() else val
-        elif norm_h in {"sp", "stoppingpower"}:
-            stats["sp"] = int(val) if val.isdigit() else val
-        elif norm_h in {"penalty", "armorpenalty"}:
-            stats["armor_penalty"] = int(val) if re.fullmatch(r"-?\d+", val) else val
-        elif norm_h in {"hl", "humanityloss"}:
-            stats["humanity_loss"] = int(val) if val.isdigit() else val
-        elif norm_h in {"install", "installation"}:
-            stats["install"] = val
-        elif norm_h in {"skill", "weaponskill"}:
-            stats["skill"] = val
-        elif norm_h in {"magazine", "mag", "capacity"}:
-            stats["magazine"] = int(val) if val.isdigit() else val
-        elif norm_h in {"hands", "handsrequired"}:
-            stats["hands"] = int(val) if val.isdigit() else val
-        elif norm_h in {"concealable", "conceal", "concealability"}:
-            stats["concealable"] = val
-        elif norm_h in {"atk", "per", "def", "spd", "rez", "class"}:
-            stats[norm_h] = int(val) if re.fullmatch(r"-?\d+", val) else val
-        else:
-            key = re.sub(r"[^a-z0-9]+", "_", header.strip().casefold()).strip("_")
-            if key:
-                stats[key] = val
-    return stats, notes
-
-
-def _extract_item_entries(
-    conn: sqlite3.Connection, pages: list[sqlite3.Row], digest: str
-) -> list[dict[str, Any]]:
-    stored: dict[int, list[list[list[str]]]] = {}
-    if _table_exists(conn, "source_tables"):
-        for row in conn.execute("SELECT pdf_page,ordinal,cells_json FROM source_tables ORDER BY pdf_page,ordinal"):
-            stored.setdefault(int(row["pdf_page"]), []).append(sourcecatalog._cell_rows(row["cells_json"]))
-
-    entries: list[dict[str, Any]] = []
-    used_ids: set[str] = set()
-    for page in pages:
-        printed = sourcecatalog._page_number(page)
-        pdf_page = int(page["pdf_page"])
-        for table_no, rows in enumerate(sourcecatalog._tables_for_page(page, stored.get(pdf_page, [])), 1):
-            if len(rows) < 2:
-                continue
-            header_index = next(
-                (i for i, r in enumerate(rows)
-                 if any(re.sub(r"[^a-z]", "", c.casefold()) in {"cost", "price", "costeb", "priceeb"} for c in r)),
-                None,
-            )
-            if header_index is None:
-                continue
-            headers = rows[header_index]
-            norm_headers = [re.sub(r"[^a-z]", "", h.casefold()) for h in headers]
-            name_col = next(
-                (i for i, h in enumerate(norm_headers)
-                 if h in {"name", "item", "weaponname", "cyberwarename", "weapontype", "meleeweapontype", "armortype"}),
-                None,
-            )
-            cost_col = next(
-                (i for i, h in enumerate(norm_headers) if h in {"cost", "price", "costeb", "priceeb"}),
-                None,
-            )
-            if name_col is None or cost_col is None:
-                continue
-            category = sourcecatalog._category(headers)
-            for row_no, cells in enumerate(rows[header_index + 1:], header_index + 1):
-                if max(name_col, cost_col) >= len(cells):
-                    continue
-                name = cells[name_col].strip()
-                cost_eb = sourcecatalog._cost(cells[cost_col])
-                if not name or cost_eb is None:
-                    continue
-                stats, notes = _parse_item_stats(headers, cells, cost_eb)
-                stat_bits = [f"{k}={v}" for k, v in stats.items() if k != "cost_eb"]
-                desc = " ".join(notes).strip()
-                if not desc:
-                    details = f" ({', '.join(stat_bits)})" if stat_bits else ""
-                    desc = f"{name}: {category} priced at {cost_eb}eb{details}."
-                elif stat_bits:
-                    desc = f"{desc} [{', '.join(stat_bits)}, cost {cost_eb}eb]"
-                base_id = f"corebook:{category}:{_slug(name)}"
-                entry_id = base_id if base_id not in used_ids else f"{base_id}-p{pdf_page}-t{table_no}-r{row_no}"
-                used_ids.add(entry_id)
-                entries.append(
-                    {
-                        "id": entry_id,
-                        "name": name,
-                        "norm_name": sourcecatalog._normalize(name),
-                        "category": category,
-                        "source": "corebook",
-                        "summary": _summarize(desc),
-                        "description": desc,
-                        "stats": stats,
-                        "tags": [category, f"{cost_eb}eb"],
-                        "pdf_page": pdf_page,
-                        "printed_page": printed,
-                        "section_id": None,
-                        "source_sha256": digest,
-                    }
-                )
-    return entries
-
-
-def _extract_section_entries(
-    conn: sqlite3.Connection, pages_by_pdf: dict[int, sqlite3.Row], digest: str
-) -> list[dict[str, Any]]:
-    if not _table_exists(conn, "source_sections"):
-        return []
-    entries: list[dict[str, Any]] = []
-    rows = conn.execute(
-        "SELECT id,title,start_pdf,end_pdf,printed_start FROM source_sections ORDER BY start_pdf,id"
-    ).fetchall()
-    for row in rows:
-        title = str(row["title"]).strip()
-        if not title:
-            continue
-        start_pdf = int(row["start_pdf"])
-        end_pdf = int(row["end_pdf"])
-        printed_start = row["printed_start"]
-        page_row = pages_by_pdf.get(start_pdf)
-        excerpt = ""
-        if page_row is not None:
-            raw_lines = [
-                ln.strip()
-                for ln in str(page_row["text"]).splitlines()
-                if ln.strip() and not ln.strip().startswith("Supplemental extracted table rows")
-            ]
-            excerpt = _clean_prose(raw_lines[:18])
-        lower_title = title.casefold()
-        is_role = any(re.search(rf"\b{role}\b", lower_title) for role in ROLE_NAMES)
-        category = "role" if is_role else "rule"
-        desc = excerpt or f"{title} (pages {start_pdf}–{end_pdf})."
-        entries.append(
-            {
-                "id": f"corebook:{category}:{row['id']}",
-                "name": title,
-                "norm_name": sourcecatalog._normalize(title),
-                "category": category,
-                "source": "corebook",
-                "summary": _summarize(desc),
-                "description": desc[:2000],
-                "stats": {"start_pdf": start_pdf, "end_pdf": end_pdf},
-                "tags": [category, str(row["id"])],
-                "pdf_page": start_pdf,
-                "printed_page": int(printed_start) if printed_start is not None else None,
-                "section_id": str(row["id"]),
-                "source_sha256": digest,
-            }
-        )
-    return entries
-
-
-def _extract_all_entries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    old_factory = conn.row_factory
-    conn.row_factory = sqlite3.Row
-    try:
-        meta = dict(conn.execute("SELECT key,value FROM metadata"))
-        digest = meta.get("source_sha256")
-        if not digest:
-            raise ValueError("Rules index has no source_sha256 metadata")
-        pages = conn.execute("SELECT pdf_page,printed_page,text FROM pages ORDER BY pdf_page").fetchall()
-        pages_by_pdf = {int(r["pdf_page"]): r for r in pages}
-        entries: list[dict[str, Any]] = []
-        try:
-            entries.extend(_extract_skill_entries(pages, digest))
-        except ValueError:
-            pass
-        entries.extend(_extract_item_entries(conn, pages, digest))
-        entries.extend(_extract_section_entries(conn, pages_by_pdf, digest))
-
-        import creation_catalog
-
-        seen_pairs = {(e["category"], e["norm_name"]) for e in entries}
-        seen_ids = {e["id"] for e in entries}
-        for cur in creation_catalog.build_library_corebook_entries(digest):
-            pair = (cur["category"], cur["norm_name"])
-            if pair in seen_pairs or cur["id"] in seen_ids:
-                continue
-            seen_pairs.add(pair)
-            seen_ids.add(cur["id"])
-            entries.append(cur)
-        return entries
-    finally:
-        conn.row_factory = old_factory
+        seen_pairs.add(pair)
+        seen_ids.add(cur["id"])
+        entries.append(cur)
 
 
 def build_library(conn: sqlite3.Connection) -> int:
-    """Materialize rule_entries and rule_entries_fts inside an open writable rules SQLite connection."""
+    """Materialize rule_tables, rule_entries and rule_entries_fts inside an open writable rules connection."""
     conn.executescript(
         """
         DROP TABLE IF EXISTS rule_entries_fts;
@@ -431,7 +132,8 @@ def build_library(conn: sqlite3.Connection) -> int:
             pdf_page INTEGER,
             printed_page INTEGER,
             section_id TEXT,
-            source_sha256 TEXT NOT NULL
+            source_sha256 TEXT NOT NULL,
+            source_json TEXT NOT NULL DEFAULT '{}'
         );
         CREATE INDEX rule_entries_cat_idx ON rule_entries(category);
         CREATE INDEX rule_entries_norm_idx ON rule_entries(norm_name);
@@ -446,14 +148,17 @@ def build_library(conn: sqlite3.Connection) -> int:
         );
         """
     )
-    entries = _extract_all_entries(conn)
+    tables, entries = sourcecatalog.extract(conn)
+    sourcecatalog.write_rule_tables(conn, tables)
+    _hardcoded_topup(entries, entries[0]["source_sha256"] if entries else
+                     conn.execute("SELECT value FROM metadata WHERE key='source_sha256'").fetchone()[0])
     for entry in entries:
         conn.execute(
             """
             INSERT INTO rule_entries(
                 id, name, norm_name, category, source, summary, description,
-                stats_json, tags_json, pdf_page, printed_page, section_id, source_sha256
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                stats_json, tags_json, pdf_page, printed_page, section_id, source_sha256, source_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 entry["id"],
@@ -469,6 +174,7 @@ def build_library(conn: sqlite3.Connection) -> int:
                 entry["printed_page"],
                 entry["section_id"],
                 entry["source_sha256"],
+                _json(entry.get("source_ref") or {}),
             ),
         )
         stats_text = " ".join(f"{k} {v}" for k, v in entry["stats"].items())
@@ -486,24 +192,15 @@ def build_library(conn: sqlite3.Connection) -> int:
     return len(entries)
 
 
-def materialize_library(db_path: str | Path) -> dict[str, Any]:
-    """One-time safe materialization of the organized library on an existing rules index."""
-    path = Path(db_path).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"Rules index not found: {path}")
-    with index_lock(path):
-        conn = sqlite3.connect(path)
-        try:
-            conn.row_factory = sqlite3.Row
-            with conn:
-                count = build_library(conn)
-        finally:
-            conn.close()
-    with _CACHE_LOCK:
-        stale = [k for k in _MEMORY_CACHE if k[0] == str(path)]
-        for k in stale:
-            _MEMORY_CACHE.pop(k, None)
-    return {"db": str(path), "entries": count}
+def list_category(rules_path: str | Path, category: str) -> list[dict[str, Any]]:
+    """Every Corebook entry in one category (no limit), in library entry shape."""
+    clean = normalize_category(category)
+    return [
+        {**{k: e[k] for k in ("id", "name", "category", "source", "summary", "description", "stats", "tags",
+                              "pdf_page", "printed_page", "section_id", "source_sha256")},
+         "created_by": "corebook", "campaign_id": None}
+        for e in sourcecatalog.entries(rules_path, clean)
+    ]
 
 
 def _row_to_entry(row: sqlite3.Row, *, campaign_id: str | None = None) -> dict[str, Any]:
@@ -524,25 +221,6 @@ def _row_to_entry(row: sqlite3.Row, *, campaign_id: str | None = None) -> dict[s
         "source_sha256": row["source_sha256"] if "source_sha256" in keys else None,
         "campaign_id": row["campaign_id"] if "campaign_id" in keys else campaign_id,
     }
-
-
-def _load_corebook_entries(rules_path: str | Path, conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    resolved = Path(rules_path).expanduser().resolve()
-    st = resolved.stat()
-    meta_row = conn.execute("SELECT value FROM metadata WHERE key='source_sha256'").fetchone()
-    digest = meta_row[0] if meta_row else ""
-    cache_key = (str(resolved), st.st_mtime_ns, st.st_size, digest)
-    with _CACHE_LOCK:
-        cached = _MEMORY_CACHE.get(cache_key)
-    if cached is not None:
-        return [dict(item) for item in cached]
-    built = _extract_all_entries(conn)
-    for item in built:
-        item.setdefault("created_by", "corebook")
-        item.setdefault("campaign_id", None)
-    with _CACHE_LOCK:
-        _MEMORY_CACHE[cache_key] = [dict(item) for item in built]
-    return built
 
 
 _STOPWORDS = frozenset(
@@ -1051,20 +729,6 @@ class CampaignLibrary:
             return cur.rowcount > 0
 
 
-def _is_materialized_for_current_sha(conn: sqlite3.Connection) -> bool:
-    if not _table_exists(conn, "rule_entries"):
-        return False
-    meta_row = (
-        conn.execute("SELECT value FROM metadata WHERE key='source_sha256'").fetchone()
-        if _table_exists(conn, "metadata")
-        else None
-    )
-    digest = meta_row[0] if meta_row else ""
-    if digest:
-        return conn.execute("SELECT 1 FROM rule_entries WHERE source_sha256=? LIMIT 1", (digest,)).fetchone() is not None
-    return conn.execute("SELECT 1 FROM rule_entries LIMIT 1").fetchone() is not None
-
-
 def _read_campaign_homebrew_entries(
     campaign_path: str | Path,
     campaign_id: str,
@@ -1135,7 +799,7 @@ def search_library(
     tokens = _query_tokens(query, include_fallback=not strict_names)
     if strict_names and not tokens:
         return []
-    bound_limit = max(1, min(int(limit), 100))
+    bound_limit = max(1, int(limit))
 
     results: list[dict[str, Any]] = []
     if include_corebook and rules_path is not None:
@@ -1144,60 +808,46 @@ def search_library(
             conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             try:
-                has_entries = _is_materialized_for_current_sha(conn)
-                if has_entries:
-                    if query and _table_exists(conn, "rule_entries_fts"):
-                        fts = (
-                            " OR ".join(f'"{t}"' for t in tokens[:10])
-                            if strict_names
-                            else _fts_query(tokens)
-                        )
-                        sql = (
-                            "SELECT e.* FROM rule_entries_fts f "
-                            "JOIN rule_entries e ON e.id = f.entry_id "
-                            "WHERE rule_entries_fts MATCH ?"
-                        )
-                        params: list[Any] = [fts]
+                if query:
+                    fts = " OR ".join(f'"{t}"' for t in tokens[:10]) if strict_names else _fts_query(tokens)
+                    sql = (
+                        "SELECT e.* FROM rule_entries_fts f "
+                        "JOIN rule_entries e ON e.id = f.entry_id "
+                        "WHERE rule_entries_fts MATCH ?"
+                    )
+                    params: list[Any] = [fts]
+                    if clean_cat:
+                        sql += " AND e.category = ?"
+                        params.append(clean_cat)
+                    sql += " ORDER BY rank LIMIT ?"
+                    params.append(max(bound_limit * 6, 60))
+                    try:
+                        rows = conn.execute(sql, params).fetchall() if fts else []
+                    except sqlite3.OperationalError:
+                        rows = []
+                    if not rows and not strict_names:
+                        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                        like = f"%{escaped}%"
+                        like_sql = ("SELECT * FROM rule_entries WHERE (name LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'"
+                                    " OR description LIKE ? ESCAPE '\\')")
+                        like_params: list[Any] = [like, like, like]
                         if clean_cat:
-                            sql += " AND e.category = ?"
-                            params.append(clean_cat)
-                        sql += " ORDER BY rank LIMIT ?"
-                        params.append(max(bound_limit * 6, 60))
-                        try:
-                            rows = conn.execute(sql, params).fetchall() if fts else []
-                        except sqlite3.OperationalError:
-                            rows = []
-                        if not rows and not strict_names:
-                            like = f"%{query}%"
-                            like_sql = "SELECT * FROM rule_entries WHERE (name LIKE ? OR summary LIKE ? OR description LIKE ?)"
-                            like_params: list[Any] = [like, like, like]
-                            if clean_cat:
-                                like_sql += " AND category = ?"
-                                like_params.append(clean_cat)
-                            like_sql += " LIMIT ?"
-                            like_params.append(max(bound_limit * 4, 40))
-                            rows = conn.execute(like_sql, like_params).fetchall()
-                    elif clean_cat:
-                        rows = conn.execute(
-                            "SELECT * FROM rule_entries WHERE category=? ORDER BY name COLLATE NOCASE LIMIT ?",
-                            (clean_cat, max(bound_limit * 4, 80)),
-                        ).fetchall()
-                    else:
-                        rows = conn.execute(
-                            "SELECT * FROM rule_entries ORDER BY category, name COLLATE NOCASE LIMIT ?",
-                            (max(bound_limit * 4, 80),),
-                        ).fetchall()
-                    results.extend(_row_to_entry(r) for r in rows)
+                            like_sql += " AND category = ?"
+                            like_params.append(clean_cat)
+                        like_sql += " LIMIT ?"
+                        like_params.append(max(bound_limit * 4, 40))
+                        rows = conn.execute(like_sql, like_params).fetchall()
+                elif clean_cat:
+                    rows = conn.execute(
+                        "SELECT * FROM rule_entries WHERE category=? ORDER BY name COLLATE NOCASE LIMIT ?",
+                        (clean_cat, max(bound_limit * 4, 80)),
+                    ).fetchall()
                 else:
-                    cached = _load_corebook_entries(resolved, conn)
-                    for item in cached:
-                        if clean_cat and item["category"] != clean_cat:
-                            continue
-                        if tokens:
-                            hay = _entry_haystack(item)
-                            if not any(tok in hay for tok in tokens):
-                                continue
-                        results.append(item)
+                    rows = conn.execute(
+                        "SELECT * FROM rule_entries ORDER BY category, name COLLATE NOCASE LIMIT ?",
+                        (max(bound_limit * 4, 80),),
+                    ).fetchall()
+                results.extend(_row_to_entry(r) for r in rows)
             finally:
                 conn.close()
 
@@ -1246,13 +896,8 @@ def get_library_entry(
         conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
-            has_entries = _is_materialized_for_current_sha(conn)
-            if has_entries:
-                row = conn.execute("SELECT * FROM rule_entries WHERE id=?", (entry_id,)).fetchone()
-                return _row_to_entry(row) if row else None
-            for item in _load_corebook_entries(resolved, conn):
-                if item["id"] == entry_id:
-                    return item
+            row = conn.execute("SELECT * FROM rule_entries WHERE id=?", (entry_id,)).fetchone()
+            return _row_to_entry(row) if row else None
         finally:
             conn.close()
         return None
