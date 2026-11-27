@@ -25,6 +25,7 @@ from turn_engine.state_normalization import (
 _MAX_HOMEBREW_PER_TURN = 6
 _MAX_CHECKS_PER_TURN = 8
 _MAX_OPS_PER_TURN = 12
+_MAX_SITUATIONAL_MODIFIER = 10
 _ATTACK_MODES = frozenset({"ranged", "single", "autofire", "melee", "brawling", "aimed", "martial_arts", "suppressive"})
 _SPECIALIZABLE_SKILL_BASES = frozenset({"language", "local expert", "science", "play instrument", "martial arts"})
 
@@ -512,6 +513,8 @@ class PlanExecutor:
             raise ValueError("Invalid numeric parameters in NPC check")
         dv = int(dv_raw)
         modifier = int(mod_raw)
+        if abs(modifier) > _MAX_SITUATIONAL_MODIFIER:
+            raise ValueError(f"Blocked NPC check: situational modifier must be within ±{_MAX_SITUATIONAL_MODIFIER} (got {modifier:+d})")
         if not isinstance(comp, bool) or not isinstance(extra_t, bool):
             raise ValueError("complementary and extra_time must be booleans")
 
@@ -1233,6 +1236,7 @@ class PlanExecutor:
         before_target_armor: list[dict[str, Any]] | None = None
         before_clock = int(runtime.get("clock_minutes") or 0)
         elapsed_val = 0
+        notes: list[str] = []
 
         if action == "start_encounter":
             if isinstance(cur_enc, dict) and cur_enc.get("active"):
@@ -1368,6 +1372,9 @@ class PlanExecutor:
                 if "mode" not in nested_args and mode_norm != "suppressive":
                     nested_args["mode"] = op_mode
 
+            if action == "encounter_action" and nested_args.pop("luck", None) is not None:
+                notes.append("Ignored planner-supplied LUCK on encounter_action; LUCK is spent only from the player's commitment.")
+
             if subaction:
                 raw_args["action"] = str(subaction)
 
@@ -1436,11 +1443,11 @@ class PlanExecutor:
         try:
             res = self.gameplay.execute(action, payload_args, campaign_id=campaign_id)["result"]
         except (TypeError, ValueError, KeyError) as exc:
-            return [], [f"Skipped solo action ({action}): {exc}"], [], []
+            return [], [*notes, f"Skipped solo action ({action}): {exc}"], [], []
 
         if isinstance(res, dict) and res.get("committed") is False:
             ruling_reason = (res.get("result") or {}).get("reason") or "Requires manual tabletop ruling."
-            return [], [f"Solo action ({action}) deferred: {ruling_reason}"], [], []
+            return [], [*notes, f"Solo action ({action}) deferred: {ruling_reason}"], [], []
 
         actor_label = _char_handle(actor_rec) if actor_rec is not None else str(actor_hint or "")
         solo_rolls, solo_outcomes = self._extract_solo_outcomes_and_rolls(
@@ -1521,7 +1528,7 @@ class PlanExecutor:
                     "reason": reason,
                 }
             )
-        return patches, [], solo_rolls, solo_outcomes
+        return patches, notes, solo_rolls, solo_outcomes
 
     def execute_plan(
         self,
@@ -1557,32 +1564,18 @@ class PlanExecutor:
             try:
                 raw_cat = hb.get("category")
                 norm_cat = normalize_category(str(raw_cat)) if raw_cat else "gear"
-                upsert_fn = getattr(self.library, "upsert_entry", None)
-                if callable(upsert_fn):
-                    entry = upsert_fn(
-                        campaign_id,
-                        name=str(hb.get("name") or ""),
-                        category=norm_cat or "gear",
-                        summary=str(hb.get("summary") or ""),
-                        description=str(hb.get("description") or ""),
-                        stats=hb.get("stats") if isinstance(hb.get("stats"), dict) else {},
-                        tags=hb.get("tags") if isinstance(hb.get("tags"), list) else [],
-                        created_by="ai",
-                        allow_variant=False,
-                        operation_id=f"{turn_id}:hb:{idx}",
-                    )
-                else:
-                    entry = self.library.add_entry(
-                        campaign_id,
-                        name=str(hb.get("name") or ""),
-                        category=norm_cat or "gear",
-                        summary=str(hb.get("summary") or ""),
-                        description=str(hb.get("description") or ""),
-                        stats=hb.get("stats") if isinstance(hb.get("stats"), dict) else {},
-                        tags=hb.get("tags") if isinstance(hb.get("tags"), list) else [],
-                        created_by="ai",
-                        operation_id=f"{turn_id}:hb:{idx}",
-                    )
+                entry = self.library.upsert_entry(
+                    campaign_id,
+                    name=str(hb.get("name") or ""),
+                    category=norm_cat or "gear",
+                    summary=str(hb.get("summary") or ""),
+                    description=str(hb.get("description") or ""),
+                    stats=hb.get("stats") if isinstance(hb.get("stats"), dict) else {},
+                    tags=hb.get("tags") if isinstance(hb.get("tags"), list) else [],
+                    created_by="ai",
+                    allow_variant=False,
+                    operation_id=f"{turn_id}:hb:{idx}",
+                )
                 added_library.append(entry)
             except (TypeError, ValueError) as exc:
                 warnings.append(f"Skipped invalid homebrew '{hb.get('name', '?')}': {exc}")
@@ -1661,13 +1654,11 @@ class PlanExecutor:
 
             raw_dv = chk.get("dv", 13)
             raw_mod = chk.get("modifier", 0)
-            raw_chk_luck = chk.get("luck", 0)
             comp_flag = chk.get("complementary", False)
             extra_flag = chk.get("extra_time", False)
             if (
                 isinstance(raw_dv, bool)
                 or isinstance(raw_mod, bool)
-                or isinstance(raw_chk_luck, bool)
                 or not isinstance(comp_flag, bool)
                 or not isinstance(extra_flag, bool)
             ):
@@ -1676,12 +1667,13 @@ class PlanExecutor:
             try:
                 dv = int(raw_dv)
                 modifier = int(raw_mod)
-                luck = max(0, int(raw_chk_luck))
             except (TypeError, ValueError):
                 warnings.append("Invalid numeric parameters in planned skill check")
                 continue
-            if dv < 0 or not (-100 <= modifier <= 100):
-                warnings.append("Out-of-range dv or modifier in planned skill check")
+            if dv < 0 or abs(modifier) > _MAX_SITUATIONAL_MODIFIER:
+                msg = f"Blocked check: dv must be >= 0 and situational modifier within ±{_MAX_SITUATIONAL_MODIFIER} (got dv {dv}, modifier {modifier:+d})"
+                warnings.append(msg)
+                blocked_checks.append(msg)
                 continue
 
             # Pre-validate stat resolution before any Overclock Humanity deduction.
@@ -1697,47 +1689,42 @@ class PlanExecutor:
                 blocked_checks.append(msg)
                 continue
 
-            avail_luck = int(char.get("luck_remaining", 0))
-            if requested_luck > 0 and not luck_applied and idx == target_pc_idx:
-                applied = min(max(luck, requested_luck), avail_luck)
-                if applied < requested_luck:
+            # LUCK and Overclock come only from the player's commitment, applied once to the target PC check.
+            is_target_check = idx == target_pc_idx
+            luck = 0
+            if requested_luck > 0 and not luck_applied and is_target_check:
+                avail_luck = int(char.get("luck_remaining", 0))
+                luck = min(requested_luck, avail_luck)
+                if luck < requested_luck:
                     warnings.append(f"Clamped committed LUCK for {_char_handle(char)} to available pool ({avail_luck}).")
-                luck = applied
                 luck_applied = True
-            elif luck > avail_luck:
-                luck = avail_luck
 
-            want_overclock = bool(chk.get("overclock")) or (overclock and not overclock_applied and idx == target_pc_idx)
             overclock_applied_this_check = False
             expected_rev = int(char["revision"])
-            if want_overclock:
-                if not (-100 <= modifier + 2 <= 100):
-                    warnings.append("Skipped Overclock: resulting modifier out of range")
-                else:
-                    try:
-                        oc = self.deduct_humanity(
-                            char["id"],
-                            2,
-                            reason=f"Overclock bonus for {resolved_skill or resolved_stat}",
-                            operation_id=f"{turn_id}:oc:{idx}",
-                        )
-                        expected_rev = int(oc["revision"])
-                        modifier += 2
-                        overclock_applied_this_check = True
-                        if overclock and idx == target_pc_idx:
-                            overclock_applied = True
-                        patches.append(
-                            {
-                                "target": "character",
-                                "character_id": char["id"],
-                                "name": _char_handle(char),
-                                "before": {"humanity": oc["before"]},
-                                "after": {"humanity": oc["after"]},
-                                "reason": "Overclock (-2 Humanity for +2 Check Bonus)",
-                            }
-                        )
-                    except ValueError as exc:
-                        warnings.append(str(exc))
+            if overclock and not overclock_applied and is_target_check:
+                overclock_applied = True
+                try:
+                    oc = self.deduct_humanity(
+                        char["id"],
+                        2,
+                        reason=f"Overclock bonus for {resolved_skill or resolved_stat}",
+                        operation_id=f"{turn_id}:oc:{idx}",
+                    )
+                    expected_rev = int(oc["revision"])
+                    modifier += 2
+                    overclock_applied_this_check = True
+                    patches.append(
+                        {
+                            "target": "character",
+                            "character_id": char["id"],
+                            "name": _char_handle(char),
+                            "before": {"humanity": oc["before"]},
+                            "after": {"humanity": oc["after"]},
+                            "reason": "Overclock (-2 Humanity for +2 Check Bonus)",
+                        }
+                    )
+                except ValueError as exc:
+                    warnings.append(str(exc))
 
             reason_str = str(chk.get("reason") or f"{resolved_skill or resolved_stat} check").strip()
             try:
