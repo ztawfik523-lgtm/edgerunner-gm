@@ -485,36 +485,6 @@ export async function bootstrapCampaign(
   );
 }
 
-export async function createAndAttachCharacter(
-  campaignId: string,
-  campaignRevision: number,
-  payload: {
-    name: string;
-    stats: Record<string, number>;
-    skills: Record<string, number>;
-    money?: number;
-    inventory?: Record<string, number>;
-    detail?: Record<string, unknown>;
-    humanity?: number;
-  },
-): Promise<CharacterRecord> {
-  const created = await gameAction<CharacterRecord>("create_character", {
-    ...payload,
-    operation_id: makeOpId("char-create"),
-  });
-  await gameAction(
-    "attach_character",
-    {
-      character_id: created.id,
-      expected_revision: campaignRevision,
-      reason: `Attach ${created.name}`,
-      operation_id: makeOpId("char-attach"),
-    },
-    campaignId,
-  );
-  return created;
-}
-
 export async function createRulesPlayerCharacter(
   campaignId: string,
   soloRevision: number,

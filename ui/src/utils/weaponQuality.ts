@@ -86,12 +86,10 @@ export function classifyWeaponTiers(
   }
 
   const isExotic =
+    String(stats.weapon_class ?? "").toLowerCase() === "exotic" ||
     st.includes("exotic") ||
     q.includes("exotic") ||
-    /\bexotic\b/i.test(item.name) ||
-    /malorian arms 3516|kendachi mono-three|constitution arms hurricane|militech "cowboy"|rhinemetall emg-86|tsunami arms helix|microwaver|shrieker|dartgun|air pistol|stun gun|stun baton|flamethrower|battleglove/i.test(
-      item.name,
-    );
+    /\bexotic\b/i.test(item.name);
   const isExcellent = q.includes("excellent") || st.includes("excellent") || /\bexcellent\b/i.test(item.name);
   const isPoor = q.includes("poor") || st.includes("poor") || /\bpoor\b/i.test(item.name);
 

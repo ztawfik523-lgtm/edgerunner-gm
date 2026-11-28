@@ -15,7 +15,6 @@ import {
   Dices,
   Eye,
   EyeOff,
-  HelpCircle,
   Heart,
   ImagePlus,
   Minus,
@@ -33,7 +32,6 @@ import {
 } from "lucide-react";
 import {
   assistCharacterCreation,
-  createAndAttachCharacter,
   createRulesPlayerCharacter,
   fetchCreationReference,
 } from "../api";
@@ -53,7 +51,9 @@ import {
 } from "../utils/weaponQuality";
 import {
   STAT_NAMES,
-  type CreationFashionItem,
+  type CreationKitCyberware,
+  type CreationKitEntry,
+  type CreationKitItem,
   type CreationMethodInfo,
   type CreationReference,
   type CreationRoleInfo,
@@ -67,7 +67,6 @@ import { FieldAiActions } from "./FieldAiActions";
 interface CharacterCreatorModalProps {
   open: boolean;
   campaignId: string;
-  campaignRevision: number;
   soloRevision: number;
   onClose: () => void;
   onCreated: (characterId: string, name: string) => Promise<void>;
@@ -150,22 +149,6 @@ const HANDLE_SUGGESTIONS = [
   "Kira Sterling",
 ];
 
-const BASIC_SKILL_DEFAULTS: Record<string, number> = {
-  Athletics: 2,
-  Brawling: 2,
-  Concentration: 2,
-  Conversation: 2,
-  Education: 2,
-  Evasion: 2,
-  "First Aid": 2,
-  "Human Perception": 2,
-  "Language (Streetslang)": 2,
-  "Local Expert (Your Home)": 2,
-  Perception: 2,
-  Persuasion: 2,
-  Stealth: 2,
-};
-
 const MAKER_SPECIALTIES = [
   "Field Expertise",
   "Upgrade Expertise",
@@ -173,59 +156,7 @@ const MAKER_SPECIALTIES = [
   "Invention Expertise",
 ] as const;
 
-const PHARMA_RECIPES = ["Speedheal", "Rapidetox", "Stim", "Surge", "Antibiotic"] as const;
-
-const NOMAD_BASE_VEHICLES = [
-  "Compact Groundcar",
-  "High Performance Groundcar",
-  "Superbike",
-  "Gyrocopter",
-  "AV-4 (Rank 7+)",
-  "Aerozep (Rank 7+)",
-] as const;
-
-const NOMAD_VEHICLE_UPGRADES = [
-  "Armored Chassis",
-  "Smuggling Compartment",
-  "Heavy Chassis",
-  "NOS (Nitrous Boost)",
-  "Bulletproof Glass",
-  "Seating Upgrade",
-  "Onboard Housing",
-  "Communications Center",
-] as const;
-
-const NOMAD_MOTO_PRESETS = [...NOMAD_BASE_VEHICLES, ...NOMAD_VEHICLE_UPGRADES];
-
-const EXEC_TEAM_ROLES = [
-  "Covert Operative / Driver",
-  "Bodyguard",
-  "Company Driver",
-  "Covert Operative",
-  "Netrunner",
-  "Technician",
-] as const;
-
-const COREBOOK_FASHION_STYLES = [
-  "Bag Lady Chic",
-  "Gang Colors",
-  "Generic Chic",
-  "Bohemian",
-  "Leisurewear",
-  "Nomad Leathers",
-  "Asia Pop",
-  "Urban Flash",
-  "Businesswear",
-  "High Fashion",
-] as const;
-
-const SPECIALIZATION_SUGGESTIONS: Record<string, string[]> = {
-  Language: ["English", "Spanish", "Japanese", "Mandarin Chinese", "Arabic", "Russian", "French", "German", "Korean"],
-  "Local Expert": ["Your Home", "Watson", "Heywood", "Pacifica", "Westbrook", "City Center", "Santo Domingo", "Badlands"],
-  Science: ["Biology", "Chemistry", "Physics", "Computer Science", "Botany", "Genetics"],
-  "Play Instrument": ["Electric Guitar", "Synth", "Drums", "Saxophone", "Vocals", "Bass"],
-  "Martial Arts": ["Karate", "Taekwondo", "Judo", "Aikido"],
-};
+const SPECIALIZATION_BASES = ["Language", "Local Expert", "Science", "Play Instrument", "Martial Arts"] as const;
 
 const FALLBACK_STATS: Record<StatName, number> = {
   INT: 6,
@@ -256,13 +187,23 @@ function pickRandom<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-function isBasicSkillName(name: string): boolean {
-  const lower = name.trim().toLowerCase();
-  if (lower in Object.fromEntries(Object.keys(BASIC_SKILL_DEFAULTS).map((k) => [k.toLowerCase(), true]))) {
-    return true;
-  }
-  return lower.startsWith("language (") || lower.startsWith("local expert (");
+function basicSkillRanks(skills: CreationSkillInfo[]): Record<string, number> {
+  return Object.fromEntries(skills.filter((s) => s.basic).map((s) => [s.basic_skill_name || s.name, 2]));
 }
+
+/** The starter-kit pick for each entry: the fixed item, or the chosen (default first) option. */
+function pickKit<T extends CreationKitItem>(
+  section: string,
+  entries: CreationKitEntry<T>[],
+  choices: Record<string, string>,
+): T[] {
+  return entries.map((entry, idx) => {
+    if (entry.type === "fixed") return entry;
+    return entry.options.find((o) => o.item === choices[`${section}-${idx}`]) ?? entry.options[0];
+  });
+}
+
+const itemKey = (name: string) => name.replace(/[^a-z0-9]/gi, "").toLowerCase();
 
 function skillBaseCost(skillName: string, skillIndex: Map<string, CreationSkillInfo>): number {
   const clean = skillName.trim();
@@ -280,64 +221,25 @@ function skillStat(skillName: string, skillIndex: Map<string, CreationSkillInfo>
   return skillIndex.get(base)?.stat ?? "INT";
 }
 
-function buildSmart62Stats(keyStats: StatName[]): Record<StatName, number> {
-  const res: Record<StatName, number> = {
-    INT: 6,
-    REF: 6,
-    DEX: 6,
-    TECH: 5,
-    COOL: 6,
-    WILL: 6,
-    LUCK: 6,
-    MOVE: 6,
-    BODY: 6,
-    EMP: 6,
-  };
-  // Sum above is 59 -> +3 points into keyStats (capped at 8)
-  let remaining = 62 - Object.values(res).reduce((a, b) => a + b, 0);
-  for (const s of keyStats) {
-    while (remaining > 0 && res[s] < 8) {
-      res[s] += 1;
-      remaining -= 1;
-    }
-  }
-  for (const s of STAT_NAMES) {
-    if (remaining <= 0) break;
-    while (remaining > 0 && res[s] < 8) {
-      res[s] += 1;
-      remaining -= 1;
-    }
-  }
-  return res;
+function balanced62Stats(): Record<StatName, number> {
+  // Six in every STAT is 60 points; the last two go to REF and DEX.
+  return { ...Object.fromEntries(STAT_NAMES.map((s) => [s, 6])), REF: 7, DEX: 7 } as Record<StatName, number>;
 }
 
-function defaultCompleteSkills(roleInfo: CreationRoleInfo | undefined): Record<string, number> {
-  const out: Record<string, number> = { ...BASIC_SKILL_DEFAULTS };
-  // 13 Basic skills * 2 = 26 pts; 60 pts left to hit 86.
-  const roleKeys = Object.keys(roleInfo?.skills ?? {}).filter(
-    (k) => !isBasicSkillName(k) && !/autofire|martial arts|paramedic|heavy weapons|pilot|electronics|demolitions/i.test(k),
-  );
-  // Allocate 6 points each to top 4 role skills (24) + boost 9 core/basic/role skills cleanly to 86
-  const focus = [
-    ...roleKeys.slice(0, 5),
-    "Perception",
-    "Evasion",
-    "Handgun",
-    "Athletics",
-    "Stealth",
-    "Persuasion",
-    "First Aid",
-    "Brawling",
-  ];
+function defaultCompleteSkills(
+  roleInfo: CreationRoleInfo | undefined,
+  skills: CreationSkillInfo[],
+): Record<string, number> {
+  const out = basicSkillRanks(skills);
+  // Spend what the Basic Skills leave of 86 on the role's single-cost skills.
+  const cheap = new Set(skills.filter((s) => s.cost === 1 && !s.basic).map((s) => s.name));
+  const focus = Object.keys(roleInfo?.skills ?? {}).filter((k) => cheap.has(k));
   let budget = 86 - Object.values(out).reduce((a, b) => a + b, 0);
   for (const name of focus) {
     if (budget <= 0) break;
-    const cur = out[name] ?? 0;
-    const add = Math.min(6 - cur, budget, cur === 0 ? 6 : 4);
-    if (add > 0) {
-      out[name] = cur + add;
-      budget -= add;
-    }
+    const add = Math.min(6, budget);
+    out[name] = add;
+    budget -= add;
   }
   while (budget > 0) {
     let progressed = false;
@@ -356,7 +258,6 @@ function defaultCompleteSkills(roleInfo: CreationRoleInfo | undefined): Record<s
 export function CharacterCreatorModal({
   open,
   campaignId,
-  campaignRevision,
   soloRevision,
   onClose,
   onCreated,
@@ -379,7 +280,7 @@ export function CharacterCreatorModal({
   const [pronouns, setPronouns] = useState("");
   const [age, setAge] = useState("");
   const [conceptTagline, setConceptTagline] = useState("");
-  const [method, setMethod] = useState<"streetrat" | "edgerunner" | "complete_package" | "freeform">("streetrat");
+  const [method, setMethod] = useState<CreationMethodInfo["id"]>("streetrat");
   const [selectedRole, setSelectedRole] = useState("Solo");
 
   // Role-specific mechanical choices
@@ -396,17 +297,12 @@ export function CharacterCreatorModal({
   });
   const [medtechRecipes, setMedtechRecipes] = useState<string[]>(["Speedheal"]);
   const [fixerCulture, setFixerCulture] = useState("Night City Street");
-  const [fixerLanguage, setFixerLanguage] = useState("Spanish");
-  const [nomadVehicles, setNomadVehicles] = useState<string[]>([
-    "Compact Groundcar",
-    "Superbike",
-    "Smuggling Compartment",
-    "Armored Chassis",
-  ]);
+  const [fixerLanguage, setFixerLanguage] = useState("");
+  const [nomadVehicles, setNomadVehicles] = useState<string[]>([]);
   const [execTeamName, setExecTeamName] = useState("Kaito Reyes");
-  const [execTeamRole, setExecTeamRole] = useState("Covert Operative / Driver");
+  const [execTeamRole, setExecTeamRole] = useState("Bodyguard");
   const [execTeamLoyalty, setExecTeamLoyalty] = useState(4);
-  const [housing, setHousing] = useState("cargo_container");
+  const [housing, setHousing] = useState("Cargo Container");
   const [lifestyle, setLifestyle] = useState("Kibble");
   const [traumaTeam, setTraumaTeam] = useState<"None" | "Silver" | "Executive">("None");
 
@@ -417,35 +313,28 @@ export function CharacterCreatorModal({
 
   // Skills
   const [edgerunnerSkills, setEdgerunnerSkills] = useState<Record<string, number>>({});
-  const [customSkills, setCustomSkills] = useState<Record<string, number>>({ ...BASIC_SKILL_DEFAULTS, Handgun: 6, Perception: 6 });
-  const [specializations, setSpecializations] = useState<Record<string, string>>({
-    Language: "Spanish",
-    "Local Expert": "Watson",
-    "Play Instrument": "Electric Guitar",
-    Science: "Biology",
-    "Martial Arts": "Karate",
-  });
+  const [customSkills, setCustomSkills] = useState<Record<string, number>>({});
+  const [specializations, setSpecializations] = useState<Record<string, string>>({});
   const [skillFilter, setSkillFilter] = useState("");
   const [skillGroupFilter, setSkillGroupFilter] = useState<string>("All");
-  const [customNewSkill, setCustomNewSkill] = useState("");
-  const [specBasePick, setSpecBasePick] = useState<"Language" | "Local Expert" | "Science" | "Play Instrument" | "Martial Arts">("Language");
+  const [specBasePick, setSpecBasePick] = useState<(typeof SPECIALIZATION_BASES)[number]>("Language");
   const [specFocusInput, setSpecFocusInput] = useState("");
 
   // Lifepath, Backstory & Established History
-  const [culturalRegion, setCulturalRegion] = useState("North American");
-  const [culturalLanguage, setCulturalLanguage] = useState("Spanish");
-  const [personality, setPersonality] = useState("Steady and grounded");
-  const [clothingStyle, setClothingStyle] = useState("Urban Flash (Neon-accented techwear)");
-  const [hairstyle, setHairstyle] = useState("Short and spiked");
-  const [affectation, setAffectation] = useState("Mirrorshades");
-  const [valueMost, setValueMost] = useState("Keeping your word");
-  const [feelingsAboutPeople, setFeelingsAboutPeople] = useState("Relies on nobody—trust gets you killed.");
-  const [valuedPerson, setValuedPerson] = useState("A close friend");
-  const [valuedPossession, setValuedPossession] = useState("A firearm or blade");
-  const [familyBackground, setFamilyBackground] = useState("Edgerunner Kids — Constant moves between safehouses and high-roller suites depending on gigs.");
-  const [childhoodEnv, setChildhoodEnv] = useState("Growing up unsupervised on the city streets.");
-  const [familyCrisis, setFamilyCrisis] = useState("Betrayal wiped out the family's assets.");
-  const [lifeGoal, setLifeGoal] = useState("Earn enough to escape street life for good.");
+  const [culturalRegion, setCulturalRegion] = useState("");
+  const [culturalLanguage, setCulturalLanguage] = useState("");
+  const [personality, setPersonality] = useState("");
+  const [clothingStyle, setClothingStyle] = useState("");
+  const [hairstyle, setHairstyle] = useState("");
+  const [affectation, setAffectation] = useState("");
+  const [valueMost, setValueMost] = useState("");
+  const [feelingsAboutPeople, setFeelingsAboutPeople] = useState("");
+  const [valuedPerson, setValuedPerson] = useState("");
+  const [valuedPossession, setValuedPossession] = useState("");
+  const [familyBackground, setFamilyBackground] = useState("");
+  const [childhoodEnv, setChildhoodEnv] = useState("");
+  const [familyCrisis, setFamilyCrisis] = useState("");
+  const [lifeGoal, setLifeGoal] = useState("");
   const [roleLifepath, setRoleLifepath] = useState<Record<string, string>>({});
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [enemies, setEnemies] = useState<EnemyEntry[]>([]);
@@ -467,10 +356,7 @@ export function CharacterCreatorModal({
   const [aiError, setAiError] = useState("");
 
   // Gear, Cyberware, Fashion
-  const [weaponChoices, setWeaponChoices] = useState<Record<string, string>>({});
-  const [outfitChoice, setOutfitChoice] = useState("");
-  const [cyberwareChoice, setCyberwareChoice] = useState("");
-  const [cyberwareChoice2, setCyberwareChoice2] = useState("");
+  const [kitChoices, setKitChoices] = useState<Record<string, string>>({});
   const [shopCategory, setShopCategory] = useState<
     "weapon" | "armor" | "cyberware" | "gear" | "program" | "hardware" | "vehicle" | "drug" | "fashion"
   >("weapon");
@@ -490,7 +376,7 @@ export function CharacterCreatorModal({
   const [shopSearch, setShopSearch] = useState("");
   const [cartItems, setCartItems] = useState<Array<{ name: string; category: string; cost_eb: number; hl?: number; sp?: number; location?: string; install?: string; notes?: string; qty: number }>>([]);
   const [selectedFashion, setSelectedFashion] = useState<Array<{ name: string; cost_eb: number; style: string }>>([]);
-  const [freeformMoney, setFreeformMoney] = useState(1500);
+  const [resetCount, setResetCount] = useState(0);
   const [draftRestored, setDraftRestored] = useState(false);
 
   const draftKey = `character:${campaignId}`;
@@ -526,7 +412,7 @@ export function CharacterCreatorModal({
     setPronouns("");
     setAge("");
     setConceptTagline("");
-    setMethod(refData && !refData.rules_indexed ? "freeform" : "streetrat");
+    setMethod("streetrat");
     setSelectedRole("Solo");
     setTechMakerRanks({
       "Field Expertise": 2,
@@ -537,12 +423,12 @@ export function CharacterCreatorModal({
     setMedtechAlloc({ Surgery: 2, Pharmaceuticals: 1, "Cryosystem Operation": 1 });
     setMedtechRecipes(["Speedheal"]);
     setFixerCulture("Night City Street");
-    setFixerLanguage("Spanish");
-    setNomadVehicles(["Compact Groundcar", "Superbike", "Smuggling Compartment", "Armored Chassis"]);
+    setFixerLanguage("");
+    setNomadVehicles([]);
     setExecTeamName("Kaito Reyes");
-    setExecTeamRole("Covert Operative / Driver");
+    setExecTeamRole("Bodyguard");
     setExecTeamLoyalty(4);
-    setHousing("cargo_container");
+    setHousing("Cargo Container");
     setLifestyle("Kibble");
     setTraumaTeam("None");
     setFashionStyleFilter("All");
@@ -550,28 +436,22 @@ export function CharacterCreatorModal({
     setEdgerunnerRolls([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     setCustomStats({ ...FALLBACK_STATS });
     setEdgerunnerSkills(roleInfo && Object.keys(roleInfo.skills).length === 20 ? { ...roleInfo.skills } : {});
-    setCustomSkills({ ...BASIC_SKILL_DEFAULTS, Handgun: 6, Perception: 6 });
-    setSpecializations({
-      Language: "Spanish",
-      "Local Expert": "Watson",
-      "Play Instrument": "Electric Guitar",
-      Science: "Biology",
-      "Martial Arts": "Karate",
-    });
-    setCulturalRegion("North American");
-    setCulturalLanguage("Spanish");
-    setPersonality("Steady and grounded");
-    setClothingStyle("Urban Flash (Neon-accented techwear)");
-    setHairstyle("Short and spiked");
-    setAffectation("Mirrorshades");
-    setValueMost("Keeping your word");
-    setFeelingsAboutPeople("Relies on nobody—trust gets you killed.");
-    setValuedPerson("A close friend");
-    setValuedPossession("A firearm or blade");
-    setFamilyBackground("Edgerunner Kids — Constant moves between safehouses and high-roller suites depending on gigs.");
-    setChildhoodEnv("Growing up unsupervised on the city streets.");
-    setFamilyCrisis("Betrayal wiped out the family's assets.");
-    setLifeGoal("Earn enough to escape street life for good.");
+    setCustomSkills({});
+    setSpecializations({});
+    setCulturalRegion("");
+    setCulturalLanguage("");
+    setPersonality("");
+    setClothingStyle("");
+    setHairstyle("");
+    setAffectation("");
+    setValueMost("");
+    setFeelingsAboutPeople("");
+    setValuedPerson("");
+    setValuedPossession("");
+    setFamilyBackground("");
+    setChildhoodEnv("");
+    setFamilyCrisis("");
+    setLifeGoal("");
     setRoleLifepath({});
     setFriends([]);
     setEnemies([]);
@@ -588,14 +468,11 @@ export function CharacterCreatorModal({
     setAmmoCaliber("");
     setAiBioGuidance("");
     setAiContactsGuidance("");
-    setWeaponChoices({});
-    setOutfitChoice("");
-    setCyberwareChoice("");
-    setCyberwareChoice2("");
+    setKitChoices({});
     setCartItems([]);
     setSelectedFashion([]);
-    setFreeformMoney(1500);
     setDraftRestored(false);
+    setResetCount((n) => n + 1);
     prevRoleRef.current = null;
   };
 
@@ -676,13 +553,9 @@ export function CharacterCreatorModal({
       if (typeof saved.debtHook === "string") setDebtHook(saved.debtHook);
       if (typeof saved.aiBioGuidance === "string") setAiBioGuidance(saved.aiBioGuidance);
       if (typeof saved.aiContactsGuidance === "string") setAiContactsGuidance(saved.aiContactsGuidance);
-      if (saved.weaponChoices && typeof saved.weaponChoices === "object") setWeaponChoices(saved.weaponChoices as Record<string, string>);
-      if (typeof saved.outfitChoice === "string") setOutfitChoice(saved.outfitChoice);
-      if (typeof saved.cyberwareChoice === "string") setCyberwareChoice(saved.cyberwareChoice);
-      if (typeof saved.cyberwareChoice2 === "string") setCyberwareChoice2(saved.cyberwareChoice2);
+      if (saved.kitChoices && typeof saved.kitChoices === "object") setKitChoices(saved.kitChoices as Record<string, string>);
       if (Array.isArray(saved.cartItems)) setCartItems(saved.cartItems as typeof cartItems);
       if (Array.isArray(saved.selectedFashion)) setSelectedFashion(saved.selectedFashion as typeof selectedFashion);
-      if (typeof saved.freeformMoney === "number") setFreeformMoney(saved.freeformMoney);
       setDraftRestored(true);
     } else {
       setDraftRestored(false);
@@ -772,13 +645,9 @@ export function CharacterCreatorModal({
       debtHook,
       aiBioGuidance,
       aiContactsGuidance,
-      weaponChoices,
-      outfitChoice,
-      cyberwareChoice,
-      cyberwareChoice2,
+      kitChoices,
       cartItems,
       selectedFashion,
-      freeformMoney,
     });
   }, [
     open,
@@ -841,13 +710,9 @@ export function CharacterCreatorModal({
     debtHook,
     aiBioGuidance,
     aiContactsGuidance,
-    weaponChoices,
-    outfitChoice,
-    cyberwareChoice,
-    cyberwareChoice2,
+    kitChoices,
     cartItems,
     selectedFashion,
-    freeformMoney,
   ]);
 
   useEffect(() => {
@@ -858,12 +723,9 @@ export function CharacterCreatorModal({
       .then((data) => {
         if (cancelled) return;
         setRefData(data);
-        if (!data.rules_indexed) {
-          setMethod("freeform");
-        }
       })
-      .catch(() => {
-        // Fallback works cleanly even if backend reference endpoint is unavailable
+      .catch((err) => {
+        if (!cancelled) onNotify(err instanceof Error ? err.message : "Failed to load Corebook creation data");
       })
       .finally(() => {
         if (!cancelled) setLoadingRef(false);
@@ -886,9 +748,47 @@ export function CharacterCreatorModal({
     return map;
   }, [refData]);
 
+  // Fill every unset choice with the Corebook's first option.
+  useEffect(() => {
+    if (!refData) return;
+    const tables = refData.lifepath_tables;
+    const region = refData.cultural_regions[0];
+    const fill = (set: (fn: (v: string) => string) => void, value: string | undefined) => set((v) => v || value || "");
+    fill(setCulturalRegion, region?.region);
+    fill(setCulturalLanguage, region?.languages[0]);
+    fill(setFixerLanguage, region?.languages[0]);
+    fill(setPersonality, tables.personality?.[0]);
+    fill(setClothingStyle, tables.clothing_style?.[0]);
+    fill(setHairstyle, tables.hairstyle?.[0]);
+    fill(setAffectation, tables.affectation?.[0]);
+    fill(setValueMost, tables.value_most?.[0]);
+    fill(setFeelingsAboutPeople, tables.feelings_about_people?.[0]);
+    fill(setValuedPerson, tables.valued_person?.[0]);
+    fill(setValuedPossession, tables.valued_possession?.[0]);
+    fill(setFamilyBackground, tables.family_background?.[0]);
+    fill(setChildhoodEnv, tables.childhood_environment?.[0]);
+    fill(setFamilyCrisis, tables.family_crisis?.[0]);
+    fill(setLifeGoal, tables.life_goal?.[0]);
+    setCustomSkills((v) => (Object.keys(v).length ? v : basicSkillRanks(refData.skills)));
+    setSpecializations((v) => ({
+      Language: region?.languages[0] ?? "",
+      "Local Expert": refData.campaign_presets.districts[0]?.name ?? "",
+      "Martial Arts": refData.martial_arts_forms[0] ?? "",
+      ...v,
+    }));
+    setNomadVehicles((v) =>
+      v.length
+        ? v
+        : [
+            ...refData.nomad_vehicles.slice(0, 2),
+            ...refData.nomad_upgrades.filter((u) => u.rank <= 1).slice(0, 2).map((u) => u.name),
+          ],
+    );
+  }, [refData, resetCount]);
+
   // Initialize Role-dependent defaults cleanly when Role changes (preserving restored drafts)
   useEffect(() => {
-    if (!roleInfo) return;
+    if (!roleInfo || !refData) return;
     const roleChanged = prevRoleRef.current !== null && prevRoleRef.current !== selectedRole;
     prevRoleRef.current = selectedRole;
     if (skipNextRoleResetRef.current && !roleChanged) {
@@ -900,28 +800,11 @@ export function CharacterCreatorModal({
         setEdgerunnerSkills({ ...roleInfo.skills });
       }
       if (method === "complete_package") {
-        setCustomStats(buildSmart62Stats(roleInfo.key_stats));
-        setCustomSkills(defaultCompleteSkills(roleInfo));
+        setCustomStats(balanced62Stats());
+        setCustomSkills(defaultCompleteSkills(roleInfo, refData.skills));
       }
     }
-    if (roleChanged || Object.keys(weaponChoices).length === 0) {
-      const nextWep: Record<string, string> = {};
-      roleInfo.starting_weapons.forEach((w, idx) => {
-        if (w.type === "choice" && w.options?.length) {
-          nextWep[w.label || `choice-${idx}`] = w.options[0];
-        }
-      });
-      setWeaponChoices(nextWep);
-    }
-    if (roleChanged || !outfitChoice) {
-      setOutfitChoice(roleInfo.outfit_choice?.options[0] ?? "");
-    }
-    if (roleChanged || !cyberwareChoice) {
-      setCyberwareChoice(roleInfo.cyberware_choice?.options[0]?.name ?? "");
-    }
-    if (roleChanged || !cyberwareChoice2) {
-      setCyberwareChoice2(roleInfo.cyberware_choice_2?.options[0]?.name ?? "");
-    }
+    if (roleChanged) setKitChoices({});
     if (roleChanged || Object.keys(roleLifepath).length === 0) {
       const nextRoleLp: Record<string, string> = {};
       for (const f of roleInfo.role_lifepath) {
@@ -931,10 +814,10 @@ export function CharacterCreatorModal({
     }
     if (roleChanged) {
       if (selectedRole === "Exec") {
-        if (housing === "cargo_container") setHousing("corporate");
+        if (housing === "Cargo Container") setHousing("Corporate Conapt");
         if (traumaTeam === "None") setTraumaTeam("Silver");
-      } else {
-        if (housing === "corporate") setHousing("cargo_container");
+      } else if (housing.startsWith("Corporate")) {
+        setHousing("Cargo Container");
       }
     }
   }, [selectedRole, roleInfo?.name]);
@@ -985,7 +868,7 @@ export function CharacterCreatorModal({
         resolved[langKey] = 4;
       }
     }
-    if (selectedRole === "Medtech" && method !== "freeform") {
+    if (selectedRole === "Medtech") {
       const surg = (medtechAlloc.Surgery ?? 0) * 2;
       const mtech = (medtechAlloc.Pharmaceuticals ?? 0) + (medtechAlloc["Cryosystem Operation"] ?? 0);
       if (surg > 0) resolved["Surgery"] = Math.max(resolved["Surgery"] ?? 0, surg);
@@ -1005,7 +888,7 @@ export function CharacterCreatorModal({
     if (method !== "complete_package") return [];
     const entries = Object.entries(customSkills);
     const missing: string[] = [];
-    for (const req of Object.keys(BASIC_SKILL_DEFAULTS)) {
+    for (const req of Object.keys(basicSkillRanks(refData?.skills ?? []))) {
       if (req === "Language (Streetslang)" || req === "Local Expert (Your Home)") {
         const prefix = req.split("(", 1)[0].trim().toLowerCase();
         const ok = entries.some(
@@ -1017,7 +900,7 @@ export function CharacterCreatorModal({
       }
     }
     return missing;
-  }, [method, customSkills]);
+  }, [method, customSkills, refData]);
 
   // Starting Gear & Humanity preview
   const gearSummary = useMemo(() => {
@@ -1026,54 +909,37 @@ export function CharacterCreatorModal({
     let equippedWeapon: string | undefined;
     let equippedArmor: { name: string; sp: number } | undefined;
     let equippedHeadArmor: { name: string; sp: number } | undefined;
-    let money = freeformMoney;
+    let money = 500;
     let fashionSpent = 0;
     let spent = 0;
 
-    const parseSp = (label: string, fallback = 11) => {
-      const m = label.match(/SP\s*(\d+)/i);
-      return m ? Number(m[1]) : fallback;
-    };
+    const parseSp = (label: string) => Number(label.match(/SP\s*(\d+)/i)?.[1] ?? 0);
 
-    if ((method === "streetrat" || method === "edgerunner") && roleInfo) {
-      money = 500;
-      for (let i = 0; i < roleInfo.starting_weapons.length; i += 1) {
-        const w = roleInfo.starting_weapons[i];
-        const chosen = w.type === "choice" ? weaponChoices[w.label || `choice-${i}`] || w.options?.[0] : w.item;
-        if (!chosen) continue;
-        const qty = w.qty ?? 1;
-        inventory[chosen] = (inventory[chosen] ?? 0) + qty;
-        if (!equippedWeapon && !/ammunition|grenade|shield/i.test(chosen)) {
-          equippedWeapon = chosen;
-        }
-      }
-      for (const a of roleInfo.starting_armor) {
-        inventory[a] = (inventory[a] ?? 0) + 1;
-        if (/head|helmet|cowl/i.test(a)) {
-          const sp = parseSp(a, 11);
-          if (!equippedHeadArmor || sp > equippedHeadArmor.sp) {
-            equippedHeadArmor = { name: a, sp };
+    if (method !== "complete_package") {
+      if (roleInfo) {
+        for (const w of pickKit("weapons", roleInfo.starting_weapons, kitChoices)) {
+          inventory[w.item] = (inventory[w.item] ?? 0) + w.qty;
+          if (!equippedWeapon && !/ammunition|grenade|shield/i.test(w.item)) {
+            equippedWeapon = w.item;
           }
-        } else if (!/shield/i.test(a) && (!equippedArmor || /Body/i.test(a))) {
-          equippedArmor = { name: a, sp: parseSp(a, 11) };
         }
-      }
-      for (const o of roleInfo.starting_outfit) {
-        inventory[o] = (inventory[o] ?? 0) + 1;
-      }
-      if (outfitChoice) {
-        inventory[outfitChoice] = (inventory[outfitChoice] ?? 0) + 1;
-      }
-      for (const cw of roleInfo.starting_cyberware) {
-        cyberware.push({ ...cw });
-      }
-      if (roleInfo.cyberware_choice && cyberwareChoice) {
-        const found = roleInfo.cyberware_choice.options.find((c) => c.name === cyberwareChoice);
-        if (found) cyberware.push({ ...found });
-      }
-      if (roleInfo.cyberware_choice_2 && cyberwareChoice2) {
-        const found = roleInfo.cyberware_choice_2.options.find((c) => c.name === cyberwareChoice2);
-        if (found) cyberware.push({ ...found });
+        for (const a of roleInfo.starting_armor) {
+          inventory[a] = (inventory[a] ?? 0) + 1;
+          if (/head|helmet|cowl/i.test(a)) {
+            const sp = parseSp(a);
+            if (!equippedHeadArmor || sp > equippedHeadArmor.sp) {
+              equippedHeadArmor = { name: a, sp };
+            }
+          } else if (!/shield/i.test(a) && (!equippedArmor || /Body/i.test(a))) {
+            equippedArmor = { name: a, sp: parseSp(a) };
+          }
+        }
+        for (const o of pickKit("outfit", roleInfo.starting_outfit, kitChoices)) {
+          inventory[o.item] = (inventory[o.item] ?? 0) + o.qty;
+        }
+        for (const cw of pickKit<CreationKitCyberware>("cyberware", roleInfo.starting_cyberware, kitChoices)) {
+          cyberware.push({ name: cw.item, hl: cw.hl, install: cw.install, notes: cw.notes });
+        }
       }
     } else {
       for (const item of cartItems) {
@@ -1098,7 +964,7 @@ export function CharacterCreatorModal({
             const isShield = loc === "shield" || /shield/i.test(item.name);
             const isHead = loc.includes("head") || /head|helmet|cowl|bodyweight/i.test(item.name);
             const isBody = !loc || loc.includes("body") || (!isHead && !isShield);
-            const itemSp = typeof item.sp === "number" && item.sp > 0 ? item.sp : parseSp(item.name, 11);
+            const itemSp = typeof item.sp === "number" && item.sp > 0 ? item.sp : parseSp(item.name);
             if (!isShield && isHead) {
               if (!equippedHeadArmor || itemSp > equippedHeadArmor.sp) {
                 equippedHeadArmor = { name: item.name, sp: itemSp };
@@ -1117,10 +983,12 @@ export function CharacterCreatorModal({
         inventory[f.name] = (inventory[f.name] ?? 0) + 1;
         fashionSpent += f.cost_eb;
       }
-      money = method === "complete_package" ? Math.max(0, 2550 - spent) : freeformMoney;
+      money = Math.max(0, 2550 - spent);
     }
 
-    const totalHl = cyberware.reduce((acc, c) => acc + (Number.isFinite(c.hl) ? c.hl : 0), 0);
+    const itemHl = cyberware.reduce((acc, c) => acc + (Number.isFinite(c.hl) ? c.hl : 0), 0);
+    // The Corebook prints each starter kit's total Humanity Loss.
+    const totalHl = method === "complete_package" ? itemHl : (roleInfo?.starting_hl ?? itemHl);
     return {
       inventory,
       cyberware,
@@ -1132,7 +1000,7 @@ export function CharacterCreatorModal({
       spentEb: method === "complete_package" ? spent : 0,
       totalHl,
     };
-  }, [method, roleInfo, weaponChoices, outfitChoice, cyberwareChoice, cyberwareChoice2, cartItems, selectedFashion, freeformMoney]);
+  }, [method, roleInfo, kitChoices, cartItems, selectedFashion]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -1193,230 +1061,91 @@ export function CharacterCreatorModal({
     return Object.keys(raw).some((k) => k.toLowerCase() === target);
   }, [culturalLanguage, method, edgerunnerSkills, customSkills, roleInfo]);
 
+  const cyberwareIndex = useMemo(
+    () => new Map((refData?.shop.cyberware ?? []).map((c) => [itemKey(c.name), c])),
+    [refData],
+  );
+
+  /** The foundation(s) an option needs, as the Corebook states them; empty for standalone cyberware. */
+  const foundationsOf = (item: CreationShopItem): string[] => {
+    const stated = item.description.match(/^(Cyberarm|Cyberleg) Option/)?.[1];
+    const all = String(item.stats.foundation ?? "").split(" or ").filter(Boolean);
+    if (all.includes(item.name)) return [];
+    return stated ? [stated] : all;
+  };
+
   const cyberwarePrereqWarnings = useMemo(() => {
-    const names = gearSummary.cyberware.map((c) => c.name.toLowerCase());
-    const has = (needle: string) => names.some((n) => n.includes(needle));
-    const warnings: Array<{ option: string; foundation: string; cost_eb: number; hl: number }> = [];
-    const rules: Array<{ foundation: string; match: RegExp; cost_eb: number; hl: number }> = [
-      {
-        foundation: "Neural Link",
-        match: /kerenzikov|sandevistan|pain editor|chipware socket|interface plugs|reflex co-?processor|tactile boost|olfactory boost|chemical analyzer/i,
-        cost_eb: 500,
-        hl: 7,
-      },
-      {
-        foundation: "Cybereye",
-        match: /anti-dazzle|chyron|color shift|dartgun|image enhance|low light|infrared|uv|microoptics|microvideo|radiation detector|targeting scope|teleoptics|virtuality/i,
-        cost_eb: 100,
-        hl: 7,
-      },
-      {
-        foundation: "Cyberaudio Suite",
-        match: /amplified hearing|audio recorder|bug detector|homing tracer|internal agent|level damper|radio communicator|radio scanner|radar detector|scrambler|voice stress analyzer/i,
-        cost_eb: 500,
-        hl: 7,
-      },
-      {
-        foundation: "Cyberarm",
-        match: /big knucks|cyberdeck.*cyberarm|grapple hand|medscanner|popup|quick change mount|rippers|scratchers|shoulder cam|slice ['’]n dice|subdermal grip|techscanner|wolvers/i,
-        cost_eb: 500,
-        hl: 7,
-      },
-      {
-        foundation: "Cyberleg",
-        match: /grip foot|jump booster|skate foot|talon foot|web foot|tread unit/i,
-        cost_eb: 100,
-        hl: 3,
-      },
-      {
-        foundation: "Interface Plugs",
-        match: /linear frame|smartgun link/i,
-        cost_eb: 500,
-        hl: 7,
-      },
-    ];
+    const owned = new Set(gearSummary.cyberware.map((c) => itemKey(c.name)));
+    const warnings: Array<{ option: string; foundation: CreationShopItem }> = [];
     for (const cw of gearSummary.cyberware) {
-      for (const r of rules) {
-        if (r.match.test(cw.name) && !has(r.foundation.toLowerCase())) {
-          if (!warnings.some((w) => w.foundation === r.foundation)) {
-            warnings.push({ option: cw.name, foundation: r.foundation, cost_eb: r.cost_eb, hl: r.hl });
-          }
-        }
+      const item = cyberwareIndex.get(itemKey(cw.name));
+      const needed = item ? foundationsOf(item) : [];
+      if (!needed.length || needed.some((f) => owned.has(itemKey(f)))) continue;
+      const foundation = cyberwareIndex.get(itemKey(needed[0]));
+      if (foundation && !warnings.some((w) => w.foundation.id === foundation.id)) {
+        warnings.push({ option: cw.name, foundation });
       }
-    }
-    const eyeCount = gearSummary.cyberware.filter((c) => /^cybereye/i.test(c.name)).length;
-    if (eyeCount === 1 && gearSummary.cyberware.some((c) => /targeting scope|teleoptics|virtuality|low light|anti-dazzle/i.test(c.name))) {
-      warnings.push({ option: "Paired Cybereye Optics", foundation: "Cybereye (2nd Eye Recommended)", cost_eb: 100, hl: 7 });
     }
     return warnings;
-  }, [gearSummary.cyberware]);
+  }, [gearSummary.cyberware, cyberwareIndex]);
 
   const cyberdeckSlotSummary = useMemo(() => {
-    const isCyberdeckUnit = (rawName: string, subtype?: string) => {
-      if (subtype === "cyberdeck") return true;
-      return /cyberdeck/i.test(rawName) && !/\(\s*cyberdeck\s*[·:]/i.test(rawName);
+    const hardware = new Map((refData?.shop.hardware ?? []).map((h) => [itemKey(h.name), h]));
+    const programs = new Map((refData?.shop.program ?? []).map((p) => [itemKey(p.name), p]));
+    const deckSlots = (name: string) => {
+      const slots = hardware.get(itemKey(name))?.stats.slots;
+      if (typeof slots === "number") return slots;
+      return Number(name.match(/(\d+)\s*slots?/i)?.[1] ?? 0);
     };
-    const parseSlots = (rawName: string, statsObj?: Record<string, unknown>, summary?: string): number => {
-      if (typeof statsObj?.slots === "number" && statsObj.slots > 0) return statsObj.slots;
-      const m = `${rawName} ${summary ?? ""}`.match(/(\d+)\s*slots?/i);
-      return m ? Math.max(1, parseInt(m[1], 10)) : 1;
-    };
-    const deckCandidates = [
-      ...cartItems.filter((i) => {
-        if (i.category !== "hardware") return false;
-        const refHw = refData?.shop.hardware?.find((h) => h.name.toLowerCase() === i.name.toLowerCase());
-        return isCyberdeckUnit(i.name, typeof refHw?.stats?.subtype === "string" ? refHw.stats.subtype : undefined);
-      }),
-      ...gearSummary.cyberware.filter((c) => isCyberdeckUnit(c.name)).map((c) => ({ name: c.name, qty: 1 })),
-    ];
-    const hasDeck = deckCandidates.length > 0 || (method !== "complete_package" && method !== "freeform" && selectedRole === "Netrunner");
-    let capacity = 0;
-    if (deckCandidates.length > 0) {
-      for (const dItem of deckCandidates) {
-        if (/excellent/i.test(dItem.name)) capacity = Math.max(capacity, 9);
-        else if (/poor/i.test(dItem.name)) capacity = Math.max(capacity, 5);
-        else capacity = Math.max(capacity, 7);
-      }
-    } else if (selectedRole === "Netrunner") {
-      capacity = 7;
-    }
+    const ownedNames = [...Object.keys(gearSummary.inventory), ...gearSummary.cyberware.map((c) => c.name)];
+    const capacities = ownedNames.filter((n) => /cyberdeck/i.test(n)).map(deckSlots);
+    let capacity = Math.max(0, ...capacities);
+    const hasDeck = capacities.length > 0;
     const hasBodyweight = Object.keys(gearSummary.inventory).some((n) => /bodyweight suit/i.test(n));
     if (capacity > 0 && hasBodyweight) capacity += 1;
 
     let usedSlots = 0;
     for (const item of cartItems) {
       if (item.category === "program") {
-        const refProg = refData?.shop.program?.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
-        usedSlots += parseSlots(item.name, refProg?.stats, refProg?.summary) * item.qty;
-      } else if (item.category === "hardware") {
-        const refHw = refData?.shop.hardware?.find((h) => h.name.toLowerCase() === item.name.toLowerCase());
-        if (!isCyberdeckUnit(item.name, typeof refHw?.stats?.subtype === "string" ? refHw.stats.subtype : undefined)) {
-          usedSlots += parseSlots(item.name, refHw?.stats, refHw?.summary) * item.qty;
-        }
+        const isIce = String(programs.get(itemKey(item.name))?.stats.class ?? "").includes("Black ICE");
+        usedSlots += (isIce ? 2 : 1) * item.qty;
+      } else if (item.category === "hardware" && !/cyberdeck/i.test(item.name)) {
+        const text = hardware.get(itemKey(item.name))?.description ?? "";
+        usedSlots += Number(text.match(/(\d+)\s*(?:Program\/Hardware )?Slots/i)?.[1] ?? 1) * item.qty;
       }
     }
     return { hasDeck, capacity, usedSlots, overCapacity: capacity > 0 && usedSlots > capacity };
-  }, [cartItems, gearSummary.cyberware, gearSummary.inventory, method, selectedRole, refData]);
+  }, [cartItems, gearSummary.cyberware, gearSummary.inventory, refData]);
 
-  // Cyberware Foundation Slot-Cap checks (Corebook pp. 111–116, 360–368)
+  // Option Slot caps, read from the Corebook's foundation and option descriptions
   const cyberwareSlotWarnings = useMemo(() => {
-    const rules: Array<{
-      foundation: string;
-      cap: number;
-      matchFoundation: RegExp;
-      matchOption: RegExp;
-      slotStr: string;
-    }> = [
-      {
-        foundation: "Cybereye",
-        cap: 3,
-        matchFoundation: /^cybereye/i,
-        matchOption:
-          /anti-dazzle|chyron|color shift|dartgun|image enhance|low light|infrared|uv|microoptics|microvideo|radiation detector|targeting scope|teleoptics|virtuality|flashbulb/i,
-        slotStr: "cyberoptic",
-      },
-      {
-        foundation: "Cyberaudio Suite",
-        cap: 3,
-        matchFoundation: /cyberaudio suite/i,
-        matchOption:
-          /amplified hearing|audio recorder|bug detector|homing tracer|internal agent|level damper|radio communicator|radio scanner|radar detector|scrambler|voice stress analyzer/i,
-        slotStr: "cyberaudio option",
-      },
-      {
-        foundation: "Neural Link",
-        cap: 5,
-        matchFoundation: /neural link/i,
-        matchOption:
-          /kerenzikov|sandevistan|pain editor|chipware socket|interface plugs|reflex co-?processor|tactile boost|olfactory boost|chemical analyzer|braindance recorder|skill chip|memory chip/i,
-        slotStr: "neural",
-      },
-      {
-        foundation: "Cyberarm",
-        cap: 4,
-        matchFoundation: /^cyberarm/i,
-        matchOption:
-          /big knucks|cyberdeck|grapple hand|medscanner|popup|quick change mount|rippers|scratchers|shoulder cam|slice [‘']n dice|standard hand|subdermal grip|techscanner|tool hand|wolvers|hardened shielding|plastic covering|realskinn|superchrome/i,
-        slotStr: "cyberarm option",
-      },
-      {
-        foundation: "Cyberleg",
-        cap: 3,
-        matchFoundation: /^cyberleg/i,
-        matchOption:
-          /standard foot|grip foot|jump booster|skate foot|talon foot|web foot|tread unit/i,
-        slotStr: "cyberleg option",
-      },
-    ];
-
-    const getOptionSlots = (itemName: string): number => {
-      const shopItem = refData?.shop.cyberware?.find(
-        (c) => c.name.toLowerCase() === itemName.toLowerCase()
-      );
-      if (typeof shopItem?.stats?.slots_required === "number" && shopItem.stats.slots_required > 0) {
-        return shopItem.stats.slots_required;
-      }
-      if (/dartgun|cyberdeck|popup shield|tread unit/i.test(itemName)) return 3;
-      if (
-        /anti-dazzle|image enhance|low light|infrared|uv|microvideo|virtuality|medscanner|popup|shoulder cam|techscanner|grip foot|jump booster|skate foot|web foot/i.test(
-          itemName
-        )
-      ) {
-        return 2;
-      }
-      return 1;
-    };
-
-    const warnings: Array<{
-      foundation: string;
-      usedSlots: number;
-      maxSlots: number;
-      options: string[];
-    }> = [];
-
-    for (const r of rules) {
-      const foundationCount = gearSummary.cyberware.filter((c) =>
-        r.matchFoundation.test(c.name)
-      ).length;
-      const maxSlots = Math.max(1, foundationCount) * r.cap;
-
-      const matchingOptions: Array<{ name: string; slots: number }> = [];
-      for (const cw of gearSummary.cyberware) {
-        if (r.matchFoundation.test(cw.name)) continue;
-        const shopItem = refData?.shop.cyberware?.find(
-          (c) => c.name.toLowerCase() === cw.name.toLowerCase()
-        );
-        const slot = String(shopItem?.stats?.slot ?? "").toLowerCase();
-        const isMatch =
-          r.matchOption.test(cw.name) ||
-          (slot.includes(r.slotStr) && !slot.includes("foundational"));
-        if (isMatch) {
-          matchingOptions.push({ name: cw.name, slots: getOptionSlots(cw.name) });
-        }
-      }
-
-      const totalSlotsUsed = matchingOptions.reduce((acc, o) => acc + o.slots, 0);
-      if (totalSlotsUsed > maxSlots) {
-        warnings.push({
-          foundation: r.foundation,
-          usedSlots: totalSlotsUsed,
-          maxSlots,
-          options: matchingOptions.map((o) => o.name),
-        });
-      }
+    const slotsTaken = (item: CreationShopItem) =>
+      /doesn[’']t take up/i.test(item.description)
+        ? 0
+        : Number(item.description.match(/takes(?: up)? (\d+) (?:\w+ )?Option Slots?/i)?.[1] ?? 1);
+    const used = new Map<string, { usedSlots: number; options: string[] }>();
+    for (const cw of gearSummary.cyberware) {
+      const item = cyberwareIndex.get(itemKey(cw.name));
+      const foundation = item ? foundationsOf(item)[0] : undefined;
+      if (!item || !foundation) continue;
+      const entry = used.get(foundation) ?? { usedSlots: 0, options: [] };
+      used.set(foundation, { usedSlots: entry.usedSlots + slotsTaken(item), options: [...entry.options, cw.name] });
     }
-
-    return warnings;
-  }, [gearSummary.cyberware, refData]);
+    return Array.from(used, ([foundation, entry]) => {
+      const cap = Number(
+        cyberwareIndex.get(itemKey(foundation))?.description.match(/(\d+) (?:\w+ )?Option Slots/i)?.[1] ?? 0,
+      );
+      const count = gearSummary.cyberware.filter((c) => itemKey(c.name) === itemKey(foundation)).length;
+      return { foundation, maxSlots: Math.max(1, count) * cap, ...entry };
+    }).filter((w) => w.maxSlots > 0 && w.usedSlots > w.maxSlots);
+  }, [gearSummary.cyberware, cyberwareIndex]);
 
   // Validation checks
   const validationIssues = useMemo(() => {
     const issues: string[] = [];
     if (!name.trim() && !realName.trim()) issues.push("Enter a Handle / Name on Step 1 (Identity & Role).");
+    if (!refData) issues.push("Corebook creation data has not loaded.");
     if (method === "complete_package") {
-      if (!refData?.rules_indexed) {
-        issues.push("Complete Package needs your Corebook PDF uploaded in Settings → Corebook PDF (or switch to Freeform).");
-      }
       if (statSum !== 62) {
         issues.push(`STAT total must equal 62 for Complete Package (currently ${statSum}).`);
       }
@@ -1441,11 +1170,11 @@ export function CharacterCreatorModal({
         issues.push("All 20 Role Skills in Edgerunner must be between 2 and 6.");
       }
     }
-    if (selectedRole === "Tech" && method !== "freeform") {
+    if (selectedRole === "Tech") {
       const sum = Object.values(techMakerRanks).reduce((a, b) => a + b, 0);
       if (sum !== 8) issues.push(`Tech Maker specialty points must total 8 (currently ${sum}).`);
     }
-    if (selectedRole === "Medtech" && method !== "freeform") {
+    if (selectedRole === "Medtech") {
       const sum = Object.values(medtechAlloc).reduce((a, b) => a + b, 0);
       if (sum !== 4) issues.push(`Medtech Medicine specialty points must total 4 (currently ${sum}).`);
     }
@@ -1474,18 +1203,18 @@ export function CharacterCreatorModal({
       setCulturalLanguage(pickRandom(reg.languages));
     }
     if (tables) {
-      const p = pickRandom(tables.personality ?? [personality]);
-      const cs = pickRandom(tables.clothing_style ?? [clothingStyle]);
-      const hs = pickRandom(tables.hairstyle ?? [hairstyle]);
-      const af = pickRandom(tables.affectation ?? [affectation]);
-      const vm = pickRandom(tables.value_most ?? [valueMost]);
-      const fp = pickRandom(tables.feelings_about_people ?? [feelingsAboutPeople]);
-      const vp = pickRandom(tables.valued_person ?? [valuedPerson]);
-      const vpos = pickRandom(tables.valued_possession ?? [valuedPossession]);
-      const fb = pickRandom(tables.family_background ?? [familyBackground]);
-      const ce = pickRandom(tables.childhood_environment ?? [childhoodEnv]);
-      const fc = pickRandom(tables.family_crisis ?? [familyCrisis]);
-      const lg = pickRandom(tables.life_goal ?? [lifeGoal]);
+      const p = pickRandom(tables.personality);
+      const cs = pickRandom(tables.clothing_style);
+      const hs = pickRandom(tables.hairstyle);
+      const af = pickRandom(tables.affectation);
+      const vm = pickRandom(tables.value_most);
+      const fp = pickRandom(tables.feelings_about_people);
+      const vp = pickRandom(tables.valued_person);
+      const vpos = pickRandom(tables.valued_possession);
+      const fb = pickRandom(tables.family_background);
+      const ce = pickRandom(tables.childhood_environment);
+      const fc = pickRandom(tables.family_crisis);
+      const lg = pickRandom(tables.life_goal);
       setPersonality(p);
       setClothingStyle(cs);
       setHairstyle(hs);
@@ -1509,26 +1238,26 @@ export function CharacterCreatorModal({
       const friendCount = Math.max(0, d(10) - 7);
       const nextFriends: FriendEntry[] = Array.from({ length: friendCount }, (_, idx) => ({
         name: `Contact #${idx + 1}`,
-        relationship: pickRandom(tables.friend_relationship ?? ["Someone from The Street"]),
+        relationship: pickRandom(tables.friend_relationship),
         note: "Reliable ally from before Session 1.",
       }));
       setFriends(nextFriends);
 
       const enemyCount = Math.max(0, d(10) - 7);
       const nextEnemies: EnemyEntry[] = Array.from({ length: enemyCount }, (_, idx) => ({
-        who: pickRandom(tables.enemy_who ?? ["Ex-friend"]),
+        who: pickRandom(tables.enemy_who),
         name: `Rival #${idx + 1}`,
         wronged: d(2) === 1 ? "I wronged them" : "They wronged me",
-        cause: pickRandom(tables.enemy_cause ?? ["Betrayal"]),
-        backup: pickRandom(tables.enemy_backup ?? ["Just themselves"]),
-        revenge: pickRandom(tables.sweet_revenge ?? ["Avoid the scum."]),
+        cause: pickRandom(tables.enemy_cause),
+        backup: pickRandom(tables.enemy_backup),
+        revenge: pickRandom(tables.sweet_revenge),
       }));
       setEnemies(nextEnemies);
 
       const loveCount = Math.max(0, d(10) - 7);
       const nextLove: LoveEntry[] = Array.from({ length: loveCount }, (_, idx) => ({
         name: `Former Flame #${idx + 1}`,
-        outcome: pickRandom(tables.tragic_love ?? ["It just didn't work out."]),
+        outcome: pickRandom(tables.tragic_love),
       }));
       setLoveAffairs(nextLove);
 
@@ -1811,102 +1540,44 @@ export function CharacterCreatorModal({
       const primaryName = name.trim() || realName.trim();
       const handleVal = name.trim() || primaryName;
       const realNameVal = realName.trim() || undefined;
-      let createdId = "";
-      if (method !== "freeform" && refData?.rules_indexed) {
-        const res = await createRulesPlayerCharacter(campaignId, soloRevision, {
-          name: primaryName,
-          handle: handleVal,
-          real_name: realNameVal,
-          real_name_hidden: realNameHidden,
-          gender: cleanGender || undefined,
-          pronouns: pronouns.trim() || undefined,
-          portrait_url: portraitUrl.trim() || undefined,
-          color: characterColor,
-          role: selectedRole,
-          method,
-          ...(method === "streetrat" ? { template_rolls: [streetratRoll] } : {}),
-          ...(method === "edgerunner" ? { template_rolls: edgerunnerRolls, skills: edgerunnerSkills } : {}),
-          ...(method === "complete_package" ? { stats: customStats, skills: customSkills } : {}),
-          specializations,
-          role_choices: buildRoleChoicesPayload(),
-          cultural_language: culturalLanguage.trim().toLowerCase() === "streetslang" ? undefined : culturalLanguage.trim() || undefined,
-          housing,
-          lifestyle,
-          trauma_team: traumaTeam,
-          reputation,
-          ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
-          ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
-          lifepath: lifepathPayload,
-          backstory: backstoryPayload,
-          starting_gear: {
-            inventory: gearSummary.inventory,
-            cyberware: gearSummary.cyberware,
-            humanity_loss: gearSummary.totalHl,
-            equipped_weapon: gearSummary.equippedWeapon,
-            equipped_armor: gearSummary.equippedArmor,
-            ...(gearSummary.equippedHeadArmor ? { equipped_head_armor: gearSummary.equippedHeadArmor } : {}),
-            fashion: selectedFashion,
-            money_spent_eb: gearSummary.spentEb,
-          },
-        });
-        createdId = res.character_id;
-      } else {
-        const created = await createAndAttachCharacter(campaignId, campaignRevision, {
-          name: primaryName,
-          stats: activeStats,
-          skills: effectiveSkills,
-          money: gearSummary.money,
+      const res = await createRulesPlayerCharacter(campaignId, soloRevision, {
+        name: primaryName,
+        handle: handleVal,
+        real_name: realNameVal,
+        real_name_hidden: realNameHidden,
+        gender: cleanGender || undefined,
+        pronouns: pronouns.trim() || undefined,
+        portrait_url: portraitUrl.trim() || undefined,
+        color: characterColor,
+        role: selectedRole,
+        method,
+        ...(method === "streetrat" ? { template_rolls: [streetratRoll] } : {}),
+        ...(method === "edgerunner" ? { template_rolls: edgerunnerRolls, skills: edgerunnerSkills } : {}),
+        ...(method === "complete_package" ? { stats: customStats, skills: customSkills } : {}),
+        specializations,
+        role_choices: buildRoleChoicesPayload(),
+        cultural_language: culturalLanguage.trim().toLowerCase() === "streetslang" ? undefined : culturalLanguage.trim() || undefined,
+        housing,
+        lifestyle,
+        trauma_team: traumaTeam,
+        reputation,
+        ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
+        ...(startingHooksPayload ? { starting_hooks: startingHooksPayload } : {}),
+        lifepath: lifepathPayload,
+        backstory: backstoryPayload,
+        starting_gear: {
           inventory: gearSummary.inventory,
-          humanity: startingHumanity,
-          detail: {
-            handle: handleVal,
-            ...(realNameVal ? { real_name: realNameVal } : {}),
-            real_name_hidden: realNameHidden,
-            ...(cleanGender ? { gender: cleanGender } : {}),
-            ...(pronouns.trim() ? { pronouns: pronouns.trim() } : {}),
-            ...(portraitUrl.trim() ? { portrait_url: portraitUrl.trim() } : {}),
-            color: characterColor,
-            roles: [{ role: selectedRole, rank: 4, choices: buildRoleChoicesPayload() }],
-            creation: {
-              method: "freeform",
-              initial_emp: activeStats.EMP,
-              ...(effectiveBody !== activeStats.BODY ? { effective_body: effectiveBody } : {}),
-              ...(effectiveBody !== activeStats.BODY || subdermalSp > 0
-                ? { cyberware_modifiers: { effective_body: effectiveBody, subdermal_sp: subdermalSp } }
-                : {}),
-            },
-            ...(effectiveBody !== activeStats.BODY ? { death_save: effectiveBody } : {}),
-            housing,
-            lifestyle,
-            ...(traumaTeam !== "None" ? { trauma_team: traumaTeam } : {}),
-            reputation,
-            ...(reputationNote.trim() ? { reputation_note: reputationNote.trim() } : {}),
-            lifepath: lifepathPayload,
-            backstory: backstoryPayload,
-            cyberware: gearSummary.cyberware,
-            ...(gearSummary.equippedWeapon ? { equipped_weapon: gearSummary.equippedWeapon } : {}),
-            ...((() => {
-              const bodyArm = gearSummary.equippedArmor;
-              if (subdermalSp > 0 && (!bodyArm || bodyArm.sp < subdermalSp)) {
-                return { equipped_armor: { name: subdermalName, sp: subdermalSp } };
-              }
-              return bodyArm ? { equipped_armor: bodyArm } : {};
-            })()),
-            ...((() => {
-              const headArm = gearSummary.equippedHeadArmor;
-              if (subdermalSp > 0 && (!headArm || headArm.sp < subdermalSp)) {
-                return { equipped_head_armor: { name: subdermalName, sp: subdermalSp } };
-              }
-              return headArm ? { equipped_head_armor: headArm } : {};
-            })()),
-            ...(selectedFashion.length ? { fashion: selectedFashion } : {}),
-          },
-        });
-        createdId = created.id;
-      }
-
+          cyberware: gearSummary.cyberware,
+          humanity_loss: gearSummary.totalHl,
+          equipped_weapon: gearSummary.equippedWeapon,
+          equipped_armor: gearSummary.equippedArmor,
+          ...(gearSummary.equippedHeadArmor ? { equipped_head_armor: gearSummary.equippedHeadArmor } : {}),
+          fashion: selectedFashion,
+          money_spent_eb: gearSummary.spentEb,
+        },
+      });
       clearDraft(draftKey);
-      await onCreated(createdId, primaryName);
+      await onCreated(res.character_id, primaryName);
       resetCharacterDefaults();
       onClose();
     } catch (err) {
@@ -1918,37 +1589,15 @@ export function CharacterCreatorModal({
 
   if (!open) return null;
 
-  const statDescriptions = refData?.stats;
-  const methodsList: CreationMethodInfo[] = refData?.methods ?? [
-    {
-      id: "streetrat",
-      name: "Streetrat (Templates)",
-      badge: "Best for Beginners",
-      summary: "Pick a Role, roll/choose 1 template row, and start playing immediately.",
-      rules: "Uses Corebook Role templates, 20 Role skills, and preset starter gear + 500 eb.",
-    },
-    {
-      id: "edgerunner",
-      name: "Edgerunner (Fast & Dirty)",
-      badge: "Balanced Control",
-      summary: "Keep your Role gear while rolling STAT columns and customizing 86 skill points.",
-      rules: "Customize 86 weighted points across your Role's 20 skills + 500 eb.",
-    },
-    {
-      id: "complete_package",
-      name: "Complete Package (Calculated)",
-      badge: "Full Point-Buy",
-      summary: "Full custom 62 STAT points, 86 Skill points, and 2,550 eb + 800 eb fashion.",
-      rules: "13 Basic skills >= 2; buy any weapons, armor, and cyberware directly.",
-    },
-    {
-      id: "freeform",
-      name: "Freeform / Custom Sheet",
-      badge: "Unrestricted",
-      summary: "Set any STATs, Skills, Backstory, and Gear with zero point-buy locks.",
-      rules: "Full creative freedom for house rules or imports.",
-    },
-  ];
+  const methodsList: CreationMethodInfo[] = refData?.methods ?? [];
+
+  const specializationOptions: Record<(typeof SPECIALIZATION_BASES)[number], string[]> = {
+    Language: Array.from(new Set((refData?.cultural_regions ?? []).flatMap((r) => r.languages))).sort(),
+    "Local Expert": ["Your Home", ...(refData?.campaign_presets.districts ?? []).map((d) => d.name)],
+    Science: [],
+    "Play Instrument": [],
+    "Martial Arts": refData?.martial_arts_forms ?? [],
+  };
 
   const availableSkillsForEdit: CreationSkillInfo[] = (() => {
     if (method === "edgerunner" && roleInfo) {
@@ -1958,7 +1607,7 @@ export function CharacterCreatorModal({
           name: skillName,
           stat: skillStat(skillName, skillIndex),
           cost: skillBaseCost(skillName, skillIndex),
-          basic: isBasicSkillName(skillName),
+          basic: meta?.basic ?? false,
           specializable: skillName.includes("(choose 1)"),
           group: meta?.group ?? "Role",
           printed_page: meta?.printed_page,
@@ -1968,7 +1617,7 @@ export function CharacterCreatorModal({
       });
     }
     const baseList = refData?.skills ?? [];
-    if (method === "complete_package" || method === "freeform") {
+    if (method === "complete_package") {
       const known = new Set(baseList.map((s) => (s.basic_skill_name || s.name).toLowerCase()));
       const extras: CreationSkillInfo[] = [];
       for (const skillName of Object.keys(customSkills)) {
@@ -2033,58 +1682,28 @@ export function CharacterCreatorModal({
   const classifyCyberwareSubcategory = (
     item: CreationShopItem,
   ): "foundation" | "neural" | "cyberoptic" | "cyberaudio" | "cyberlimb" | "body" | "fashionware" => {
-    const slot = String(item.stats?.slot ?? "").toLowerCase();
-    const n = item.name.toLowerCase();
-    if (slot.includes("foundational") || /^(neural link|cybereye|cyberaudio suite|cyberarm|cyberleg)\b/i.test(n)) {
-      return "foundation";
-    }
-    if (
-      slot.includes("neural") ||
-      /kerenzikov|sandevistan|pain editor|chipware|interface plugs|reflex|tactile|olfactory|chemical|braindance|skill chip|memory chip/i.test(n)
-    ) {
-      return "neural";
-    }
-    if (
-      slot.includes("cyberoptic") ||
-      /anti-dazzle|chyron|color shift|dartgun|image enhance|low light|infrared|uv|microoptics|microvideo|radiation detector|targeting scope|teleoptics|virtuality/i.test(n)
-    ) {
-      return "cyberoptic";
-    }
-    if (
-      slot.includes("cyberaudio") ||
-      /amplified hearing|audio recorder|bug detector|homing tracer|internal agent|level damper|radio|radar|scrambler|voice stress/i.test(n)
-    ) {
-      return "cyberaudio";
-    }
-    if (
-      slot.includes("cyberarm") ||
-      slot.includes("cyberleg") ||
-      /hand|foot|knucks|rippers|scratchers|wolvers|slice|popup|grapple|medscanner|techscanner|shoulder cam|quick change|skate|jump|tread|hardened shielding|realskinn|superchrome|plastic covering/i.test(n)
-    ) {
-      return "cyberlimb";
-    }
-    if (
-      slot.includes("fashionware") ||
-      /biomonitor|chemskin|emp threading|light tattoo|shift tacts|skinwatch|techhair/i.test(n)
-    ) {
-      return "fashionware";
-    }
-    return "body";
+    const foundations = String(item.stats.foundation ?? "").split(" or ");
+    if (foundations.includes(item.name)) return "foundation";
+    const groups: Record<string, "neural" | "cyberoptic" | "cyberaudio" | "cyberlimb" | "fashionware"> = {
+      Neuralware: "neural",
+      Cyberoptics: "cyberoptic",
+      Cyberaudio: "cyberaudio",
+      Cyberlimbs: "cyberlimb",
+      Fashionware: "fashionware",
+    };
+    return groups[String(item.stats.group ?? "")] ?? "body";
   };
 
   const classifyProgramSubcategory = (item: CreationShopItem): "booster" | "defender" | "attacker" | "black_ice" => {
-    const st = String(item.stats?.subtype ?? item.stats?.class ?? "").toLowerCase();
-    const sum = `${item.name} ${item.summary}`.toLowerCase();
-    if (st.includes("black ice") || st.includes("ice") || /hellhound|asp|giant|kraken|liche|raven|scorpion|skunk|wisp|killer|sabertooth|dragon/i.test(sum)) {
-      return "black_ice";
-    }
-    if (st.includes("defender") || /armor|flak|shield/i.test(sum)) return "defender";
-    if (st.includes("attacker") || /sword|banhammer|deckkrash|hellbolt|nervescrub|poison flatline|superglue|vrizzbolt/i.test(sum)) return "attacker";
+    const cls = String(item.stats.class ?? "");
+    if (cls.includes("Black ICE") || item.stats.kind === "demon") return "black_ice";
+    if (cls.includes("Defender")) return "defender";
+    if (cls.includes("Attacker")) return "attacker";
     return "booster";
   };
 
-  const remainingGearEb = method === "complete_package" ? 2550 - gearSummary.spentEb : freeformMoney;
-  const remainingFashionEb = method === "complete_package" ? 800 - gearSummary.fashionSpent : freeformMoney;
+  const remainingGearEb = 2550 - gearSummary.spentEb;
+  const remainingFashionEb = 800 - gearSummary.fashionSpent;
 
   const shopItemsForCategory: CreationShopItem[] = (() => {
     if (shopCategory === "fashion") return [];
@@ -2102,10 +1721,8 @@ export function CharacterCreatorModal({
         }
       }
       if (shopCategory === "armor" && armorSubFilter !== "all") {
-        const loc = String(stats.location ?? "").toLowerCase();
-        if (armorSubFilter === "body" && !loc.includes("body")) return false;
-        if (armorSubFilter === "head" && !loc.includes("head")) return false;
-        if (armorSubFilter === "shield" && !loc.includes("shield")) return false;
+        const locations = Array.isArray(stats.locations) ? stats.locations : [];
+        if (!locations.includes(armorSubFilter)) return false;
       }
       if (shopCategory === "cyberware" && cyberwareSubFilter !== "all") {
         if (classifyCyberwareSubcategory(item) !== cyberwareSubFilter) return false;
@@ -2129,9 +1746,8 @@ export function CharacterCreatorModal({
       return (
         item.name.toLowerCase().includes(q) ||
         item.summary.toLowerCase().includes(q) ||
-        String(stats.brand ?? "").toLowerCase().includes(q) ||
         String(stats.weapon_class ?? "").toLowerCase().includes(q) ||
-        String(stats.slot ?? "").toLowerCase().includes(q)
+        String(stats.group ?? "").toLowerCase().includes(q)
       );
     });
     return [...filtered].sort((a, b) => {
@@ -2155,18 +1771,8 @@ export function CharacterCreatorModal({
 
   const fashionItemsForDisplay = (() => {
     const q = shopSearch.trim().toLowerCase();
-    const outfits = refData?.fashion ?? [];
-    const matrix = refData?.fashion_matrix ?? [];
-    const mergedMap = new Map<string, CreationFashionItem & { isOutfit?: boolean }>();
-    for (const f of outfits) {
-      mergedMap.set(f.name, { ...f, isOutfit: !f.garment });
-    }
-    for (const f of matrix) {
-      if (!mergedMap.has(f.name)) mergedMap.set(f.name, { ...f, isOutfit: false });
-    }
-    const list = Array.from(mergedMap.values()).filter((f) => {
-      if (fashionStyleFilter === "Outfits" && !f.isOutfit) return false;
-      if (fashionStyleFilter !== "All" && fashionStyleFilter !== "Outfits" && f.style !== fashionStyleFilter) return false;
+    const list = (refData?.fashion ?? []).filter((f) => {
+      if (fashionStyleFilter !== "All" && f.style !== fashionStyleFilter) return false;
       if (selectedOnly && !selectedFashion.some((x) => x.name === f.name)) return false;
       if (affordableOnly && method === "complete_package" && f.cost_eb > remainingFashionEb) return false;
       if (!q) return true;
@@ -2515,11 +2121,6 @@ export function CharacterCreatorModal({
                       Build Method
                     </span>
                     <div className="flex flex-wrap items-center gap-2">
-                      {refData !== null && !refData.rules_indexed && (
-                        <HazardBadge tone="warn">
-                          BYOC Corebook Required for Template &amp; Point-Buy Builds
-                        </HazardBadge>
-                      )}
                       <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                         Hover any card for rules breakdown
                       </span>
@@ -2528,12 +2129,10 @@ export function CharacterCreatorModal({
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {methodsList.map((m) => {
                       const active = method === m.id;
-                      const disabled = m.id !== "freeform" && refData !== null && !refData.rules_indexed;
                       return (
                         <button
                           key={m.id}
                           type="button"
-                          disabled={disabled}
                           onMouseEnter={() =>
                             setInspector({
                               title: m.name,
@@ -2553,13 +2152,13 @@ export function CharacterCreatorModal({
                           onClick={() => {
                             setMethod(m.id);
                             if (m.id === "complete_package" && roleInfo) {
-                              setCustomStats(buildSmart62Stats(roleInfo.key_stats));
-                              setCustomSkills(defaultCompleteSkills(roleInfo));
+                              setCustomStats(balanced62Stats());
+                              setCustomSkills(defaultCompleteSkills(roleInfo, refData?.skills ?? []));
                             }
                           }}
                           className={`${
                             active ? "cyber-card-active" : "cyber-card"
-                          } p-3 text-left disabled:opacity-40`}
+                          } p-3 text-left`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span
@@ -2621,17 +2220,15 @@ export function CharacterCreatorModal({
                           onMouseEnter={() =>
                             setInspector({
                               title: `${role.name} · Role Ability: ${role.ability}`,
-                              subtitle: `Corebook p.${role.page} · Key STATs: ${role.key_stats.join(", ")}`,
-                              body: role.ability_summary,
-                              tip: role.best_for,
+                              subtitle: role.printed_page ? `Corebook p.${role.printed_page}` : undefined,
+                              body: role.description,
                             })
                           }
                           onFocus={() =>
                             setInspector({
                               title: `${role.name} · Role Ability: ${role.ability}`,
-                              subtitle: `Corebook p.${role.page} · Key STATs: ${role.key_stats.join(", ")}`,
-                              body: role.ability_summary,
-                              tip: role.best_for,
+                              subtitle: role.printed_page ? `Corebook p.${role.printed_page}` : undefined,
+                              body: role.description,
                             })
                           }
                           onClick={() => {
@@ -2669,7 +2266,7 @@ export function CharacterCreatorModal({
                               <RoleTag role={role.ability} tone={active ? "accent" : "muted"} />
                             </div>
                           </div>
-                          <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{role.tagline}</p>
+                          <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{role.summary}</p>
                         </button>
                       );
                     })}
@@ -2758,7 +2355,7 @@ export function CharacterCreatorModal({
                               }}
                               className="border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                             >
-                              {PHARMA_RECIPES.map((r) => (
+                              {(refData?.pharmaceuticals ?? []).map((r) => (
                                 <option key={r} value={r}>{r}</option>
                               ))}
                             </select>
@@ -2805,7 +2402,7 @@ export function CharacterCreatorModal({
                       {Array.from({ length: 4 }).map((_, idx) => (
                         <select
                           key={idx}
-                          value={nomadVehicles[idx] ?? NOMAD_MOTO_PRESETS[0]}
+                          value={nomadVehicles[idx] ?? ""}
                           onChange={(e) => {
                             const next = [...nomadVehicles];
                             next[idx] = e.target.value;
@@ -2814,13 +2411,15 @@ export function CharacterCreatorModal({
                           className="cyber-input px-2 py-1.5"
                         >
                           <optgroup label="Base Vehicles">
-                            {NOMAD_BASE_VEHICLES.map((v) => (
+                            {(refData?.nomad_vehicles ?? []).map((v) => (
                               <option key={v} value={v}>{v}</option>
                             ))}
                           </optgroup>
                           <optgroup label="Vehicle Upgrades">
-                            {NOMAD_VEHICLE_UPGRADES.map((v) => (
-                              <option key={v} value={v}>{v}</option>
+                            {(refData?.nomad_upgrades ?? []).map((u) => (
+                              <option key={u.name} value={u.name}>
+                                {u.name} (Rank {u.rank}+)
+                              </option>
                             ))}
                           </optgroup>
                         </select>
@@ -2833,7 +2432,7 @@ export function CharacterCreatorModal({
                   <div className="cyber-card-active space-y-2 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-cyber-ui text-xs font-bold text-[var(--hud-text)]">
-                        Exec Team Member &amp; Corporate Perks (p. 153)
+                        Exec Team Member &amp; Corporate Perks
                       </span>
                       <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-ui text-[10px] font-semibold text-[var(--hud-accent)]">
                         Includes Corporate Conapt + Trauma Team Silver
@@ -2855,27 +2454,13 @@ export function CharacterCreatorModal({
                         <label className="cyber-field-label">
                           Team Member Specialty
                         </label>
-                        <select
-                          aria-label="Exec Team Member Specialty Preset"
-                          value={(EXEC_TEAM_ROLES as readonly string[]).includes(execTeamRole) ? execTeamRole : "__custom__"}
-                          onChange={(e) => {
-                            if (e.target.value !== "__custom__") setExecTeamRole(e.target.value);
-                          }}
-                          className="cyber-input mb-1 px-2 py-1"
-                        >
-                          {EXEC_TEAM_ROLES.map((r) => (
-                            <option key={r} value={r}>{r}</option>
-                          ))}
-                          {!(EXEC_TEAM_ROLES as readonly string[]).includes(execTeamRole) && (
-                            <option value="__custom__">{execTeamRole}</option>
-                          )}
-                        </select>
                         <input
                           type="text"
                           value={execTeamRole}
                           onChange={(e) => setExecTeamRole(e.target.value)}
-                          placeholder="Custom specialty…"
-                          className="cyber-input px-2 py-1 text-[11px]"
+                          aria-label="Exec Team Member Specialty"
+                          placeholder="e.g. Bodyguard"
+                          className="cyber-input px-2.5 py-1.5"
                         />
                       </div>
                       <div>
@@ -2908,11 +2493,10 @@ export function CharacterCreatorModal({
                         {method === "streetrat" && `${selectedRole} Template Row #${streetratRoll}`}
                         {method === "edgerunner" && `${selectedRole} Per-STAT Template Rolls`}
                         {method === "complete_package" && "Complete Package Point-Buy"}
-                        {method === "freeform" && "Freeform STATs"}
                       </span>
-                      {(method === "complete_package" || method === "freeform") && (
+                      {method === "complete_package" && (
                         <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                          {method === "complete_package" ? `${statSum} / 62 STAT PTS` : `${statSum} STAT PTS`}
+                          {statSum} / 62 STAT PTS
                         </span>
                       )}
                       {method === "complete_package" && (() => {
@@ -2929,9 +2513,6 @@ export function CharacterCreatorModal({
                           </span>
                         );
                       })()}
-                    </div>
-                    <div className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
-                      Hover or click any STAT below for Corebook rules, formulas, and beginner advice.
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -2953,13 +2534,13 @@ export function CharacterCreatorModal({
                         <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Roll 1d10 × 10 STATs
                       </HudButton>
                     )}
-                    {(method === "complete_package" || method === "freeform") && roleInfo && (
+                    {method === "complete_package" && (
                       <HudButton
                         variant="tactical"
                         size="sm"
-                        onClick={() => setCustomStats(buildSmart62Stats(roleInfo.key_stats))}
+                        onClick={() => setCustomStats(balanced62Stats())}
                       >
-                        <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Role Smart Fill (62 pts)
+                        <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Balanced Fill (62 pts)
                       </HudButton>
                     )}
                   </div>
@@ -2968,46 +2549,12 @@ export function CharacterCreatorModal({
                 {/* 10 STAT Cards */}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {STAT_NAMES.map((stat, idx) => {
-                    const info = statDescriptions?.[stat];
-                    const isKey = roleInfo?.key_stats.includes(stat);
                     const val = activeStats[stat];
-                    const hoverPayload: InspectorCard = {
-                      title: `${stat} — ${info?.name ?? stat} (${val})`,
-                      subtitle: isKey ? `Key STAT for ${selectedRole}` : "Core Attribute (2–8 typical)",
-                      body: info?.short ?? "",
-                      mechanics: info?.mechanics,
-                      tip: info?.tip,
-                    };
                     return (
-                      <div
-                        key={stat}
-                        onMouseEnter={() => setInspector(hoverPayload)}
-                        onClick={() => setInspector(hoverPayload)}
-                        className="cyber-card p-3 text-[var(--hud-text)]"
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-cyber-display text-xs font-bold uppercase tracking-wider text-white">
-                              {stat}
-                            </span>
-                            {isKey && (
-                              <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[9px] font-bold uppercase text-[var(--hud-accent)]">
-                                KEY
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            aria-label={`${stat} info`}
-                            onFocus={() => setInspector(hoverPayload)}
-                            className="text-[var(--hud-muted)] hover:text-[var(--hud-accent)]"
-                          >
-                            <HelpCircle className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        <div className="mt-1 truncate font-cyber-ui text-[10px] text-[var(--hud-muted)]">
-                          {info?.name ?? stat}
-                        </div>
+                      <div key={stat} className="cyber-card p-3 text-[var(--hud-text)]">
+                        <span className="font-cyber-display text-xs font-bold uppercase tracking-wider text-white">
+                          {stat}
+                        </span>
 
                         {method === "streetrat" ? (
                           <div className="mt-2 text-center font-cyber-data text-xl font-bold text-[var(--hud-accent)]">{val}</div>
@@ -3036,7 +2583,7 @@ export function CharacterCreatorModal({
                               onClick={() =>
                                 setCustomStats((prev) => ({
                                   ...prev,
-                                  [stat]: Math.max(method === "complete_package" ? 2 : 1, prev[stat] - 1),
+                                  [stat]: Math.max(2, prev[stat] - 1),
                                 }))
                               }
                               className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-xs"
@@ -3047,7 +2594,7 @@ export function CharacterCreatorModal({
                               onClick={() =>
                                 setCustomStats((prev) => ({
                                   ...prev,
-                                  [stat]: Math.min(method === "complete_package" ? 8 : 10, prev[stat] + 1),
+                                  [stat]: Math.min(8, prev[stat] + 1),
                                 }))
                               }
                               className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-xs"
@@ -3115,7 +2662,6 @@ export function CharacterCreatorModal({
                           {method === "streetrat" && `Preset ${selectedRole} Skills (20 Role Skills + Native Language)`}
                           {method === "edgerunner" && "Role Skill Allocation"}
                           {method === "complete_package" && "Full Skill Allocation (x2 costs double)"}
-                          {method === "freeform" && "Freeform Skills"}
                         </span>
                         {(method === "edgerunner" || method === "complete_package") && (() => {
                           const skillRemaining = 86 - skillPointsSpent;
@@ -3136,11 +2682,6 @@ export function CharacterCreatorModal({
                             </>
                           );
                         })()}
-                        {method === "freeform" && (
-                          <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                            {Object.keys(effectiveSkills).length} trained
-                          </span>
-                        )}
                       </div>
                       <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                         Skill Check = STAT + Skill Rank + 1d10. Hover any skill to see what it does &amp; what DVs you beat.
@@ -3152,7 +2693,7 @@ export function CharacterCreatorModal({
                         <HudButton
                           variant="tactical"
                           size="xs"
-                          onClick={() => setCustomSkills(defaultCompleteSkills(roleInfo))}
+                          onClick={() => setCustomSkills(defaultCompleteSkills(roleInfo, refData?.skills ?? []))}
                         >
                           <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Role Starter Build (86 pts)
                         </HudButton>
@@ -3182,7 +2723,7 @@ export function CharacterCreatorModal({
                       />
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {["All", "Basic", "Role", "Ranged", "Fighting", "Social", "Awareness", "Technique", "Education"].map((grp) => (
+                      {["All", "Basic", "Role", ...Array.from(new Set((refData?.skills ?? []).map((s) => s.group)))].map((grp) => (
                         <button
                           key={grp}
                           type="button"
@@ -3199,8 +2740,8 @@ export function CharacterCreatorModal({
                     </div>
                   </div>
 
-                  {/* Compact Specialization & Custom Skill Builder (Complete Package & Freeform) */}
-                  {(method === "complete_package" || method === "freeform") && (
+                  {/* Compact Specialization Builder (Complete Package) */}
+                  {method === "complete_package" && (
                     <div className="space-y-1.5 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-cyber-display text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-muted)]">
@@ -3212,7 +2753,7 @@ export function CharacterCreatorModal({
                           onChange={(e) => setSpecBasePick(e.target.value as typeof specBasePick)}
                           className="cyber-input w-auto px-2 py-1 text-xs"
                         >
-                          {(["Language", "Local Expert", "Science", "Play Instrument", "Martial Arts"] as const).map((b) => (
+                          {SPECIALIZATION_BASES.map((b) => (
                             <option key={b} value={b}>{b}</option>
                           ))}
                         </select>
@@ -3220,17 +2761,15 @@ export function CharacterCreatorModal({
                           type="text"
                           value={specFocusInput}
                           onChange={(e) => setSpecFocusInput(e.target.value)}
-                          placeholder={
-                            specBasePick === "Martial Arts"
-                              ? "e.g. Karate, Judo, Taekwondo…"
-                              : specBasePick === "Language"
-                                ? "e.g. Japanese, Arabic, Cantonese…"
-                                : specBasePick === "Local Expert"
-                                  ? "e.g. Watson, Heywood, Badlands…"
-                                  : "Specialization focus…"
-                          }
+                          list="specialization-focus-options"
+                          placeholder="Specialization focus…"
                           className="cyber-input min-w-[160px] flex-1 px-2.5 py-1 text-xs"
                         />
+                        <datalist id="specialization-focus-options">
+                          {specializationOptions[specBasePick].map((opt) => (
+                            <option key={opt} value={opt} />
+                          ))}
+                        </datalist>
                         <HudButton
                           variant="tactical"
                           size="xs"
@@ -3245,29 +2784,6 @@ export function CharacterCreatorModal({
                           + Add Specialization
                         </HudButton>
                       </div>
-                      {method === "freeform" && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={customNewSkill}
-                            onChange={(e) => setCustomNewSkill(e.target.value)}
-                            placeholder="Or add any custom skill name…"
-                            className="cyber-input flex-1 px-2.5 py-1 text-xs"
-                          />
-                          <HudButton
-                            variant="tactical"
-                            size="xs"
-                            onClick={() => {
-                              const s = customNewSkill.trim();
-                              if (!s) return;
-                              setCustomSkills((p) => ({ ...p, [s]: p[s] ?? 4 }));
-                              setCustomNewSkill("");
-                            }}
-                          >
-                            + Add Skill
-                          </HudButton>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -3293,7 +2809,7 @@ export function CharacterCreatorModal({
                         : method === "complete_package" && sk.basic
                           ? 2
                           : 0;
-                    const maxRank = method === "freeform" ? 10 : 6;
+                    const maxRank = 6;
                     const lockedMedtechSkill =
                       method === "complete_package" && /^(Surgery|Medical Tech)$/i.test(sk.name);
 
@@ -3598,7 +3114,7 @@ export function CharacterCreatorModal({
                         method === "streetrat" || method === "edgerunner"
                           ? Object.keys(roleInfo?.skills ?? {})
                           : Object.keys(customSkills);
-                      const bases = Object.keys(SPECIALIZATION_SUGGESTIONS).filter((base) =>
+                      const bases = SPECIALIZATION_BASES.filter((base) =>
                         sourceSkills.some((sk) => {
                           const cleaned = sk.replace(/\s*\(choose\s*1\)\s*/i, "").trim();
                           return (
@@ -3614,16 +3130,27 @@ export function CharacterCreatorModal({
                           <label className="cyber-field-label">
                             {specBase} Specialization
                           </label>
-                          <select
-                            aria-label={`${specBase} Specialization`}
-                            value={specializations[specBase] ?? (SPECIALIZATION_SUGGESTIONS[specBase]?.[0] ?? "")}
-                            onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
-                            className="cyber-input px-2.5 py-1.5"
-                          >
-                            {(SPECIALIZATION_SUGGESTIONS[specBase] ?? []).map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                          </select>
+                          {specializationOptions[specBase].length ? (
+                            <select
+                              aria-label={`${specBase} Specialization`}
+                              value={specializations[specBase] ?? specializationOptions[specBase][0]}
+                              onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
+                              className="cyber-input px-2.5 py-1.5"
+                            >
+                              {specializationOptions[specBase].map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              aria-label={`${specBase} Specialization`}
+                              value={specializations[specBase] ?? ""}
+                              onChange={(e) => setSpecializations((p) => ({ ...p, [specBase]: e.target.value }))}
+                              placeholder="Your specialization…"
+                              className="cyber-input px-2.5 py-1.5"
+                            />
+                          )}
                         </div>
                       ));
                     })()}
@@ -3686,8 +3213,8 @@ export function CharacterCreatorModal({
                               }}
                               className="cyber-input px-2.5 py-1.5"
                             >
-                              {opts.map((o) => (
-                                <option key={o} value={o}>{o}</option>
+                              {opts.map((o, i) => (
+                                <option key={i} value={o}>{o}</option>
                               ))}
                               <option value="__custom__">Custom…</option>
                             </select>
@@ -3756,8 +3283,8 @@ export function CharacterCreatorModal({
                                 }}
                                 className="cyber-input px-2.5 py-1.5"
                               >
-                                {opts.map((o) => (
-                                  <option key={o} value={o}>{o}</option>
+                                {opts.map((o, i) => (
+                                  <option key={i} value={o}>{o}</option>
                                 ))}
                                 <option value="__custom__">Custom…</option>
                               </select>
@@ -3802,7 +3329,7 @@ export function CharacterCreatorModal({
                             ...p,
                             {
                               name: `Ally #${p.length + 1}`,
-                              relationship: pickRandom(refData?.lifepath_tables.friend_relationship ?? ["Someone from The Street"]),
+                              relationship: pickRandom(refData?.lifepath_tables.friend_relationship ?? [""]),
                               note: "Has your back when things go sideways.",
                             },
                           ])
@@ -3817,12 +3344,12 @@ export function CharacterCreatorModal({
                           setEnemies((p) => [
                             ...p,
                             {
-                              who: pickRandom(refData?.lifepath_tables.enemy_who ?? ["Ex-friend"]),
+                              who: pickRandom(refData?.lifepath_tables.enemy_who ?? [""]),
                               name: `Rival #${p.length + 1}`,
                               wronged: "They wronged me",
-                              cause: pickRandom(refData?.lifepath_tables.enemy_cause ?? ["Betrayal"]),
-                              backup: pickRandom(refData?.lifepath_tables.enemy_backup ?? ["Just themselves"]),
-                              revenge: pickRandom(refData?.lifepath_tables.sweet_revenge ?? ["Avoid the scum."]),
+                              cause: pickRandom(refData?.lifepath_tables.enemy_cause ?? [""]),
+                              backup: pickRandom(refData?.lifepath_tables.enemy_backup ?? [""]),
+                              revenge: pickRandom(refData?.lifepath_tables.sweet_revenge ?? [""]),
                             },
                           ])
                         }
@@ -3837,7 +3364,7 @@ export function CharacterCreatorModal({
                             ...p,
                             {
                               name: `Ex #${p.length + 1}`,
-                              outcome: pickRandom(refData?.lifepath_tables.tragic_love ?? ["It just didn't work out."]),
+                              outcome: pickRandom(refData?.lifepath_tables.tragic_love ?? [""]),
                             },
                           ])
                         }
@@ -4233,11 +3760,11 @@ export function CharacterCreatorModal({
             {/* STEP 5: GEAR, ARMOR & CYBERWARE */}
             {step === "gear" && (
               <div className="space-y-4">
-                {/* Housing, Lifestyle & Trauma Team Coverage (Corebook pp. 223, 377-378) */}
+                {/* Housing, Lifestyle & Trauma Team Coverage */}
                 <div className="space-y-2.5 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
-                      Housing, Lifestyle &amp; Trauma Team (pp. 223, 377–378)
+                      Housing, Lifestyle &amp; Trauma Team
                     </span>
                     <span className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
                       Month 1 baseline rent paid; monthly upkeep applies from Month 2.
@@ -4252,19 +3779,7 @@ export function CharacterCreatorModal({
                         onChange={(e) => setHousing(e.target.value)}
                         className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
-                        {(
-                          refData?.housing_tiers ?? [
-                            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Standard starting studio container." },
-                            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Tiny rented pod." },
-                            { id: "street", name: "Living on The Street", monthly_eb: 0, summary: "Sleeping rough." },
-                            { id: "vehicle", name: "Living in a Vehicle", monthly_eb: 0, summary: "Mobile living." },
-                            { id: "studio", name: "Studio Apartment", monthly_eb: 1500, summary: "Private studio." },
-                            { id: "two_bedroom", name: "Two-Bedroom Apartment", monthly_eb: 2500, summary: "Crew apartment." },
-                            { id: "upscale_conapt", name: "Upscale Conapt", monthly_eb: 7500, summary: "Corporate condo." },
-                            { id: "luxury_penthouse", name: "Luxury Penthouse", monthly_eb: 15000, summary: "Elite penthouse." },
-                            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Free Exec conapt.", exec_only: true },
-                          ]
-                        )
+                        {(refData?.housing_tiers ?? [])
                           .filter((h) => !h.exec_only || selectedRole === "Exec")
                           .map((h) => (
                             <option key={h.id} value={h.id}>
@@ -4281,14 +3796,7 @@ export function CharacterCreatorModal({
                         onChange={(e) => setLifestyle(e.target.value)}
                         className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
-                        {(
-                          refData?.lifestyles ?? [
-                            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
-                            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged meals." },
-                            { id: "Good Prepak", name: "Good Prepak", monthly_eb: 600, summary: "Takeout & drinks." },
-                            { id: "Fresh Food", name: "Fresh Food", monthly_eb: 1500, summary: "Real produce." },
-                          ]
-                        ).map((l) => (
+                        {(refData?.lifestyles ?? []).map((l) => (
                           <option key={l.id} value={l.id}>
                             {l.name} ({l.monthly_eb} eb/mo)
                           </option>
@@ -4304,10 +3812,15 @@ export function CharacterCreatorModal({
                         className="w-full border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
                         <option value="None">None (0 eb/mo)</option>
-                        <option value="Silver">
-                          Trauma Team Silver ({selectedRole === "Exec" ? "Included for Exec" : "500 eb/mo"})
-                        </option>
-                        <option value="Executive">Trauma Team Executive (1,000 eb/mo)</option>
+                        {(["Silver", "Executive"] as const).map((plan) => {
+                          const price = refData?.shop.service.find((x) => x.name.startsWith(`Trauma Team ${plan}`))?.cost_eb;
+                          return (
+                            <option key={plan} value={plan}>
+                              Trauma Team {plan} (
+                              {plan === "Silver" && selectedRole === "Exec" ? "Included for Exec" : `${price ?? "?"} eb/mo`})
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   </div>
@@ -4321,7 +3834,7 @@ export function CharacterCreatorModal({
                           {selectedRole} Starter Package (+500 eb pocket money)
                         </div>
                         <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">
-                          Corebook gives you preset weapons, SP 11 Light Armorjack, Outfit, and Cyberware—just pick between any A/B options below.
+                          The Corebook gives you preset weapons, armor, outfit, and cyberware. Pick between any A/B options below.
                         </p>
                       </div>
                       <HazardBadge tone="warn">
@@ -4329,172 +3842,77 @@ export function CharacterCreatorModal({
                       </HazardBadge>
                     </div>
 
-                    {/* Weapons & Choices */}
-                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
-                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
-                        Weapons &amp; Armor
-                      </div>
-                      <div className="space-y-2">
-                        {roleInfo.starting_weapons.map((w, idx) =>
-                          w.type === "choice" && w.options ? (
-                            <div key={idx} className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-accent-line)]/50 bg-[var(--hud-accent-navy)]/35 p-2 text-xs">
-                              <span className="font-cyber-ui font-medium text-[var(--hud-accent)]">{w.label ?? "Weapon Option"}:</span>
-                              <div className="flex flex-wrap gap-1.5">
-                                {w.options.map((opt) => (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    onClick={() => setWeaponChoices((p) => ({ ...p, [w.label || `choice-${idx}`]: opt }))}
-                                    className={`border px-2.5 py-1 font-cyber-ui text-xs transition ${
-                                      weaponChoices[w.label || `choice-${idx}`] === opt
-                                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
-                                        : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
-                                    }`}
-                                  >
-                                    {opt}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <div key={idx} className="font-cyber-ui text-xs text-[var(--hud-text)]">
-                              • {w.item} {w.qty ? `×${w.qty}` : ""}
-                            </div>
-                          ),
-                        )}
-                        {roleInfo.starting_armor.map((a) => (
-                          <div key={a} className="font-cyber-ui text-xs text-[var(--hud-accent)]">• {a}</div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Cyberware & Choices */}
-                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
-                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-accent)]">
-                        Installed Cyberware (Total Humanity Loss: {gearSummary.totalHl})
-                      </div>
-                      {roleInfo.starting_cyberware.map((cw) => (
-                        <div
-                          key={cw.name}
-                          onMouseEnter={() =>
-                            setInspector({
-                              title: cw.name,
-                              subtitle: `Install: ${cw.install} · Humanity Loss: ${cw.hl}`,
-                              body: cw.notes,
-                            })
-                          }
-                          className="flex items-center justify-between border border-[var(--hud-line-soft)] bg-black/55 px-2.5 py-1.5 text-xs"
-                        >
-                          <span className="font-cyber-ui font-medium text-[var(--hud-text)]">{cw.name}</span>
-                          <span className="font-cyber-data text-[11px] text-[var(--hud-warn)]">
-                            {cw.install} · HL {cw.hl}
-                          </span>
+                    {(
+                      [
+                        ["weapons", "Weapons & Armor", roleInfo.starting_weapons],
+                        ["cyberware", `Installed Cyberware (Total Humanity Loss: ${gearSummary.totalHl})`, roleInfo.starting_cyberware],
+                        ["outfit", "Starting Outfit", roleInfo.starting_outfit],
+                      ] as Array<[string, string, CreationKitEntry<CreationKitItem & Partial<CreationKitCyberware>>[]]>
+                    ).map(([section, title, entries]) => (
+                      <div key={section} className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
+                        <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-label)]">
+                          {title}
                         </div>
-                      ))}
-
-                      {[roleInfo.cyberware_choice, roleInfo.cyberware_choice_2].map((choice, cIdx) =>
-                        choice ? (
-                          <div key={cIdx} className="space-y-1.5 border border-[var(--hud-line)] bg-[var(--hud-row)] p-2">
-                            <div className="font-cyber-ui text-[11px] font-semibold text-[var(--hud-accent)]">
-                              {choice.label} (Pick 1):
-                            </div>
-                            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                              {choice.options.map((opt) => {
-                                const cur = cIdx === 0 ? cyberwareChoice : cyberwareChoice2;
-                                const active = cur === opt.name;
-                                return (
+                        {entries.map((entry, idx) => {
+                          const picked = pickKit(section, [entry], { [`${section}-0`]: kitChoices[`${section}-${idx}`] })[0];
+                          const options = entry.type === "choice" ? entry.options : [entry];
+                          return (
+                            <div key={idx} className="flex flex-wrap items-center gap-1.5 font-cyber-ui text-xs text-[var(--hud-text)]">
+                              {entry.type === "choice" && <span className="font-medium text-[var(--hud-accent)]">Pick 1:</span>}
+                              {options.map((opt) => {
+                                const label = `${opt.item}${opt.qty > 1 ? ` ×${opt.qty}` : ""}${section === "cyberware" ? ` · HL ${opt.hl}` : ""}`;
+                                const inspect = () => {
+                                  if (opt.notes) {
+                                    setInspector({ title: opt.item, subtitle: `${opt.install} · HL ${opt.hl}`, body: opt.notes });
+                                  }
+                                };
+                                return entry.type === "choice" ? (
                                   <button
-                                    key={opt.name}
+                                    key={opt.item}
                                     type="button"
-                                    onMouseEnter={() =>
-                                      setInspector({
-                                        title: opt.name,
-                                        subtitle: `${opt.install} · HL ${opt.hl}`,
-                                        body: opt.notes,
-                                      })
-                                    }
-                                    onClick={() => (cIdx === 0 ? setCyberwareChoice(opt.name) : setCyberwareChoice2(opt.name))}
-                                    className={`border p-2 text-left text-xs transition ${
-                                      active
-                                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                                        : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
+                                    aria-pressed={picked.item === opt.item}
+                                    onMouseEnter={inspect}
+                                    onClick={() => setKitChoices((p) => ({ ...p, [`${section}-${idx}`]: opt.item }))}
+                                    className={`border px-2.5 py-1 transition ${
+                                      picked.item === opt.item
+                                        ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] font-semibold text-[var(--hud-accent)]"
+                                        : "border-[var(--hud-line-soft)] bg-black/55 hover:border-[var(--hud-line)]"
                                     }`}
                                   >
-                                    <div className="font-cyber-ui font-semibold">{opt.name}</div>
-                                    <div className="font-cyber-ui text-[10px] text-[var(--hud-muted)]">{opt.notes}</div>
+                                    {label}
                                   </button>
+                                ) : (
+                                  <span key={opt.item} onMouseEnter={inspect}>• {label}</span>
                                 );
                               })}
                             </div>
-                          </div>
-                        ) : null,
-                      )}
-                    </div>
-
-                    {/* Outfit */}
-                    <div className="space-y-2 border border-[var(--hud-line-soft)] bg-[var(--hud-panel)] p-3">
-                      <div className="font-cyber-display text-xs font-semibold uppercase tracking-wider text-[var(--hud-text)]">
-                        Starting Outfit
-                      </div>
-                      {roleInfo.outfit_choice && (
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-cyber-ui text-[var(--hud-accent)]">{roleInfo.outfit_choice.label}:</span>
-                          {roleInfo.outfit_choice.options.map((opt) => (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() => setOutfitChoice(opt)}
-                              className={`border px-2 py-0.5 font-cyber-ui transition ${
-                                outfitChoice === opt
-                                  ? "border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] text-[var(--hud-accent)]"
-                                  : "border-[var(--hud-line-soft)] bg-black/55 text-[var(--hud-text)] hover:border-[var(--hud-line)]"
-                              }`}
-                            >
-                              {opt}
-                            </button>
+                          );
+                        })}
+                        {section === "weapons" &&
+                          roleInfo.starting_armor.map((a) => (
+                            <div key={a} className="font-cyber-ui text-xs text-[var(--hud-accent)]">• {a}</div>
                           ))}
-                        </div>
-                      )}
-                      <div className="flex flex-wrap gap-1.5">
-                        {roleInfo.starting_outfit.map((o) => (
-                          <span key={o} className="border border-[var(--hud-line-soft)] bg-black/55 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)]">
-                            {o}
-                          </span>
-                        ))}
                       </div>
-                    </div>
+                    ))}
                   </div>
                 ) : (
-                  /* Complete Package & Freeform Night Market Outfitter */
+                  /* Complete Package Night Market Outfitter */
                   <div className="space-y-3">
                     {/* Sticky Outfitter Toolbar (keeps budget, search, sort & filters pinned without jumping) */}
                     <div className="sticky -top-4 sm:-top-5 z-10 -mx-4 sm:-mx-5 space-y-2.5 border-b border-[var(--hud-line)] bg-[var(--hud-bg)]/95 px-4 pt-3 pb-2.5 backdrop-blur sm:px-5">
                       <div className="flex flex-wrap items-center justify-between gap-2 border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-3 py-2">
                         <div className="font-cyber-ui text-xs">
-                          {method === "complete_package" ? (
-                            <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                              <span>
-                                Gear: <strong className={`font-cyber-data ${remainingGearEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-ok)]"}`}>{remainingGearEb} / 2,550 eb</strong>
-                              </span>
-                              <span>
-                                Fashion: <strong className={`font-cyber-data ${remainingFashionEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-accent)]"}`}>{remainingFashionEb} / 800 eb</strong>
-                              </span>
-                              <span>
-                                HL: <strong className="font-cyber-data text-[var(--hud-warn)]">-{gearSummary.totalHl}</strong>
-                              </span>
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span>
+                              Gear: <strong className={`font-cyber-data ${remainingGearEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-ok)]"}`}>{remainingGearEb} / 2,550 eb</strong>
                             </span>
-                          ) : (
-                            <label className="inline-flex items-center gap-2">
-                              <span>Starting Eurobucks:</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={freeformMoney}
-                                onChange={(e) => setFreeformMoney(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                className="w-24 border border-[var(--hud-line-soft)] bg-black/60 px-2 py-1 font-cyber-data text-xs text-[var(--hud-ok)] focus:border-[var(--hud-accent)] focus:outline-none"
-                              />
-                            </label>
-                          )}
+                            <span>
+                              Fashion: <strong className={`font-cyber-data ${remainingFashionEb < 0 ? "text-[var(--hud-primary-bright)]" : "text-[var(--hud-accent)]"}`}>{remainingFashionEb} / 800 eb</strong>
+                            </span>
+                            <span>
+                              HL: <strong className="font-cyber-data text-[var(--hud-warn)]">-{gearSummary.totalHl}</strong>
+                            </span>
+                          </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <HudButton
@@ -4516,13 +3934,22 @@ export function CharacterCreatorModal({
                             variant="tactical"
                             size="xs"
                             onClick={() => {
-                              setCartItems([
-                                { name: "Very Heavy Pistol", category: "weapon", cost_eb: 100, qty: 1 },
-                                { name: "Light Armorjack", category: "armor", cost_eb: 100, qty: 2 },
-                                { name: "Agent", category: "gear", cost_eb: 100, qty: 1 },
-                                { name: "Neural Link", category: "cyberware", cost_eb: 500, hl: 7, install: "Clinic", qty: 1 },
-                              ]);
-                              setSelectedFashion([{ name: "Urban Flash Outfit", cost_eb: 320, style: "Urban Flash" }]);
+                              const wanted: Array<[CreationShopItem["category"], string, number]> = [
+                                ["weapon", "Very Heavy Pistol", 1],
+                                ["armor", "Light Armorjack", 2],
+                                ["gear", "Agent", 1],
+                                ["cyberware", "Neural Link", 1],
+                              ];
+                              setCartItems(
+                                wanted.flatMap(([category, itemName, qty]) => {
+                                  const item = refData?.shop[category].find((x) => x.name === itemName);
+                                  if (!item) return [];
+                                  const install = typeof item.stats.install === "string" ? item.stats.install : undefined;
+                                  const sp = parseSpVal(item.stats) || undefined;
+                                  return [{ name: item.name, category, cost_eb: item.cost_eb, hl: parseHlVal(item.stats), sp, install, qty }];
+                                }),
+                              );
+                              setSelectedFashion([]);
                             }}
                           >
                             <Wand2 className="h-3 w-3 text-[var(--hud-accent)]" /> Starter Loadout
@@ -4620,23 +4047,30 @@ export function CharacterCreatorModal({
                         <div className="max-h-40 space-y-1.5 overflow-y-auto">
                           {cyberwarePrereqWarnings.length > 0 && (
                             <div className="cyber-hazard-thin space-y-1 border border-[var(--hud-warn)]/60 p-2">
-                              <HazardBadge tone="warn">Cyberware Foundation Needed (p. 358)</HazardBadge>
+                              <HazardBadge tone="warn">Cyberware Foundation Needed</HazardBadge>
                               {cyberwarePrereqWarnings.map((w) => (
-                                <div key={w.foundation} className="flex flex-wrap items-center justify-between gap-2 font-cyber-ui text-[11px] text-[var(--hud-text)]">
+                                <div key={w.foundation.id} className="flex flex-wrap items-center justify-between gap-2 font-cyber-ui text-[11px] text-[var(--hud-text)]">
                                   <span>
-                                    <strong>{w.option}</strong> requires <strong>{w.foundation}</strong>.
+                                    <strong>{w.option}</strong> requires <strong>{w.foundation.name}</strong>.
                                   </span>
                                   <button
                                     type="button"
                                     onClick={() =>
                                       setCartItems((p) => [
                                         ...p,
-                                        { name: w.foundation, category: "cyberware", cost_eb: w.cost_eb, hl: w.hl, install: "Clinic", qty: 1 },
+                                        {
+                                          name: w.foundation.name,
+                                          category: "cyberware",
+                                          cost_eb: w.foundation.cost_eb,
+                                          hl: parseHlVal(w.foundation.stats),
+                                          install: String(w.foundation.stats.install ?? ""),
+                                          qty: 1,
+                                        },
                                       ])
                                     }
                                     className="cyber-btn-tac cp-fx-hover px-2 py-0.5 font-cyber-data text-[10px] text-[var(--hud-warn)]"
                                   >
-                                    + Add {w.foundation} ({w.cost_eb}eb)
+                                    + Add {w.foundation.name} ({w.foundation.cost_eb}eb)
                                   </button>
                                 </div>
                               ))}
@@ -4864,16 +4298,13 @@ export function CharacterCreatorModal({
                                 className="border border-[var(--hud-line-soft)] bg-black/70 px-2 py-0.5 font-cyber-ui text-[11px] text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                               >
                                 <option value="">Standard / As Listed</option>
-                                {[
-                                  "Medium Pistol",
-                                  "Heavy Pistol",
-                                  "Very Heavy Pistol",
-                                  "Assault Rifle",
-                                  "Sniper Rifle",
-                                  "Shotgun Slug",
-                                  "Shotgun Shell",
-                                  "Arrow",
-                                ].map((cal) => (
+                                {Array.from(
+                                  new Set(
+                                    (refData?.shop.weapon ?? [])
+                                      .filter((w) => w.stats.weapon_class === "ranged" && !w.stats.quality)
+                                      .map((w) => w.name),
+                                  ),
+                                ).map((cal) => (
                                   <option key={cal} value={cal}>{cal}</option>
                                 ))}
                               </select>
@@ -4982,7 +4413,7 @@ export function CharacterCreatorModal({
 
                       {shopCategory === "fashion" && (
                         <div className="flex flex-wrap gap-1">
-                          {(["All", "Outfits", ...COREBOOK_FASHION_STYLES] as const).map((styleOpt) => (
+                          {["All", ...Array.from(new Set((refData?.fashion ?? []).map((f) => f.style)))].map((styleOpt) => (
                             <button
                               key={styleOpt}
                               type="button"
@@ -5072,25 +4503,24 @@ export function CharacterCreatorModal({
                         shopItemsForCategory.map((item) => {
                           const hlVal = parseHlVal(item.stats);
                           const spVal = parseSpVal(item.stats);
-                          const locVal = typeof item.stats.location === "string" ? item.stats.location : undefined;
+                          const locVal = Array.isArray(item.stats.locations) ? item.stats.locations.join(" & ") : undefined;
                           const installVal = typeof item.stats.install === "string" ? item.stats.install : undefined;
                           const qualityVal = typeof item.stats.quality === "string" ? item.stats.quality : undefined;
-                          const subtypeVal = typeof item.stats.subtype === "string" ? item.stats.subtype : undefined;
                           const dmgVal = typeof item.stats.damage === "string" ? item.stats.damage : undefined;
                           const weaponTierInfo =
                             shopCategory === "weapon" ? classifyWeaponTiers(item) : null;
                           const weaponTierTheme = weaponTierInfo
                             ? getWeaponTierTheme(weaponTierInfo.primaryTier)
                             : null;
-                          const isAmmoEntry = item.category === "ammo" || subtypeVal === "Ammo";
+                          const isAmmoEntry = item.category === "ammo";
                           const cartItemName =
                             isAmmoEntry && ammoCaliber ? `${item.name} — ${ammoCaliber}` : item.name;
                           const inCart = cartItems.find((x) => x.name === cartItemName && x.category === item.category);
-                          const isPrimaryWeapon = item.category === "weapon" && subtypeVal !== "Attachment" && subtypeVal !== "Ammo";
+                          const isPrimaryWeapon = item.category === "weapon";
                           const overBudget = method === "complete_package" && item.cost_eb > remainingGearEb;
                           const inspectPayload: InspectorCard = {
                             title: `${item.name} (${item.cost_eb} eb)`,
-                            subtitle: `${item.category.toUpperCase()}${subtypeVal ? ` · ${subtypeVal.toUpperCase()}` : ""}${qualityVal ? ` · ${qualityVal}` : ""}${item.printed_page ? ` · Corebook p.${item.printed_page}` : ""}${hlVal ? ` · HL ${hlVal}` : ""}${spVal ? ` · SP ${spVal}` : ""}`,
+                            subtitle: `${item.category.toUpperCase()}${qualityVal ? ` · ${qualityVal}` : ""}${item.printed_page ? ` · Corebook p.${item.printed_page}` : ""}${hlVal ? ` · HL ${hlVal}` : ""}${spVal ? ` · SP ${spVal}` : ""}`,
                             body: item.description || item.summary,
                             mechanics: dmgVal ? `Damage: ${dmgVal}` : undefined,
                           };
@@ -5160,7 +4590,7 @@ export function CharacterCreatorModal({
                                   )}
                                   {isPrimaryWeapon && (
                                     <span className="border border-[var(--hud-line-soft)] bg-black/55 px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-muted)]">
-                                      {qualityVal === "Poor" ? "2 Att. Slots" : "3 Att. Slots"}
+                                      {qualityVal === "poor" ? "2 Att. Slots" : "3 Att. Slots"}
                                     </span>
                                   )}
                                   {item.printed_page && (
@@ -5258,15 +4688,6 @@ export function CharacterCreatorModal({
                       <HazardBadge tone="warn">
                         <AlertTriangle className="h-3.5 w-3.5" /> Check Before Launching
                       </HazardBadge>
-                      {method !== "freeform" && (
-                        <HudButton
-                          variant="tactical"
-                          size="xs"
-                          onClick={() => setMethod("freeform")}
-                        >
-                          Switch to Freeform Instead
-                        </HudButton>
-                      )}
                     </div>
                     <ul className="list-disc space-y-0.5 pl-5 font-cyber-ui text-xs text-[var(--hud-text)]">
                       {validationIssues.map((msg) => (
@@ -5365,7 +4786,7 @@ export function CharacterCreatorModal({
                       Backstory &amp; History
                     </div>
                     <p className="text-[var(--hud-text)]">
-                      {backstorySummary.trim() || `${personality}; ${familyBackground.split("(", 1)[0].trim()} upbringing. Goal: ${lifeGoal}`}
+                      {backstorySummary.trim() || `${personality}; ${familyBackground.split(" — ", 1)[0]} upbringing. Goal: ${lifeGoal}`}
                     </p>
                     {establishedHistory.trim() && (
                       <p className="text-[var(--hud-text)]/85"><strong>Established Ties:</strong> {establishedHistory}</p>
@@ -5412,7 +4833,7 @@ export function CharacterCreatorModal({
                     </div>
                     {cyberwarePrereqWarnings.length > 0 && (
                       <p className="font-cyber-ui text-[11px] text-[var(--hud-warn)]">
-                        Cyberware Note: {cyberwarePrereqWarnings.map((w) => `${w.option} needs ${w.foundation}`).join("; ")}.
+                        Cyberware Note: {cyberwarePrereqWarnings.map((w) => `${w.option} needs ${w.foundation.name}`).join("; ")}.
                       </p>
                     )}
                     {cyberwareSlotWarnings.length > 0 && (
@@ -5421,8 +4842,8 @@ export function CharacterCreatorModal({
                       </p>
                     )}
                     <div className="border border-[var(--hud-line-soft)] bg-black/45 px-2.5 py-1.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">
-                      <strong className="text-[var(--hud-text)]">Starting Housing &amp; Lifestyle (pp. 377–378):</strong>{" "}
-                      {(refData?.housing_tiers ?? []).find((h) => h.id === housing)?.name ?? housing} + {lifestyle} Lifestyle
+                      <strong className="text-[var(--hud-text)]">Starting Housing &amp; Lifestyle:</strong>{" "}
+                      {housing} + {lifestyle} Lifestyle
                       {traumaTeam !== "None" ? ` · Trauma Team ${traumaTeam}` : ""} (Month 1 covered).
                     </div>
                   </div>
