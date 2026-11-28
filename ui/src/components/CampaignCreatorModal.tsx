@@ -652,7 +652,7 @@ export function CampaignCreatorModal({
   ];
 
   const rollScreamsheetHeadline = () => {
-    const corp = () => pickOne(presets.factions).name;
+    const corp = () => pickOne(presets.factions.filter((f) => f.type === "Corporation")).name;
     return presets.screamsheet_headlines
       .map((column) => pickOne(column))
       .map((word) => (/pick a corp/i.test(word) ? corp() : word))

@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from gameplay import GameplayService
 import library
 import redkb
+import sourcecatalog
 
 
 def _create_rules_db(path: Path) -> Path:
@@ -429,3 +430,66 @@ def test_search_and_get_library_entry_readonly_no_write_lock(tmp_path: Path):
 
 
 
+
+
+def test_run_in_paragraphs_become_gang_and_people_entries(tmp_path):
+    import layout
+    from tests import rules_fixture as rf
+
+    def span(text, bold=False):
+        return {"text": text, "font": "Book-Bold" if bold else "Book", "flags": 0}
+
+    assert layout.run_in_name([span("7", True), span("th Row", True), span(": Born here", False)]) == "7th Row"
+    assert layout.run_in_name([span("The Wires:", True), span(" a pack")]) == "The Wires"
+    assert layout.run_in_name([span("A bold pull quote.", True)]) == ""
+
+    toc = [[1, "Gangs of Night City", 1], [1, "Badasses of Night City", 2]]
+    path = rf.build(tmp_path / "rules.sqlite", [
+        rf.page(1, 1, [
+            rf.heading("Gangs of Night City", 60),
+            rf.block("Intro prose.", 90),
+            rf.block("The Wires: They splice", 120, runin="The Wires"),
+            rf.block("whatever they find.", 135, x=72),
+            rf.block("A margin note.", 200, x=15, size=8, width=40),
+            rf.block("Glass Row: A quiet crew.", 240, runin="Glass Row"),
+        ]),
+        rf.page(2, 2, [
+            rf.heading("Badasses of Night City", 60),
+            rf.block("Sam Test (Fixer): Knows people.", 90, runin="Sam Test (Fixer)"),
+        ]),
+    ], toc)
+    entries = {e["name"]: e for e in sourcecatalog.entries(path)}
+    assert entries["The Wires"]["category"] == "faction" and entries["The Wires"]["stats"] == {"kind": "gang"}
+    assert entries["The Wires"]["description"] == "They splice whatever they find."
+    assert entries["Glass Row"]["description"] == "A quiet crew."
+    assert entries["Sam Test"]["category"] == "npc" and entries["Sam Test"]["stats"] == {"kind": "person", "role": "Fixer"}
+
+
+def test_stat_blocks_become_npc_entries_that_encounters_can_use(tmp_path):
+    import layout
+    from encounters import build_npc_combatant, expand_npc_specs
+    from tests import rules_fixture as rf
+
+    blocks, notes = layout.parse_stat_blocks(rf.stat_block_lines("Test Ganger") + rf.stat_block_lines("Test Boss", 420))
+    assert [b["name"] for b in blocks] == ["Test Ganger", "Test Boss"]
+    page = rf.page(2, 2, [])
+    page["stat_blocks"], page["stat_notes"] = blocks, notes
+    path = rf.build(tmp_path / "rules.sqlite", [page])
+    rf.add_skill_definitions(path, ["Handgun........REF", "Evasion........DEX", "Local Expert........INT"])
+
+    entry = next(e for e in sourcecatalog.entries(path, "npc") if e["name"] == "Test Ganger")
+    stats = entry["stats"]
+    assert entry["printed_page"] == 2 and stats["tier"] == "mook"
+    assert stats["npc_stats"]["REF"] == 6 and stats["npc_stats"]["LUCK"] == 0 and stats["armor_penalty"] == 2
+    assert (stats["hit_points"], stats["sp_head"], stats["sp_body"]) == (30, 7, 11)
+    assert [w["name"] for w in stats["weapons"]] == ["Poor Quality VH Pistol", "Medium Melee Weapon"]
+    assert stats["skills"] == {"Handgun": 4, "Evasion": 2, "Local Expert (Your Home)": 0}
+    assert stats["abilities"] == {"Test Instinct": 4} and stats["unparsed_skills"] == ["Tactics"]
+    assert stats["equipment"] == "VH Pistol Ammo x30, Flashlight"
+
+    spec = expand_npc_specs([{"entry": "test ganger", "name": "Rust", "hp": 12, "stats": {"REF": 7}}], path)[0]
+    sheet = build_npc_combatant(spec)
+    assert (sheet["name"], sheet["hp"], sheet["max_hp"], sheet["stats"]["REF"], sheet["stats"]["DEX"]) == ("Rust", 12, 30, 7, 5)
+    assert sheet["detail"]["equipped_weapon"] == "Very Heavy Pistol" and sheet["inventory"]["ammo:VH Pistol"] == 30
+    with pytest.raises(ValueError, match="Unknown NPC stat block"):
+        expand_npc_specs([{"entry": "Nobody"}], path)

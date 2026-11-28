@@ -789,6 +789,62 @@ def _build_skills(conn: sqlite3.Connection, digest: str) -> list[dict[str, Any]]
 
 
 # --------------------------------------------------------------------------
+# NPC stat blocks
+# --------------------------------------------------------------------------
+
+def _printed_skill(catalog: dict[str, dict[str, Any]], name: str) -> tuple[str, str] | None:
+    """(skill name, STAT) for a stat-block skill, tolerating the singular/plural slips between blocks."""
+    base, _, rest = name.partition(" (")
+    for candidate in (base, f"{base}s", base.removesuffix("s")):
+        full = f"{candidate} ({rest}" if rest else candidate
+        found = lookup_skill(catalog, full)
+        if found:
+            exact = next((n for n in catalog if _normalize(n) == _normalize(full)), full)
+            return exact, found["stat"]
+    return None
+
+
+def _build_stat_blocks(conn: sqlite3.Connection, skill_entries: list[dict[str, Any]], digest: str) -> list[dict[str, Any]]:
+    """One `npc` entry per parsed stat block; printed Skill Bases (STAT + Skill) also become skill levels."""
+    catalog = {e["name"]: e["stats"] for e in skill_entries}
+    entries = []
+    for pdf_page, printed, raw in conn.execute(
+            "SELECT b.pdf_page, p.printed_page, b.block_json FROM source_stat_blocks b JOIN pages p USING(pdf_page) "
+            "ORDER BY b.pdf_page, b.ordinal"):
+        block = json.loads(raw)
+        name, stats = block.pop("name"), block.pop("stats")
+        effective = block.pop("effective_stats")
+        skill_bases, levels, abilities = {}, {}, {}
+        for skill in block.pop("skill_bases"):
+            known = _printed_skill(catalog, skill["name"])
+            if known:
+                skill_bases[known[0]] = skill["base"]
+                levels[known[0]] = skill["base"] - stats[known[1]]
+            else:
+                abilities[skill["name"]] = skill["base"]
+        unparsed = block.pop("unparsed_skills")
+        # "8 (6)" prints a STAT and its value under the armor penalty.
+        penalty = max((stats[key] - value for key, value in effective.items()), default=0)
+        weapons = block.get("weapons", [])
+        facts = _fact_line([
+            f"{(block.get('tier') or 'NPC').title()} stat block",
+            " ".join(f"{key} {value}" for key, value in stats.items()),
+            f"HP {block['hit_points']}",
+            f"armor {block['armor']} (head SP {block.get('sp_head', 0)}, body SP {block.get('sp_body', 0)})" if block.get("armor") else "",
+            "weapons: " + ", ".join(f"{w['name']} {w['damage']}" for w in weapons) if weapons else "",
+            "Skill Bases: " + ", ".join(f"{k} {v}" for k, v in {**abilities, **skill_bases}.items()),
+            f"equipment: {block['equipment']}" if block.get("equipment") else "",
+        ])
+        entries.append(_entry(
+            "npc", name, facts,
+            {"kind": "stat_block", "npc_stats": stats, "armor_penalty": penalty, "skill_bases": skill_bases,
+             "skills": levels, "abilities": abilities or None, "unparsed_skills": unparsed or None, **block},
+            None, digest, pdf_page=pdf_page, printed_page=printed,
+            tags=["stat-block", *([block["tier"]] if block.get("tier") else [])]))
+    return entries
+
+
+# --------------------------------------------------------------------------
 # Roles, starter kits and role tables
 # --------------------------------------------------------------------------
 
@@ -923,14 +979,17 @@ def _build_sections(conn: sqlite3.Connection, roles: dict[str, dict[str, Any]], 
 #   children   -> each child section becomes one entry
 #   decorated  -> each "▶ Name ◀" sub-heading inside the subtree becomes one entry
 #   forms      -> "▶ Form ◀" sub-headings with their "▶Move" headings as structured moves
+#   run_ins    -> each bold "Name:" paragraph (with its hanging-indented continuation) becomes one entry
 _SECTION_MAPS: list[tuple[re.Pattern[str], str, str, str]] = [
     (re.compile(r"^the neocorps$", re.I), "children", "faction", "corporation"),
     (re.compile(r"^key places in and around night city$", re.I), "decorated", "location", "district"),
     (re.compile(r"^martial arts$", re.I), "forms", "rule", "martial art"),
+    (re.compile(r"^gangs of night city$", re.I), "run_ins", "faction", "gang"),
+    (re.compile(r"^(?:power players|badasses) of night city$", re.I), "run_ins", "npc", "person"),
 ]
 
 
-def _subtree_blocks(conn: sqlite3.Connection, section_id: str) -> list[tuple[int, int, str, str]]:
+def _subtree_blocks(conn: sqlite3.Connection, section_id: str) -> list[tuple[int, int, str, str, float, float, int, str]]:
     """Blocks from a section's heading to the end of its last descendant section."""
     rows = conn.execute("SELECT id, parent_id, start_pdf, end_pdf, anchor_ordinal, end_ordinal FROM source_sections").fetchall()
     children: dict[str, list[tuple]] = {}
@@ -946,15 +1005,38 @@ def _subtree_blocks(conn: sqlite3.Connection, section_id: str) -> list[tuple[int
     start, anchor = by_id[section_id][2], by_id[section_id][4]
     end, end_ordinal = last[3], last[5]
     out = []
-    for pdf_page, ordinal, text, role in conn.execute(
-            "SELECT pdf_page, ordinal, text, role FROM source_blocks WHERE pdf_page BETWEEN ? AND ? ORDER BY pdf_page, ordinal",
-            (start, end)):
+    for row in conn.execute(
+            "SELECT pdf_page, ordinal, text, role, x0, size, bold, runin FROM source_blocks "
+            "WHERE pdf_page BETWEEN ? AND ? ORDER BY pdf_page, ordinal", (start, end)):
+        pdf_page, ordinal = row[0], row[1]
         if pdf_page == start and anchor is not None and ordinal <= anchor:
             continue
         if pdf_page == end and end_ordinal is not None and ordinal >= end_ordinal:
             break
-        out.append((pdf_page, ordinal, text, role))
+        out.append(tuple(row))
     return out
+
+
+def _run_ins(blocks: list[tuple]) -> list[dict[str, Any]]:
+    """Bold "Name:" paragraphs. Continuation blocks keep the body size and sit indented under a run-in's margin."""
+    margins: dict[int, set[float]] = {}
+    for pdf_page, _, _, _, x0, _, _, runin in blocks:
+        if runin:
+            margins.setdefault(pdf_page, set()).add(x0)
+    items: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for pdf_page, _, text, role, x0, size, bold, runin in blocks:
+        if role == "heading":
+            current = None
+        elif role != "body":
+            continue
+        elif runin:
+            current = {"name": runin, "pdf_page": pdf_page, "size": size, "parts": [text.split(":", 1)[-1]]}
+            items.append(current)
+        elif (current and not bold and abs(size - current["size"]) <= 0.5
+              and any(4 <= x0 - margin <= 20 for margin in margins.get(pdf_page, ()))):
+            current["parts"].append(text)
+    return items
 
 
 def _decorated(text: str) -> str | None:
@@ -980,9 +1062,20 @@ def _build_mapped_sections(conn: sqlite3.Connection, digest: str) -> list[dict[s
                             entries.append(_entry(category, ctitle, text, {"kind": kind}, None, digest, pdf_page=start,
                                                   printed_page=printed.get(start), section_id=cid, tags=[kind]))
                 continue
+            if how == "run_ins":
+                for item in _run_ins(_subtree_blocks(conn, sid)):
+                    text = flat(" ".join(item["parts"]))
+                    # "Name (Role)" carries the person's Role beside the name.
+                    role = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", item["name"])
+                    name = role.group(1) if role else item["name"]
+                    stats = {"kind": kind, **({"role": role.group(2)} if role else {})}
+                    if text:
+                        entries.append(_entry(category, name, text, stats, None, digest, pdf_page=item["pdf_page"],
+                                              printed_page=printed.get(item["pdf_page"]), section_id=sid, tags=[kind]))
+                continue
             current: dict[str, Any] | None = None
             items: list[dict[str, Any]] = []
-            for pdf_page, _, text, role in _subtree_blocks(conn, sid):
+            for pdf_page, _, text, role, *_ in _subtree_blocks(conn, sid):
                 name = _decorated(text) if role == "heading" else None
                 if name:
                     current = {"name": name, "pdf_page": pdf_page, "parts": [], "moves": []}
@@ -1074,7 +1167,8 @@ def extract(conn: sqlite3.Connection) -> tuple[list[dict[str, Any]], list[dict[s
     tables = load_tables(conn)
     headings = heading_index(conn)
     roles = role_data(tables)
-    entries = (_build_skills(conn, digest) + _build_catalog(tables, headings, digest)
+    skill_entries = _build_skills(conn, digest)
+    entries = (skill_entries + _build_catalog(tables, headings, digest) + _build_stat_blocks(conn, skill_entries, digest)
                + _build_mapped_sections(conn, digest) + _build_sections(conn, roles, digest))
     return tables, _merge(entries)
 

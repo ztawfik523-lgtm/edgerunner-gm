@@ -106,12 +106,13 @@ def write_index(
     layout.merge_drop_caps(pages)
     layout.apply_hyphenation(pages)
     evidence = layout.classify_blocks(pages)
+    layout.assign_tiers(pages)
     emit("structure", 78, "Organizing Corebook chapters and sections...", current=count, total=count)
     populated, without_printed = _write_pages(conn, pages)
     build_structure(conn, toc, pages)
     for key, value in {
         "schema_version": "3",
-        "extraction_method": "layout_blocks+line_tables_v2",
+        "extraction_method": "layout_blocks+line_tables_v3",
         "passage_window_words": "150",
         "passage_stride_words": "75",
         "pdf_page_count": str(count),

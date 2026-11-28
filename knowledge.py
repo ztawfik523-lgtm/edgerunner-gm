@@ -62,10 +62,13 @@ def build_structure(conn: sqlite3.Connection, toc: list[Any], pages: list[dict[s
             anchor_ordinal INTEGER, end_ordinal INTEGER);
         CREATE TABLE source_blocks(
             pdf_page INTEGER NOT NULL, ordinal INTEGER NOT NULL, x0 REAL, y0 REAL, x1 REAL, y1 REAL,
-            text TEXT NOT NULL, size REAL, bold INTEGER, role TEXT NOT NULL, PRIMARY KEY(pdf_page, ordinal));
+            text TEXT NOT NULL, size REAL, bold INTEGER, role TEXT NOT NULL, runin TEXT NOT NULL,
+            PRIMARY KEY(pdf_page, ordinal));
         CREATE TABLE source_tables(
             pdf_page INTEGER NOT NULL, ordinal INTEGER NOT NULL, bbox_json TEXT, cells_json TEXT NOT NULL,
             title TEXT, first_block INTEGER, PRIMARY KEY(pdf_page, ordinal));
+        CREATE TABLE source_stat_blocks(
+            pdf_page INTEGER NOT NULL, ordinal INTEGER NOT NULL, block_json TEXT NOT NULL, PRIMARY KEY(pdf_page, ordinal));
     """)
     by_no = {p["pdf_page"]: p for p in pages}
     count = len(pages)
@@ -111,9 +114,13 @@ def build_structure(conn: sqlite3.Connection, toc: list[Any], pages: list[dict[s
     for page in pages:
         blocks = page["blocks"]
         for ordinal, block in enumerate(blocks, 1):
-            conn.execute("INSERT INTO source_blocks VALUES(?,?,?,?,?,?,?,?,?,?)",
+            conn.execute("INSERT INTO source_blocks VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                          (page["pdf_page"], ordinal, block["x0"], block["y0"], block["x1"], block["y1"], block["text"],
-                          block.get("size"), int(bool(block.get("bold"))), block.get("role", "body")))
+                          block.get("size"), int(bool(block.get("bold"))), block.get("role", "body"),
+                          block.get("runin", "")))
+        for ordinal, stat_block in enumerate(page.get("stat_blocks", []), 1):
+            conn.execute("INSERT INTO source_stat_blocks VALUES(?,?,?)",
+                         (page["pdf_page"], ordinal, json.dumps(stat_block, ensure_ascii=False)))
         for ordinal, table in enumerate(page["tables"], 1):
             x0, y0, x1, y1 = table["bbox"]
             inside = [i for i, b in enumerate(blocks, 1)

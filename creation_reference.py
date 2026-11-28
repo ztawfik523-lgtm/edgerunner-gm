@@ -111,10 +111,12 @@ def campaign_presets(rules_path: str | Path) -> dict[str, Any]:
         return [{"name": e["name"], "summary": sourcecatalog._summarize(re.sub(r"^\d+\.\s*", "", e["description"])),
                  "printed_page": e["printed_page"]} for e in _entries(path, category)]
 
+    kinds = {e["name"]: e["stats"]["kind"] for e in _entries(path, "faction")}
     headlines = _tables(path, "screamsheet_headlines")[0]["rows"]
     return {
         "districts": places("location"),
-        "factions": [{**faction, "type": "Corporation"} for faction in places("faction")],
+        # Corporations and gangs, labelled by the book section they come from.
+        "factions": [{**faction, "type": kinds[faction["name"]].title()} for faction in places("faction")],
         "zone_types": named_rows("zone_type"),
         "threat_ratings": named_rows("threat_rating"),
         # One list per headline column; a headline takes one word from each.

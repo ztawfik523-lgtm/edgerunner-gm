@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 import secrets
 from typing import Any, Callable
 
 from combat import initiative, wound_state, attack_check, damage_and_armor, critical_injury, brawling_dice, _CRITICALS
 from mechanics import roll_dice
 import rules_eval
+import sourcecatalog
 
 SOURCE = "Cyberpunk RED Core Rulebook, pp. 168–177, 186–188, 221–222"
 
@@ -219,11 +221,81 @@ def _tie_order(rows, rolls, randbelow):
     return order
 
 
+def npc_stat_blocks(rules_path: Any) -> list[dict[str, Any]]:
+    """The `npc` entries of the rules index that carry a combat stat block."""
+    return [e for e in sourcecatalog.entries(rules_path, "npc") if e["stats"].get("kind") == "stat_block"]
+
+
+def _weapon_type(name: str, rules_path: Any) -> str:
+    """The engine weapon profile behind a stat block's weapon name."""
+    clean = re.sub(r"^(?:(?:Poor|Standard|Excellent) Quality|Popup)\s+", "", name, flags=re.I)
+    clean = re.sub(r"\bVH\b", "Very Heavy", clean)
+    singular = lambda text: text.casefold().rstrip("s")  # noqa: E731
+    for key in WEAPONS:
+        if clean.casefold() == key.casefold() or singular(clean) in map(singular, key.split(" & ")):
+            return key
+    # Cyberweapons state their melee class in the Corebook description.
+    for entry in sourcecatalog.entries(rules_path, "cyberware"):
+        if entry["name"].casefold() == clean.casefold():
+            match = re.search(r"\b(?:Very Heavy|Heavy|Medium|Light) Melee Weapon\b", entry["description"])
+            if match:
+                return match.group(0)
+    raise ValueError(f"Stat block weapon {name!r} has no weapon profile; supply the NPC's weapons explicitly")
+
+
+def _listed_ammo(equipment: str, weapons: list[str]) -> dict[str, int]:
+    """Spare ammunition counts a stat block lists for the weapons it carries."""
+    text = equipment
+    for long, short in (("Very Heavy Pistol", "VH Pistol"), ("Heavy Pistol", "H Pistol"), ("Medium Pistol", "M Pistol")):
+        text = text.replace(long, short)
+    found = {}
+    for kind in {WEAPONS[w].get("ammo") for w in weapons} - {None}:
+        match = re.search(rf"(?<![A-Za-z]){re.escape(kind)}(?: Ammo)? x(\d+)", text)
+        if match:
+            found[f"ammo:{kind}"] = int(match.group(1))
+    return found
+
+
+def expand_npc_specs(specs: list[Any], rules_path: Any) -> list[Any]:
+    """Fill specs naming a Corebook stat block ({"entry": name or id}) from the index; explicit fields win."""
+    if not any(isinstance(spec, dict) and spec.get("entry") for spec in specs):
+        return specs
+    if not rules_path:
+        raise ValueError("NPC stat block entries need your indexed Corebook")
+    blocks = npc_stat_blocks(rules_path)
+    if not blocks:
+        raise ValueError("The rules index has no NPC stat blocks; rebuild it from your Corebook PDF")
+    known = {key.casefold(): e for e in blocks for key in (e["id"], e["name"])}
+    result = []
+    for spec in specs:
+        if not (isinstance(spec, dict) and spec.get("entry")):
+            result.append(spec)
+            continue
+        overrides = {k: v for k, v in spec.items() if k != "entry"}
+        entry = known.get(str(spec["entry"]).strip().casefold())
+        if entry is None:
+            raise ValueError(f"Unknown NPC stat block {spec['entry']!r}; the index has: {', '.join(e['name'] for e in blocks)}")
+        block = entry["stats"]
+        base = {"name": entry["name"], "stats": block["npc_stats"], "skills": block["skills"],
+                "max_hp": block["hit_points"], "sp_body": block.get("sp_body", 0), "sp_head": block.get("sp_head", 0),
+                "armor_penalty": block["armor_penalty"]}
+        if "weapons" not in overrides:
+            base["weapons"] = [_weapon_type(w["name"], rules_path) for w in block.get("weapons", [])]
+            base["inventory"] = _listed_ammo(block.get("equipment", ""), base["weapons"])
+        merged = {**base, **overrides}
+        for key in ("stats", "skills", "inventory"):
+            if isinstance(base.get(key), dict) and isinstance(overrides.get(key), dict):
+                merged[key] = {**base[key], **overrides[key]}
+        result.append(merged)
+    return result
+
+
 def build_npc_combatant(spec: dict[str, Any], existing_ids: set[str] | None = None) -> dict[str, Any]:
-    """Build a valid ephemeral NPC combatant sheet from the stat block the GM or user supplies.
+    """Build a valid ephemeral NPC combatant sheet from a stat block.
 
     Required: name, stats (REF, DEX, BODY, WILL, MOVE), hp or max_hp, and weapons.
-    Omitted skills are untrained and omitted armor is no armor.
+    Omitted skills are untrained and omitted armor is no armor. Specs naming a
+    Corebook entry go through `expand_npc_specs` first.
     """
     existing = set(existing_ids or ())
     if not isinstance(spec, dict):
@@ -516,7 +588,8 @@ def _clear_grapple_between(cs: dict, target_id: str) -> None:
                 cd["free_hands"] += 1
 
 
-def _add_npc(e: dict, cs: dict, args: dict, randbelow: Callable[[int], int]) -> dict:
+def add_npc_specs(args: dict) -> list[Any]:
+    """The NPC specs of an add_npc call: `npcs`, a single `npc`/`spec`, or the arguments themselves."""
     raw_specs = args.get("npcs")
     if raw_specs is None:
         raw_single = args.get("npc", args.get("spec"))
@@ -528,6 +601,11 @@ def _add_npc(e: dict, cs: dict, args: dict, randbelow: Callable[[int], int]) -> 
             raise ValueError("add_npc requires npc specification")
     if not isinstance(raw_specs, list) or not raw_specs:
         raise ValueError("npcs must be a non-empty list")
+    return raw_specs
+
+
+def _add_npc(e: dict, cs: dict, args: dict, randbelow: Callable[[int], int]) -> dict:
+    raw_specs = add_npc_specs(args)
 
     cur_id = _current(e) if e.get("queue") else None
     existing_ids = set(str(k) for k in cs) | set(str(k) for k in (e.get("npcs") or {}))
