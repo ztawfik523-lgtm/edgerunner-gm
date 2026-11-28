@@ -27,90 +27,6 @@ _MAX_CHECKS_PER_TURN = 8
 _MAX_OPS_PER_TURN = 12
 _MAX_SITUATIONAL_MODIFIER = 10
 _ATTACK_MODES = frozenset({"ranged", "single", "autofire", "melee", "brawling", "aimed", "martial_arts", "suppressive"})
-_SPECIALIZABLE_SKILL_BASES = frozenset({"language", "local expert", "science", "play instrument", "martial arts"})
-
-_STATIC_CANONICAL_SKILL_STATS: dict[str, tuple[str, str]] = {
-    sourcecatalog._normalize(name): (name, stat)
-    for name, stat in (
-        # Awareness
-        ("Concentration", "WILL"),
-        ("Conceal/Reveal Object", "INT"),
-        ("Lip Reading", "INT"),
-        ("Perception", "INT"),
-        ("Tracking", "INT"),
-        # Body
-        ("Athletics", "DEX"),
-        ("Contortionist", "DEX"),
-        ("Dance", "DEX"),
-        ("Endurance", "WILL"),
-        ("Resist Torture/Drugs", "WILL"),
-        ("Stealth", "DEX"),
-        # Control
-        ("Drive Land Vehicle", "REF"),
-        ("Pilot Air Vehicle", "REF"),
-        ("Pilot Sea Vehicle", "REF"),
-        ("Riding", "REF"),
-        # Education
-        ("Accounting", "INT"),
-        ("Animal Handling", "INT"),
-        ("Bureaucracy", "INT"),
-        ("Business", "INT"),
-        ("Composition", "INT"),
-        ("Criminology", "INT"),
-        ("Cryptography", "INT"),
-        ("Deduction", "INT"),
-        ("Education", "INT"),
-        ("Gamble", "INT"),
-        ("Language", "INT"),
-        ("Library Search", "INT"),
-        ("Local Expert", "INT"),
-        ("Science", "INT"),
-        ("Stock Market", "INT"),
-        ("Tactics", "INT"),
-        ("Wilderness Survival", "INT"),
-        # Fighting
-        ("Brawling", "DEX"),
-        ("Evasion", "DEX"),
-        ("Martial Arts", "DEX"),
-        ("Melee Weapon", "DEX"),
-        # Performance
-        ("Acting", "COOL"),
-        ("Play Instrument", "COOL"),
-        # Ranged
-        ("Archery", "REF"),
-        ("Autofire", "REF"),
-        ("Handgun", "REF"),
-        ("Heavy Weapons", "REF"),
-        ("Shoulder Arms", "REF"),
-        # Social
-        ("Bribery", "COOL"),
-        ("Conversation", "EMP"),
-        ("Human Perception", "EMP"),
-        ("Interrogation", "COOL"),
-        ("Persuasion", "COOL"),
-        ("Personal Grooming", "COOL"),
-        ("Streetwise", "COOL"),
-        ("Trading", "COOL"),
-        ("Wardrobe & Style", "COOL"),
-        # Technique
-        ("Air Vehicle Tech", "TECH"),
-        ("Basic Tech", "TECH"),
-        ("Cybertech", "TECH"),
-        ("Demolitions", "TECH"),
-        ("Electronics/Security Tech", "TECH"),
-        ("First Aid", "TECH"),
-        ("Forgery", "TECH"),
-        ("Land Vehicle Tech", "TECH"),
-        ("Paint/Draw/Sculpt", "TECH"),
-        ("Paramedic", "TECH"),
-        ("Photography/Film", "TECH"),
-        ("Pick Lock", "TECH"),
-        ("Pick Pocket", "TECH"),
-        ("Sea Vehicle Tech", "TECH"),
-        ("Weaponstech", "TECH"),
-    )
-}
-
 
 def _char_handle(char: dict[str, Any]) -> str:
     d = char.get("detail") or {}
@@ -264,12 +180,10 @@ class PlanExecutor:
                 None,
             )
             if char_skill_key is not None:
-                static_hit = self._lookup_static_skill(char_skill_key)
                 req_s = requested_stat.upper() if isinstance(requested_stat, str) and requested_stat.upper() in STAT_NAMES else None
                 core_hit = sourcecatalog.lookup_skill(core, char_skill_key) if core else None
                 stat_resolved = (
                     (core_hit["stat"] if core_hit else None)
-                    or (static_hit[1] if static_hit else None)
                     or req_s
                 )
                 if stat_resolved:
@@ -292,28 +206,7 @@ class PlanExecutor:
             stat = entry_stat if entry_stat in STAT_NAMES else None
             return (stat is not None, exact["name"], stat, exact)
 
-        # Fall back to the static canonical Cyberpunk RED skill->STAT table when Corebook DB is absent or omits a standard skill.
-        static_hit = self._lookup_static_skill(skill_name)
-        if static_hit is not None:
-            canon_name, canon_stat = static_hit
-            return (True, canon_name, canon_stat, {"source": "corebook_static", "name": canon_name, "stat": canon_stat})
-
         return (False, skill_name, None, None)
-
-    @staticmethod
-    def _lookup_static_skill(skill_name: str) -> tuple[str, str] | None:
-        norm_req = sourcecatalog._normalize(skill_name)
-        hit = _STATIC_CANONICAL_SKILL_STATS.get(norm_req)
-        if hit is not None:
-            return hit
-        m = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", norm_req)
-        if m and m.group(1).strip() in _SPECIALIZABLE_SKILL_BASES:
-            base_hit = _STATIC_CANONICAL_SKILL_STATS.get(m.group(1).strip())
-            if base_hit is not None:
-                orig_m = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", skill_name.strip())
-                spec = orig_m.group(2).strip() if orig_m else m.group(2).strip()
-                return (f"{base_hit[0]} ({spec})", base_hit[1])
-        return None
 
     def deduct_humanity(self, character_id: str, amount: int, reason: str, operation_id: str) -> dict[str, Any]:
         payload = _json({"action": "overclock_humanity", "character_id": character_id, "amount": amount, "reason": reason})
@@ -526,7 +419,9 @@ class PlanExecutor:
             actor_label = _char_handle(npc_sheet)
             npc_stats = npc_sheet.get("stats") or {}
             npc_skills = npc_sheet.get("skills") or {}
-            stat_val = int(npc_stats.get(resolved_stat, 6)) if resolved_stat in npc_stats else 6
+            if resolved_stat not in npc_stats:
+                raise ValueError(f"NPC check: {actor_label} has no {resolved_stat} stat")
+            stat_val = int(npc_stats[resolved_stat])
             skill_val = 0
             if resolved_skill:
                 norm_sk = sourcecatalog._normalize(resolved_skill)
@@ -550,9 +445,7 @@ class PlanExecutor:
             stat_val = max(0, int(sv))
             skill_val = max(0, int(kv))
         else:
-            tier = str(chk.get("tier") or "").strip().lower()
-            stat_val = 12 if tier in {"lieutenant", "boss", "elite"} else 10
-            skill_val = 0
+            raise ValueError(f"NPC check for {actor_label} needs base, stat_value/skill_value, or an active encounter NPC sheet")
 
         res = _mechanics_skill_check(
             stat_val,
@@ -1262,7 +1155,8 @@ class PlanExecutor:
                     ids = [c["id"] for c in live_chars]
             if not ids:
                 return [], ["Skipped solo action (start_encounter): no campaign members attached"], [], []
-            raw_args = {"character_ids": ids}
+            npcs = raw_args.get("npcs")
+            raw_args = {"character_ids": ids, **({"npcs": npcs} if npcs else {})}
         elif action == "advance_time":
             elapsed_raw = op.get("elapsed_minutes", raw_args.get("elapsed_minutes", 0))
             try:

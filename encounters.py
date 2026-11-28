@@ -66,35 +66,7 @@ RANGE_DVS = {
 AUTOFIRE_DVS = {"smg": (15, 13, 15, 20, 25), "assault_rifle": (17, 16, 15, 13, 15)}
 _RANGE_MAX = (6, 12, 25, 50, 100, 200, 400, 800)
 
-NPC_TIER_PRESETS: dict[str, dict[str, Any]] = {
-    "mook": {
-        "stats": {"INT": 4, "REF": 5, "DEX": 5, "TECH": 4, "COOL": 4, "WILL": 4, "LUCK": 0, "MOVE": 5, "BODY": 5, "EMP": 4},
-        "skills": {"Handgun": 4, "Shoulder Arms": 4, "Melee Weapon": 4, "Brawling": 4, "Evasion": 4, "Concentration": 3, "Perception": 3, "Autofire": 3},
-        "hp": 25,
-        "sp_body": 7,
-        "sp_head": 7,
-        "armor_penalty": 0,
-        "weapons": ["Medium Pistol"],
-    },
-    "lieutenant": {
-        "stats": {"INT": 5, "REF": 7, "DEX": 6, "TECH": 5, "COOL": 6, "WILL": 6, "LUCK": 0, "MOVE": 6, "BODY": 7, "EMP": 5},
-        "skills": {"Handgun": 6, "Shoulder Arms": 6, "Melee Weapon": 6, "Brawling": 6, "Evasion": 6, "Concentration": 5, "Perception": 5, "Autofire": 5},
-        "hp": 35,
-        "sp_body": 11,
-        "sp_head": 11,
-        "armor_penalty": 0,
-        "weapons": ["Heavy Pistol"],
-    },
-    "boss": {
-        "stats": {"INT": 6, "REF": 8, "DEX": 8, "TECH": 6, "COOL": 7, "WILL": 7, "LUCK": 2, "MOVE": 7, "BODY": 8, "EMP": 5},
-        "skills": {"Handgun": 7, "Shoulder Arms": 7, "Melee Weapon": 7, "Brawling": 7, "Evasion": 7, "Concentration": 6, "Perception": 6, "Autofire": 7},
-        "hp": 45,
-        "sp_body": 11,
-        "sp_head": 11,
-        "armor_penalty": 0,
-        "weapons": ["Assault Rifle"],
-    },
-}
+_NPC_REQUIRED_STATS = ("REF", "DEX", "BODY", "WILL", "MOVE")
 
 _AMMO_TYPE_ALIASES = {
     "": "standard",
@@ -247,27 +219,54 @@ def _tie_order(rows, rolls, randbelow):
     return order
 
 
-def build_npc_combatant(spec: str | dict[str, Any], existing_ids: set[str] | None = None) -> dict[str, Any]:
-    """Build a valid ephemeral NPC combatant sheet from a tier preset or explicit fields."""
-    existing = set(existing_ids or ())
-    if isinstance(spec, str):
-        text = spec.strip()
-        if not text:
-            raise ValueError("NPC name or tier must be non-empty")
-        low = text.lower()
-        if low in NPC_TIER_PRESETS:
-            spec_dict: dict[str, Any] = {"name": low.title(), "tier": low}
-        else:
-            spec_dict = {"name": text, "tier": "mook"}
-    elif isinstance(spec, dict):
-        spec_dict = dict(spec)
-    else:
-        raise ValueError("NPC entry must be a string or object")
+def build_npc_combatant(spec: dict[str, Any], existing_ids: set[str] | None = None) -> dict[str, Any]:
+    """Build a valid ephemeral NPC combatant sheet from the stat block the GM or user supplies.
 
-    raw_tier = str(spec_dict.get("tier") or "mook").strip().lower()
-    if raw_tier not in NPC_TIER_PRESETS:
-        raise ValueError("NPC tier must be mook, lieutenant, or boss")
-    preset = NPC_TIER_PRESETS[raw_tier]
+    Required: name, stats (REF, DEX, BODY, WILL, MOVE), hp or max_hp, and weapons.
+    Omitted skills are untrained and omitted armor is no armor.
+    """
+    existing = set(existing_ids or ())
+    if not isinstance(spec, dict):
+        raise ValueError("NPC entry must be an object")
+    spec_dict = dict(spec)
+    name = str(spec_dict.get("name") or spec_dict.get("handle") or "").strip()
+    if not name:
+        raise ValueError("NPC name is required")
+    raw_stats = spec_dict.get("stats")
+    if not isinstance(raw_stats, dict):
+        raise ValueError(f"NPC {name} requires a stats object")
+    stats: dict[str, int] = {}
+    for k, v in raw_stats.items():
+        if type(v) is not int:
+            raise ValueError(f"NPC stat {k} must be an integer")
+        stats[str(k).upper()] = v
+    missing = [k for k in _NPC_REQUIRED_STATS if k not in stats]
+    if missing:
+        raise ValueError(f"NPC {name} is missing stats: {', '.join(missing)}")
+
+    skills: dict[str, int] = {}
+    for k, v in (spec_dict.get("skills") or {}).items():
+        if type(v) is not int:
+            raise ValueError(f"NPC skill {k} must be an integer")
+        skills[str(k)] = v
+
+    raw_max_hp = spec_dict.get("max_hp")
+    raw_hp = spec_dict.get("hp")
+    if raw_max_hp is None and raw_hp is None:
+        raise ValueError(f"NPC {name} requires hp or max_hp")
+    if raw_max_hp is not None and (type(raw_max_hp) is not int or raw_max_hp < 1):
+        raise ValueError("NPC max_hp must be a positive integer")
+    if raw_hp is not None and type(raw_hp) is not int:
+        raise ValueError("NPC hp must be an integer")
+    max_hp = raw_max_hp if raw_max_hp is not None else max(1, raw_hp)
+    hp = raw_hp if raw_hp is not None else max_hp
+
+    sp_body = spec_dict.get("sp_body", 0)
+    sp_head = spec_dict.get("sp_head", 0)
+    armor_penalty = spec_dict.get("armor_penalty", 0)
+    for label, val in (("sp_body", sp_body), ("sp_head", sp_head), ("armor_penalty", armor_penalty)):
+        if type(val) is not int or val < 0:
+            raise ValueError(f"NPC {label} must be a non-negative integer")
 
     explicit_id = spec_dict.get("id")
     if explicit_id is not None:
@@ -281,39 +280,6 @@ def build_npc_combatant(spec: str | dict[str, Any], existing_ids: set[str] | Non
         while f"npc-{idx}" in existing:
             idx += 1
         npc_id = f"npc-{idx}"
-
-    name = str(spec_dict.get("name") or spec_dict.get("handle") or raw_tier.title()).strip() or npc_id
-    stats = dict(preset["stats"])
-    if isinstance(spec_dict.get("stats"), dict):
-        for k, v in spec_dict["stats"].items():
-            if type(v) is not int:
-                raise ValueError(f"NPC stat {k} must be an integer")
-            stats[str(k).upper()] = v
-    if type(stats.get("REF")) is not int:
-        raise ValueError(f"{npc_id} requires integer REF")
-
-    skills = dict(preset["skills"])
-    if isinstance(spec_dict.get("skills"), dict):
-        for k, v in spec_dict["skills"].items():
-            if type(v) is not int:
-                raise ValueError(f"NPC skill {k} must be an integer")
-            skills[str(k)] = v
-
-    raw_max_hp = spec_dict.get("max_hp")
-    raw_hp = spec_dict.get("hp")
-    if raw_max_hp is not None and (type(raw_max_hp) is not int or raw_max_hp < 1):
-        raise ValueError("NPC max_hp must be a positive integer")
-    if raw_hp is not None and type(raw_hp) is not int:
-        raise ValueError("NPC hp must be an integer")
-    max_hp = raw_max_hp if raw_max_hp is not None else (max(1, raw_hp) if raw_hp is not None else preset["hp"])
-    hp = raw_hp if raw_hp is not None else max_hp
-
-    sp_body = spec_dict.get("sp_body", preset["sp_body"])
-    sp_head = spec_dict.get("sp_head", preset["sp_head"])
-    armor_penalty = spec_dict.get("armor_penalty", preset["armor_penalty"])
-    for label, val in (("sp_body", sp_body), ("sp_head", sp_head), ("armor_penalty", armor_penalty)):
-        if type(val) is not int or val < 0:
-            raise ValueError(f"NPC {label} must be a non-negative integer")
 
     armor_list: list[dict[str, Any]] = []
     if sp_body > 0:
@@ -335,7 +301,7 @@ def build_npc_combatant(spec: str | dict[str, Any], existing_ids: set[str] | Non
             "penalty": armor_penalty,
         })
 
-    raw_weapons = spec_dict.get("weapons", preset["weapons"])
+    raw_weapons = spec_dict.get("weapons")
     if not isinstance(raw_weapons, list):
         raise ValueError("NPC weapons must be a list")
     weapons_list: list[dict[str, Any]] = []
@@ -386,7 +352,6 @@ def build_npc_combatant(spec: str | dict[str, Any], existing_ids: set[str] | Non
     sheet: dict[str, Any] = {
         "id": npc_id,
         "name": name,
-        "tier": raw_tier,
         "is_npc": True,
         "stats": stats,
         "skills": skills,
@@ -397,7 +362,6 @@ def build_npc_combatant(spec: str | dict[str, Any], existing_ids: set[str] | Non
         "injuries": raw_injuries,
         "detail": {
             "handle": name,
-            "tier": raw_tier,
             "free_hands": free_hands,
             "equipment": {
                 "weapons": weapons_list,
