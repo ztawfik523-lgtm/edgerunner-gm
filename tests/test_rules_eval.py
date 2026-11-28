@@ -1,6 +1,7 @@
 import copy
 
 import rules_eval
+from tests.rules_fixture import DEATH_SAVE_TEXT
 
 
 def _fixed_die(die_value: int):
@@ -89,17 +90,17 @@ def test_effective_body_with_creation_and_linear_frames():
     assert rules_eval.effective_body(unowned) == 5
 
 
-def test_active_injuries_normalizes_enriches_dedups_and_preserves_flags():
+def test_active_injuries_normalizes_dedups_and_preserves_flags():
     char = {
         "injuries": [
             "Brain Injury",
             "Foreign Object",
-            {"id": "body:aimed_leg", "name": "Broken Leg"},
+            {"id": "body:8", "name": "Broken Leg", "effects": "Invented leg effect."},
         ],
         "detail": {
             "clock_minutes": 100,
             "injuries": [
-                {"id": "head:3", "name": "Brain Injury", "suppressed": True, "quick_fixed": True},
+                {"id": "head:3", "name": "Brain Injury", "effects": DEATH_SAVE_TEXT, "suppressed": True, "quick_fixed": True},
                 {"id": "head:7", "name": "Foreign Object"},
                 {"id": "body:5", "name": "Broken Ribs", "effect_suppressed_until": 500},
                 {"id": "head:5", "name": "Concussion", "effect_removed": True},
@@ -368,9 +369,9 @@ def test_recompute_death_save_base_penalty_and_apply_death_save():
         "detail": {
             "cyberware": [{"name": "Implanted Linear Frame ∑ (Sigma)"}],
             "injuries": [
-                {"id": "head:3", "name": "Brain Injury"},           # +1
-                {"id": "head:8", "name": "Whiplash"},               # +1
-                {"id": "body:8", "name": "Broken Leg"},             # 0
+                {"id": "head:3", "name": "Brain Injury", "effects": DEATH_SAVE_TEXT},  # +1
+                {"id": "head:8", "name": "Whiplash", "effects": DEATH_SAVE_TEXT},      # +1
+                {"id": "body:8", "name": "Broken Leg", "effects": "No penalty."},      # 0
                 {"id": "body:2", "name": "Dismembered Arm", "suppressed": True},  # suppressed -> 0
                 {"id": "body:4", "name": "Collapsed Lung", "death_save_penalty": 0},  # explicit 0
             ],

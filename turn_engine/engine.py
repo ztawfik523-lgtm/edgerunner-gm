@@ -666,11 +666,13 @@ class TurnEngine:
         progress: dict[str, Any],
         stored_executed: dict[str, Any] | None = None,
         regenerated_from: str | None = None,
+        unchronicled_reply: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Plan, execute, narrate and persist one GM turn.
 
         With `stored_executed` (regenerate of a resolved turn) only the Narrator runs, grounded in the
-        stored rolls/outcomes; no planner, executor, chronicler or time step touches game state.
+        stored rolls/outcomes; no planner, executor or time step touches game state. The Chronicler runs
+        only when `unchronicled_reply` names the failed-narration placeholder this retry replaces.
         `progress` is filled for the caller's failure handling: `mode`/`is_think` describing the turn,
         `executed` once state has been committed, and `clean_text`/`raw_text` once narration finished.
         """
@@ -698,6 +700,8 @@ class TurnEngine:
         yield {"event": "rule_citation", "data": {"entries": prep["citations"]}}
 
         renarrate = stored_executed is not None and not is_intro
+        # Patches and library entries a re-narration carries over were already reported.
+        carried = (len(stored_executed["patches"]), len(stored_executed["library_added"])) if renarrate else (0, 0)
         if renarrate:
             executed = stored_executed
             narration: dict[str, Any] = {}
@@ -935,13 +939,18 @@ class TurnEngine:
         has_successful_think_roll = any(r.get("success") is True for r in (executed.get("rolls") or []))
         use_chronicler = (
             not is_intro
-            and not renarrate
+            and (not renarrate or unchronicled_reply is not None)
             and chronicler_allowed
             and bool(getattr(self.llm, "enable_multi_call", isinstance(self.llm, OpenAICompatibleLLM)))
             and bool(clean_text.strip())
             and (not is_think or has_successful_think_roll)
         )
         if use_chronicler:
+            if unchronicled_reply:
+                # Marked before the pass runs: regenerating the placeholder again must not repeat it.
+                await asyncio.to_thread(
+                    self.tree.update_message_metadata, campaign_id, unchronicled_reply, {"chronicled": True}
+                )
             try:
                 chron_ctx = await asyncio.to_thread(self.gameplay.campaign_context, campaign_id)
                 chron_prep = {
@@ -1076,8 +1085,8 @@ class TurnEngine:
                 "generation_stats": generation_stats,
                 "citations": prep["citations"],
                 "rolls": executed["rolls"],
-                "state_patches": [] if renarrate else executed["patches"],
-                "library_added": [] if renarrate else executed["library_added"],
+                "state_patches": executed["patches"][carried[0]:],
+                "library_added": executed["library_added"][carried[1]:],
                 "warnings": executed["warnings"],
                 "compression_recommended": prep["compression_recommended"],
                 **({"regenerated_from": regenerated_from} if regenerated_from else {}),
@@ -1640,8 +1649,9 @@ class TurnEngine:
 
         A turn that already resolved (it has a GM reply, including a failed-narration placeholder) is
         re-narrated from the rolls, patches and outcomes stored on that reply (`message_id` itself when it
-        is a GM reply, else the user turn's latest one): no planner, no executor, no state change, and
-        `overclock`/`luck_spend` are rejected. A user turn with no GM reply yet (held/deferred) is resolved
+        is a GM reply, else the user turn's latest one): no planner, no executor, and `overclock`/`luck_spend`
+        are rejected. State changes only when the first successful retry of a failed-narration placeholder
+        runs the Chronicler. A user turn with no GM reply yet (held/deferred) is resolved
         as a normal turn.
         """
         active_mode = mode or self.turn_settings.get("mode") or getattr(getattr(self.llm, "config", None), "mode", "two_pass")
@@ -1687,8 +1697,11 @@ class TurnEngine:
             )
         )
         stored_executed: dict[str, Any] | None = None
+        unchronicled_reply: str | None = None
         if renarrate:
             src_meta = source["metadata"]
+            if src_meta.get("narration_failed") and not src_meta.get("chronicled"):
+                unchronicled_reply = source["id"]
             secrets, clocks = await asyncio.to_thread(
                 lambda: self.private_state.load_branch_private_state(campaign_id, source["id"], channel_id=chan)
             )
@@ -1723,5 +1736,6 @@ class TurnEngine:
             turn_intent=inherited_intent,
             stored_executed=stored_executed,
             regenerated_from=source["id"] if renarrate else None,
+            unchronicled_reply=unchronicled_reply,
         ):
             yield ev

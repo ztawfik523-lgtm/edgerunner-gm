@@ -196,23 +196,6 @@ def _iter_owned_items(char: dict[str, Any]) -> list[tuple[str, dict[str, Any] | 
     return found
 
 
-def _criticals_index() -> tuple[dict[str, tuple[str, int, str, str, str]], dict[str, list[tuple[str, int, str, str, str, str]]]]:
-    table = getattr(combat, "CRITICAL_INJURIES", None) or combat._CRITICALS
-    by_id: dict[str, tuple[str, int, str, str, str]] = {}
-    by_name: dict[str, list[tuple[str, int, str, str, str, str]]] = {}
-    for loc, entries in table.items():
-        if not isinstance(entries, dict):
-            continue
-        for roll, meta in entries.items():
-            if not isinstance(meta, (tuple, list)) or len(meta) < 4:
-                continue
-            name, effects, quick_fix, treatment = str(meta[0]), str(meta[1]), str(meta[2]), str(meta[3])
-            cid = f"{loc}:{roll}"
-            by_id[cid] = (str(loc), int(roll), name, effects, quick_fix, treatment)  # type: ignore[assignment]
-            by_name.setdefault(_norm(name), []).append((cid, str(loc), int(roll), name, effects, quick_fix, treatment))  # type: ignore[arg-type]
-    return by_id, by_name  # type: ignore[return-value]
-
-
 def effective_initial_emp(char: dict[str, Any]) -> int:
     """Resolve starting/initial EMP before cyberware humanity loss."""
     detail = _detail_ro(char)
@@ -297,7 +280,6 @@ def active_injuries(char: dict[str, Any]) -> list[dict[str, Any]]:
     now = detail.get("clock_minutes", 0)
     if not _is_int(now):
         now = 0
-    by_id, by_name = _criticals_index()
 
     raw_items: list[Any] = []
     if isinstance(detail.get("injuries"), list):
@@ -310,10 +292,7 @@ def active_injuries(char: dict[str, Any]) -> list[dict[str, Any]]:
 
     for item in raw_items:
         if isinstance(item, str):
-            raw_name = item.strip()
-            if not raw_name:
-                continue
-            raw_dict: dict[str, Any] = {"name": raw_name}
+            raw_dict: dict[str, Any] = {"name": item.strip()}
         elif isinstance(item, dict):
             if item.get("effect_removed") or item.get("removed"):
                 continue
@@ -322,48 +301,21 @@ def active_injuries(char: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         raw_id = raw_dict.get("id")
-        raw_id_str = raw_id.strip() if isinstance(raw_id, str) and raw_id.strip() else ""
+        raw_id_str = raw_id.strip() if isinstance(raw_id, str) else ""
         raw_name = raw_dict.get("name")
-        raw_name_str = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else ""
-
-        meta: tuple[str, str, int, str, str, str, str] | None = None
-        if raw_id_str and raw_id_str in by_id:
-            loc, roll, cname, ceffects, cquick, ctreat = by_id[raw_id_str]  # type: ignore[misc]
-            meta = (raw_id_str, loc, roll, cname, ceffects, cquick, ctreat)
-        elif raw_name_str and _norm(raw_name_str) in by_name:
-            matches = by_name[_norm(raw_name_str)]
-            chosen = matches[0]
-            if raw_id_str and ":" in raw_id_str:
-                pref_loc = raw_id_str.split(":", 1)[0].strip().casefold()
-                chosen = next((m for m in matches if m[1].casefold() == pref_loc), chosen)
-            elif not raw_id_str and len(matches) > 1:
-                chosen = next((m for m in matches if f"id:{m[0]}" in dedup), chosen)
-            meta = chosen
-
-        if meta is not None:
-            canon_id, loc, roll, cname, ceffects, cquick, ctreat = meta
-            effective_id = canon_id if (not raw_id_str or raw_id_str.endswith(":aimed_leg")) else raw_id_str
-            name_val = raw_name_str or cname
-            effects_val = str(raw_dict.get("effects") or ceffects)
-            quick_fix_val = str(raw_dict.get("quick_fix") or cquick)
-            treatment_val = str(raw_dict.get("treatment") or ctreat)
-            default_ds_pen = 1 if "base death-save penalty +1" in ceffects.casefold() else 0
-            dedup_key = f"id:{canon_id}"
+        raw_name_str = raw_name.strip() if isinstance(raw_name, str) else ""
+        name_val = raw_name_str or raw_id_str
+        if not name_val:
+            continue
+        # The same injury listed by name only merges into its first record.
+        dedup_key = f"id:{raw_id_str}" if raw_id_str else next(
+            (key for key, seen in dedup.items() if _norm(seen["name"]) == _norm(name_val)), f"name:{_norm(name_val)}")
+        effects_val = str(raw_dict.get("effects") or "")
+        if effects_val:
+            m_ds = re.search(r"death save penalty is increased by\s+(\d+)", effects_val, re.I)
+            default_ds_pen = int(m_ds.group(1)) if m_ds else 0
         else:
-            if not raw_name_str and not raw_id_str:
-                continue
-            effective_id = raw_id_str
-            name_val = raw_name_str or raw_id_str
-            loc = str(raw_dict.get("location") or "")
-            effects_val = str(raw_dict.get("effects") or "")
-            quick_fix_val = str(raw_dict.get("quick_fix") or "")
-            treatment_val = str(raw_dict.get("treatment") or "")
-            if effects_val:
-                m_ds = re.search(r"death[- ]save\s+penalty\s*\+\s*(\d+)", effects_val, re.I)
-                default_ds_pen = int(m_ds.group(1)) if m_ds else 0
-            else:
-                default_ds_pen = 1
-            dedup_key = f"name:{_norm(name_val)}" if name_val else f"id:{effective_id}"
+            default_ds_pen = 1
 
         explicit_ds = raw_dict.get("death_save_penalty")
         ds_pen = int(explicit_ds) if _is_int(explicit_ds) else default_ds_pen
@@ -379,12 +331,12 @@ def active_injuries(char: dict[str, Any]) -> list[dict[str, Any]]:
 
         normalized: dict[str, Any] = {
             **raw_dict,
-            "id": effective_id,
+            "id": raw_id_str,
             "name": name_val,
-            "location": loc,
+            "location": str(raw_dict.get("location") or ""),
             "effects": effects_val,
-            "quick_fix": quick_fix_val,
-            "treatment": treatment_val,
+            "quick_fix": str(raw_dict.get("quick_fix") or ""),
+            "treatment": str(raw_dict.get("treatment") or ""),
             "death_save_penalty": ds_pen,
             "suppressed": bool(is_suppressed),
             "quick_fixed": bool(raw_dict.get("quick_fixed", False)),

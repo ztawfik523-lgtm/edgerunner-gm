@@ -217,3 +217,36 @@ def add_campaign_presets(path: Path) -> None:
     add_table(path, "zone_type", "Zones", ["Zone Type", "Description"], [["Test Zone", "A zone."]])
     add_table(path, "threat_rating", "Threats", ["Threat Rating", "Description"], [["Test Threat", "A threat."]])
     add_table(path, "screamsheet_headlines", "Headlines", ["1d10", "A", "B", "C"], [["1", "Mayor", "Opens", "Bridge"]])
+
+
+CRITICAL_HEADER = ["Roll (2d6)", "Injury", "Injury Effect", "Quick Fix", "Treatment"]
+DEATH_SAVE_TEXT = "Base Death Save Penalty is increased by 1."
+_CRITICAL_NAMES = {
+    "Body": ["Dismembered Arm", "Dismembered Hand", "Collapsed Lung", "Broken Ribs", "Broken Arm", "Foreign Object",
+             "Broken Leg", "Torn Muscle", "Spinal Injury", "Crushed Fingers", "Dismembered Leg"],
+    "Head": ["Lost Eye", "Brain Injury", "Damaged Eye", "Concussion", "Broken Jaw", "Foreign Object", "Whiplash",
+             "Cracked Skull", "Damaged Ear", "Crushed Windpipe", "Lost Ear"],
+}
+
+
+def add_critical_tables(path: Path) -> None:
+    """Both Critical Injury tables with invented effects; only the injuries tests rely on differ."""
+    for page_no, (location, names) in enumerate(_CRITICAL_NAMES.items(), 1):
+        rows = []
+        for roll, name in enumerate(names, 2):
+            costly = name.startswith("Dismembered") or name in {"Collapsed Lung", "Brain Injury", "Lost Eye"}
+            effect = f"Invented {name} effect." + (f" {DEATH_SAVE_TEXT}" if costly else "")
+            quick, treatment = "Paramedic DV13", "Surgery DV17"
+            if name.startswith("Dismembered") or name == "Lost Eye":
+                quick = "N/A"
+            if name == "Foreign Object":
+                quick, treatment = "First Aid or Paramedic DV13", "Quick Fix removes Injury Effect permanently"
+            rows.append([str(roll), name, effect, quick, treatment])
+        add_table(path, "critical_injury", f"Critical Injuries to the {location}", CRITICAL_HEADER, rows, page_no)
+
+
+def critical_index(path: Path) -> Path:
+    """A minimal rules index holding the Critical Injury tables."""
+    build(path, [page(1, 1, [])])
+    add_critical_tables(path)
+    return path

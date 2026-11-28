@@ -29,6 +29,7 @@ import {
   syncChatRevisions,
   updateCharacterProfile,
   updateChatMessage,
+  type PeerStreamEventPayload,
 } from "./api";
 import { AuthGateModal } from "./components/AuthGateModal";
 import nightCityBackdrop from "./assets/night-city-backdrop.jpg";
@@ -95,6 +96,25 @@ function getInitialUrlCampaignId(): string | null {
 const MemoCharacterPanel = memo(CharacterPanel);
 const MemoCampaignPanel = memo(CampaignPanel);
 const MemoLibraryPanel = memo(LibraryPanel);
+
+function newPeerStream(data: PeerStreamEventPayload): StreamingTurnState {
+  return {
+    userText: data.user_text || "",
+    speakerName: data.speaker_name,
+    speakerColor: data.speaker_color,
+    speakerPortraitUrl: data.speaker_portrait_url,
+    text: "",
+    citations: [],
+    rolls: [],
+    patches: [],
+    libraryAdded: [],
+    warnings: [],
+    overclock: Boolean(data.overclock),
+    turnIntent: data.turn_intent,
+    truncateFromId: data.truncate_from_id,
+    startedAt: Date.now(),
+  };
+}
 
 export function App() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -190,6 +210,16 @@ export function App() {
   const abortRef = useRef<AbortController | null>(null);
   const pendingDeltaRef = useRef("");
   const deltaFrameRef = useRef<number | null>(null);
+  const peerDeltaRef = useRef("");
+  const peerFrameRef = useRef<number | null>(null);
+
+  // Ends the peer stream, dropping tokens still waiting for a frame.
+  const clearPeerStream = useCallback(() => {
+    if (peerFrameRef.current !== null) cancelAnimationFrame(peerFrameRef.current);
+    peerFrameRef.current = null;
+    peerDeltaRef.current = "";
+    setPeerStreaming(null);
+  }, []);
   const playerNameRef = useRef(playerName);
   const claimedCharIdRef = useRef(claimedCharId);
   const activeCampaignIdRef = useRef<string | null>(activeCampaignId);
@@ -398,7 +428,7 @@ export function App() {
       if (activeChannelId !== "main") {
         activeChannelIdRef.current = "main";
         setActiveChannelId("main");
-        setPeerStreaming(null);
+        clearPeerStream();
         if (activeCampaignId) {
           void fetchChatTree(activeCampaignId, "main").then(applyTree).catch(() => {});
         }
@@ -411,7 +441,7 @@ export function App() {
     if (!userPinnedMainRef.current && assignedChan && validIds.has(assignedChan) && activeChannelId === "main") {
       activeChannelIdRef.current = assignedChan;
       setActiveChannelId(assignedChan);
-      setPeerStreaming(null);
+      clearPeerStream();
       if (activeCampaignId) {
         void fetchChatTree(activeCampaignId, assignedChan).then(applyTree).catch(() => {});
       }
@@ -419,12 +449,12 @@ export function App() {
       const nextChan = assignedChan || grouping.channels[0]?.id || "main";
       activeChannelIdRef.current = nextChan;
       setActiveChannelId(nextChan);
-      setPeerStreaming(null);
+      clearPeerStream();
       if (activeCampaignId) {
         void fetchChatTree(activeCampaignId, nextChan).then(applyTree).catch(() => {});
       }
     }
-  }, [campaignContext?.party_grouping, speakerId, claimedCharId, activeChannelId, activeCampaignId, applyTree]);
+  }, [campaignContext?.party_grouping, speakerId, claimedCharId, activeChannelId, activeCampaignId, applyTree, clearPeerStream]);
 
   // Live Co-op presence heartbeat + SSE subscription + real-time peer streaming
   useEffect(() => {
@@ -432,7 +462,7 @@ export function App() {
       setRoster([]);
       setActiveTurn(null);
       setActiveTurnsMap({});
-      setPeerStreaming(null);
+      clearPeerStream();
       return;
     }
 
@@ -497,7 +527,7 @@ export function App() {
         const curChan = activeChannelIdRef.current || "main";
         const chanTurn = turns ? turns[curChan] : (curChan === "main" ? turn : null);
         if (!chanTurn) {
-          setPeerStreaming(null);
+          clearPeerStream();
         }
       },
       onPeerUserMessage: (data) => {
@@ -521,23 +551,24 @@ export function App() {
         if (data.client_id === selfClientId) return;
         const evChan = data.channel_id || "main";
         if (evChan !== (activeChannelIdRef.current || "main")) return;
+        if (data.event === "text_delta") {
+          // Buffer tokens and commit at most once per animation frame.
+          peerDeltaRef.current += String(data.data?.delta ?? "");
+          if (peerFrameRef.current === null) {
+            peerFrameRef.current = requestAnimationFrame(() => {
+              peerFrameRef.current = null;
+              const delta = peerDeltaRef.current;
+              peerDeltaRef.current = "";
+              setPeerStreaming((prev) => {
+                const base = prev ?? newPeerStream(data);
+                return { ...base, text: base.text + delta };
+              });
+            });
+          }
+          return;
+        }
         setPeerStreaming((prev) => {
-          const base: StreamingTurnState = prev ?? {
-            userText: data.user_text || "",
-            speakerName: data.speaker_name,
-            speakerColor: data.speaker_color,
-            speakerPortraitUrl: data.speaker_portrait_url,
-            text: "",
-            citations: [],
-            rolls: [],
-            patches: [],
-            libraryAdded: [],
-            warnings: [],
-            overclock: Boolean(data.overclock),
-            turnIntent: data.turn_intent,
-            truncateFromId: data.truncate_from_id,
-            startedAt: Date.now(),
-          };
+          const base = prev ?? newPeerStream(data);
           switch (data.event) {
             case "rule_citation":
               return { ...base, citations: ((data.data?.entries as LibraryEntry[]) ?? base.citations) };
@@ -549,8 +580,6 @@ export function App() {
               return { ...base, libraryAdded: [...base.libraryAdded, data.data as unknown as LibraryEntry] };
             case "warning":
               return { ...base, warnings: [...base.warnings, String(data.data?.message ?? "")] };
-            case "text_delta":
-              return { ...base, text: base.text + String(data.data?.delta ?? "") };
             default:
               return base;
           }
@@ -560,7 +589,7 @@ export function App() {
         if (data.client_id === selfClientId) return;
         const evChan = String(data.channel_id || "main");
         if (evChan === (activeChannelIdRef.current || "main")) {
-          setPeerStreaming(null);
+          clearPeerStream();
         }
         scheduleSync(30);
       },
@@ -586,15 +615,16 @@ export function App() {
         document.removeEventListener("visibilitychange", onVisibility);
       }
       unsubscribe();
+      clearPeerStream();
     };
-  }, [activeCampaignId, loadCampaignData, selfClientId]);
+  }, [activeCampaignId, loadCampaignData, selfClientId, clearPeerStream]);
 
   const handleSelectCampaign = async (id: string) => {
     abortRef.current?.abort();
     activeCampaignIdRef.current = id;
     activeChannelIdRef.current = "main";
     setActiveChannelId("main");
-    setPeerStreaming(null);
+    clearPeerStream();
     setOverclock(false);
     setActiveCampaignId(id);
     setSelectedLibraryEntry((cur) => (cur?.source === "homebrew" ? null : cur));
@@ -611,7 +641,7 @@ export function App() {
     userPinnedMainRef.current = channelId === "main";
     activeChannelIdRef.current = channelId;
     setActiveChannelId(channelId);
-    setPeerStreaming(null);
+    clearPeerStream();
     try {
       applyTree(await fetchChatTree(activeCampaignId, channelId));
     } catch (err) {

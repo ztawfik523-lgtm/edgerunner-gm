@@ -113,6 +113,13 @@ def test_gangs_are_extracted_from_run_in_headings(conn):
     assert len(gangs) >= 10 and all(len(d) > 100 for (d,) in gangs)
 
 
+def test_law_enforcement_factions_come_from_their_own_headings(conn):
+    police = dict(conn.execute("SELECT name, description FROM rule_entries WHERE category='faction' "
+                               "AND json_extract(stats_json, '$.kind')='law enforcement'").fetchall())
+    assert {"Netwatch", "MAX-TAC"} <= set(police) and len(police) == 6
+    assert all(len(d) > 100 for d in police.values()) and not [n for n in police if ":" in n]
+
+
 def test_npc_stat_blocks_have_sane_values_and_build_combatants():
     from encounters import build_npc_combatant, expand_npc_specs, npc_stat_blocks
 
