@@ -3450,6 +3450,38 @@ async def test_failed_narration_keeps_executed_turn_and_retry_does_not_reapply(t
     assert done["assistant_message"]["metadata"]["regenerated_from"] == placeholder["id"]
 
 
+@pytest.mark.anyio
+async def test_retry_of_failed_narration_chronicles_the_turn_exactly_once(tmp_path: Path):
+    _, _, svc, camp_id, char_id = _seed_campaign(tmp_path)
+
+    class ChroniclingLLM(_CheckAndMoneyLLM):
+        enable_multi_call = True
+        chronicler_calls = 0
+
+        async def complete(self, messages, **kwargs):
+            if "post-turn chronicler" not in messages[0]["content"].lower():
+                return await super().complete(messages, **kwargs)
+            self.chronicler_calls += 1
+            return json.dumps({"state_ops": [{"type": "update_campaign", "changes": {"discoveries": {"Gate": "Unlocked"}}}]})
+
+    llm = ChroniclingLLM(fail_first_stream=True)
+    eng = TurnEngine(svc, llm, turn_settings={"enable_chronicler": True})
+    with pytest.raises(RuntimeError, match="LLM stream dropped"):
+        async for _ in eng.run_turn(camp_id, "Take the shot", speaker_character_id=char_id):
+            pass
+    placeholder = eng.tree.get_tree(camp_id)["active_branch"][-1]
+    assert llm.chronicler_calls == 0
+
+    retry = [ev async for ev in eng.regenerate_turn(camp_id, placeholder["id"])][-1]["data"]
+    assert llm.chronicler_calls == 1
+    assert [p["target"] for p in retry["state_patches"]] == ["campaign"]
+
+    for message_id in (retry["assistant_message"]["id"], placeholder["id"]):
+        async for _ in eng.regenerate_turn(camp_id, message_id):
+            pass
+    assert llm.chronicler_calls == 1
+
+
 def test_settings_per_key_fault_tolerance(tmp_path: Path):
     from turn_engine import (
         DEFAULT_PROMPT_TEMPLATES,
