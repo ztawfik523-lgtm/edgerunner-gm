@@ -5,25 +5,33 @@ import copy
 import secrets
 
 from mechanics import roll_dice
-from corebook_gm_data import ROLE_HUSTLES_60
-
-LIFESTYLES = {"Kibble": 100, "Generic Prepak": 300, "Good Prepak": 600, "Fresh Food": 1500}
-HOUSING = {"street": 0, "vehicle": 0, "cube": 500, "cargo_container": 1000,
-           "studio": 1500, "two_bedroom": 2500, "upscale_conapt": 7500,
-           "luxury_penthouse": 15000, "corporate": 0}
-_LOW = (0, 100, 200, 300)
-_MID = (100, 200, 300, 500)
-_HIGH = (300, 500, 600, 800)
-_HUSTLES = {
-    "Rockerboy": (2, 0, 3, 3, 3, 2), "Solo": (1, 2, 2, 1, 0, 1),
-    "Netrunner": (1, 2, 0, 2, 2, 2), "Tech": (0, 1, 2, 1, 1, 1),
-    "Medtech": (1, 2, 1, 0, 2, 1), "Media": (3, 2, 2, 2, 0, 3),
-    "Lawman": (1, 2, 0, 1, 2, 2), "Exec": (3, 0, 2, 3, 3, 2),
-    "Fixer": (2, 2, 2, 0, 2, 3), "Nomad": (1, 1, 1, 2, 1, 0),
-}
+import sourcecatalog
 
 
-def apply_action(character, action, args, randbelow=secrets.randbelow):
+def housing_costs(rules_path) -> tuple[dict[str, int], dict[str, int]]:
+    """(housing name -> monthly rent, lifestyle name -> monthly cost) from the indexed Corebook."""
+    housing: dict[str, int] = {}
+    lifestyles: dict[str, int] = {}
+    for entry in sourcecatalog.entries(rules_path, "housing"):
+        target = lifestyles if entry["stats"]["kind"] == "lifestyle" else housing
+        target[entry["name"]] = entry["stats"]["cost_eb"]
+    if not housing or not lifestyles:
+        raise ValueError("The rules index has no housing and lifestyle entries")
+    return housing, lifestyles
+
+
+def _hustle(rules_path, role: str, rank: int, die: int) -> tuple[int, str, int]:
+    """(pay, description, printed page) from the role's Corebook hustle table."""
+    for table in sourcecatalog.rule_tables(rules_path, "hustle"):
+        if table["title"] == f"{role} Hustle":
+            row = next(row for row in table["rows"] if row[0] == str(die))
+            # Pay columns follow the description: role ranks 1-4, 5-7, 8-10.
+            pay = row[2 if rank <= 4 else 3 if rank <= 7 else 4]
+            return sourcecatalog.parse_cost(pay)["cost_eb"], row[1], table["printed_page"]
+    raise ValueError(f"The rules index has no hustle table for {role}")
+
+
+def apply_action(character, action, args, rules_path, randbelow=secrets.randbelow):
     c = copy.deepcopy(character)
     d = c.setdefault("detail", {})
     roles = {r["role"]: r["rank"] for r in d.get("roles", [])}
@@ -33,17 +41,15 @@ def apply_action(character, action, args, randbelow=secrets.randbelow):
         if role not in roles: raise ValueError("Hustle requires a saved role")
         if args.get("free_days") != 7: raise ValueError("A hustle consumes seven completely free days")
         die = roll_dice(1, 6, randbelow)[0]
-        rank = roles[role]
-        amount = (_LOW if rank <= 4 else _MID if rank <= 7 else _HIGH)[_HUSTLES[role][die-1]]
+        amount, label, page = _hustle(rules_path, role, roles[role], die)
         c["money"] += amount
         d["clock_minutes"] = clock + 10080
-        hustle_entry = ROLE_HUSTLES_60.get(role, [{}])[die - 1] if role in ROLE_HUSTLES_60 and 1 <= die <= 6 else {}
         result = {
             "earned": amount,
             "dice": [die],
             "elapsed_minutes": 10080,
-            "label": hustle_entry.get("label", ""),
-            "source": "Corebook pp.381–385",
+            "label": label,
+            "source": f"Corebook p.{page}",
         }
     elif action == "job_reward":
         amount = args.get("amount")
@@ -53,14 +59,15 @@ def apply_action(character, action, args, randbelow=secrets.randbelow):
         result = {"earned": amount, "adjudication": "GM-authorized contract payment, not an inferred price", "source": "Corebook p.381"}
     elif action == "pay_month":
         lifestyle = args.get("lifestyle", d.get("lifestyle", "Kibble"))
-        housing = args.get("housing", d.get("housing", "cargo_container"))
+        housing = args.get("housing", d.get("housing", "Cargo Container"))
         month = args.get("month")
         if type(month) is not int or month < 1: raise ValueError("A positive campaign month is required")
-        if lifestyle not in LIFESTYLES or housing not in HOUSING: raise ValueError("Unknown lifestyle or housing")
-        if housing == "corporate" and not roles.get("Exec"): raise ValueError("Corporate housing requires Exec benefits")
+        housing_eb, lifestyle_eb = housing_costs(rules_path)
+        if lifestyle not in lifestyle_eb or housing not in housing_eb: raise ValueError("Unknown lifestyle or housing")
+        if housing.startswith("Corporate") and not roles.get("Exec"): raise ValueError("Corporate housing requires Exec benefits")
         paid = d.setdefault("paid_months", {})
         if str(month) in paid: raise ValueError("This month's obligations were already paid")
-        cost = LIFESTYLES[lifestyle] + HOUSING[housing]
+        cost = lifestyle_eb[lifestyle] + housing_eb[housing]
         if c["money"] < cost: raise ValueError("Insufficient money for monthly obligations")
         c["money"] -= cost
         paid[str(month)] = {"cost": cost, "lifestyle": lifestyle, "housing": housing}

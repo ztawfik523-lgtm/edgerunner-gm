@@ -76,7 +76,7 @@ def validate_role_choices(role: str, rank: int, choices: Any):
     elif role == "Nomad":
         selected = choices.get("moto", []) if isinstance(choices, dict) else choices
         if not isinstance(selected, list) or len(selected) != rank or any(not isinstance(x, (str, dict)) for x in selected): raise ValueError("Nomad must select one Moto vehicle/upgrade option per rank")
-        upgrade_keywords = ("armored", "smuggling", "heavy chassis", "nos", "nitrous", "bulletproof", "upgrade", "seating", "housing", "comms", "communications", "amphibious", "ram", "stealth", "weapon mount")
+        upgrade_keywords = ("armored", "smuggling", "heavy chassis", "nos", "nitrous", "bulletproof", "upgrade", "seating", "housing", "comms", "communications", "amphibious", "ram", "stealth", "weapon mount", "onboard", "plow", "spike strip")
         motorpool: list[dict[str, Any]] = []
         upgrades: list[str] = []
         for idx, item in enumerate(selected):

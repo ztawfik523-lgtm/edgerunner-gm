@@ -729,6 +729,12 @@ def _build_fashion(tables, digest) -> list[dict[str, Any]]:
 # Skills
 # --------------------------------------------------------------------------
 
+def _skill_name(header: str) -> str:
+    """A dot-leader header's skill name, without its "(x2)" marker or stray leader dots."""
+    name = re.sub(r"\s*\(\s*x\s*2\s*\)\s*$", "", header, flags=re.I)
+    return re.sub(r"[.\s]+$", "", name).strip()
+
+
 def _build_skills(conn: sqlite3.Connection, digest: str) -> list[dict[str, Any]]:
     printed = dict(conn.execute("SELECT pdf_page, printed_page FROM pages"))
     blocks = conn.execute("SELECT pdf_page, ordinal, text, role FROM source_blocks ORDER BY pdf_page, ordinal").fetchall()
@@ -755,8 +761,7 @@ def _build_skills(conn: sqlite3.Connection, digest: str) -> list[dict[str, Any]]
             if match:
                 raw, stat = match.groups()
                 cost = 2 if re.search(r"\(\s*x\s*2\s*\)\s*$", raw, re.I) else 1
-                name = re.sub(r"\s*\(\s*x\s*2\s*\)\s*$", "", raw, flags=re.I)
-                name = re.sub(r"[.\s]+$", "", name).strip()
+                name = _skill_name(raw)
                 key = _normalize(name)
                 if key not in found:
                     found[key] = {"name": name, "stat": stat.upper(), "cost": cost, "pdf_page": pdf_page,
@@ -1169,3 +1174,56 @@ def rule_tables(rules_path: str | Path, kind: str | None = None) -> list[dict[st
 def roles(rules_path: str | Path) -> dict[str, dict[str, Any]]:
     """Role name -> role entry (description, ability, skills, starter kits, STAT templates)."""
     return {e["name"]: e for e in entries(rules_path, "role")}
+
+
+def skill_groups(rules_path: str | Path) -> dict[str, str]:
+    """Skill name -> the book's category: the "<Category> Skills" heading its definition sits under."""
+    names = {_normalize(name): name for name in skills(rules_path)}
+    groups: dict[str, str] = {}
+    group = None
+    with closing(_connect(rules_path)) as conn:
+        for text, role in conn.execute("SELECT text, role FROM source_blocks ORDER BY pdf_page, ordinal"):
+            if role == "heading":
+                match = re.fullmatch(r"(.+?) Skills?", flat(text))
+                group = match.group(1) if match else None
+            elif group:
+                for line in text.split("\n"):
+                    header = _HEADER.fullmatch(line.strip())
+                    name = names.get(_normalize(_skill_name(header.group(1)))) if header else None
+                    if name:
+                        groups.setdefault(name, group)
+    missing = sorted(set(names.values()) - set(groups))
+    if missing:
+        raise ValueError(f"No skill category found in the rules index for: {', '.join(missing)}")
+    return groups
+
+
+def role_lifepaths(rules_path: str | Path) -> dict[str, list[dict[str, Any]]]:
+    """Role name -> [{title, options}] from the role-based lifepath roll tables.
+
+    Each role-based lifepath page carries its role's name as a heading, so a
+    roll table belongs to the role named on its page.
+    """
+    names = {name.casefold(): name for name in roles(rules_path)}
+    with closing(_connect(rules_path)) as conn:
+        first, last = conn.execute(
+            "SELECT p.start_pdf, MAX(c.end_pdf) FROM source_sections p JOIN source_sections c ON c.parent_id=p.id "
+            "WHERE p.title='Role-Based Lifepaths'").fetchone()
+        page_roles = {
+            pdf_page: names[flat(text).casefold()]
+            for pdf_page, text in conn.execute(
+                "SELECT pdf_page, text FROM source_blocks WHERE role='heading' AND pdf_page BETWEEN ? AND ?", (first, last))
+            if flat(text).casefold() in names
+        }
+    result: dict[str, list[dict[str, Any]]] = {}
+    for table in rule_tables(rules_path, "roll_table"):
+        role = page_roles.get(table["pdf_page"])
+        if role:
+            result.setdefault(role, []).append({
+                "title": (table["title"] or "").strip(" ▶◀:"),
+                "options": [f"{row[-1]} {note}".strip() for row, note in zip(table["rows"], table["notes"])],
+            })
+    missing = sorted(set(names.values()) - set(result))
+    if missing:
+        raise ValueError(f"No role-based lifepath tables found in the rules index for: {', '.join(missing)}")
+    return result

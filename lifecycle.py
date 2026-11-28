@@ -321,8 +321,9 @@ class SoloService:
                 chars[char_id] = result["character"]
             else:
                 from economy import apply_action
+                if not self.gameplay.rules_path: raise ValueError("A source index is required")
                 _sync_chars_to_runtime_clock(chars, runtime)
-                result = apply_action(chars[char_id], args["action"], args.get("arguments", {}), randbelow)
+                result = apply_action(chars[char_id], args["action"], args.get("arguments", {}), self.gameplay.rules_path, randbelow)
                 chars[char_id] = result["character"]
                 expired = advance_campaign_clock(state, randbelow=randbelow)
                 res = result["result"]

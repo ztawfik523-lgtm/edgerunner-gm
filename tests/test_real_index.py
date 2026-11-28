@@ -16,7 +16,7 @@ import pytest
 DB = os.environ.get("REDKB_DB")
 pytestmark = pytest.mark.skipif(not DB or not Path(DB).is_file(), reason="REDKB_DB does not point at a built rules index")
 
-# Lower bounds for extracted (not hand-typed) entries per category.
+# Lower bounds for extracted entries per category.
 MIN_COUNTS = {
     "skill": 66, "role": 10, "weapon": 60, "armor": 9, "cyberware": 90, "gear": 50, "program": 25,
     "hardware": 8, "fashion": 90, "drug": 10, "ammo": 13, "attachment": 8, "vehicle": 14, "service": 30,
@@ -32,10 +32,8 @@ def conn():
 
 
 def _extracted(conn):
-    # Hand-typed top-up rows carry no source reference and are not section-derived.
     return conn.execute(
-        "SELECT id, name, category, description, printed_page, section_id, source_json FROM rule_entries "
-        "WHERE source_json != '{}' OR section_id IS NOT NULL OR category = 'skill'").fetchall()
+        "SELECT id, name, category, description, printed_page, section_id, source_json FROM rule_entries").fetchall()
 
 
 def test_skill_count(conn):
@@ -54,8 +52,7 @@ def test_descriptions_do_not_start_with_page_furniture(conn):
     headers = {r[0].casefold() for r in conn.execute("SELECT DISTINCT text FROM source_blocks WHERE role='running_header'")}
     page_header = {p: h.casefold() for p, h in conn.execute("SELECT pdf_page, header FROM pages") if h.casefold() in headers}
     offenders = []
-    for row in conn.execute("SELECT name, description, printed_page, pdf_page FROM rule_entries "
-                            "WHERE source_json != '{}' OR section_id IS NOT NULL OR category = 'skill'"):
+    for row in conn.execute("SELECT name, description, printed_page, pdf_page FROM rule_entries"):
         name, description, printed, pdf_page = row
         head = description[:120].casefold()
         if printed and re.match(rf"{printed}\b", head):
@@ -97,3 +94,14 @@ def test_rule_tables_cover_registry_kinds(conn):
     kinds = {r[0] for r in conn.execute("SELECT DISTINCT kind FROM rule_tables")}
     assert {"ranged_weapon", "melee_weapon", "cyberware", "program", "black_ice", "stat_template", "role_skill_list",
             "role_skill_levels", "critical_injury", "hustle", "roll_table", "fashion", "housing", "lifestyle"} <= kinds
+
+
+def test_creation_reference_reads_every_corebook_section():
+    from creation_reference import build_creation_reference
+
+    ref = build_creation_reference(DB)
+    assert [len(r["role_lifepath"]) >= 3 for r in ref["roles"]] == [True] * 10
+    assert len({s["group"] for s in ref["skills"]}) == 9
+    assert len(ref["cultural_regions"]) == 10 and len(ref["lifepath_tables"]) == 18
+    assert len(ref["lifestyles"]) == 4 and ref["nomad_upgrades"] and ref["martial_arts_forms"]
+    assert [len(column) for column in ref["campaign_presets"]["screamsheet_headlines"]] == [10, 10, 10]

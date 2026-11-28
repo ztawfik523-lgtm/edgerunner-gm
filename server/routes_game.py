@@ -342,7 +342,10 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
         if blocked is not None:
             return blocked
         from creation_reference import build_creation_reference
-        payload = build_creation_reference(ctx.db_path)
+        try:
+            payload = build_creation_reference(ctx.db_path)
+        except ValueError as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc), "request_id": request_id})
         payload["request_id"] = request_id
         return payload
 

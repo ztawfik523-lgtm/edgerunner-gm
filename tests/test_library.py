@@ -32,6 +32,10 @@ def _create_rules_db(path: Path) -> Path:
                  "Requires x2 Improvement Points to advance.", 190),
         rf.block("Interface ....................... INT", 240),
         rf.block("Netrunner Role Ability skill listed for test layout.", 260),
+        rf.block("Perception ...................... INT", 290),
+        rf.block("Spotting hidden things.", 310),
+        rf.block("Streetwise ...................... COOL", 330),
+        rf.block("Knowing who to ask.", 350),
     ])
     role_lists = rf.page(89, 88, [rf.table([
         ["Rockerboy Skills", "Solo Skills", "Netrunner Skills"],
@@ -321,22 +325,6 @@ def test_upsert_and_dossier_categories(tmp_path: Path):
     npc_hits = library.search_library(rules_db, q="Tomasz", category="npc", campaign_path=camp_db, campaign_id=camp_id, limit=5)
     assert len(npc_hits) == 1
     assert npc_hits[0]["stats"]["disposition"] == 1
-
-
-def test_corebook_curated_catalogs_indexed_for_ai_search(tmp_path: Path):
-    rules_db = _create_rules_db(tmp_path / "rules.sqlite")
-
-    mal = library.search_library(rules_db, q="Malorian Arms 3516", category="weapon")
-    assert mal and mal[0]["name"] == "Malorian Arms 3516"
-
-    lace = library.search_library(rules_db, q="Black Lace", category="drug")
-    assert any("Black Lace" in x["name"] for x in lace)
-
-    bike = library.search_library(rules_db, q="Superbike", category="vehicle")
-    assert any(x["name"] == "Superbike" for x in bike)
-
-    net = library.search_library(rules_db, q="Netrunner", category="role")
-    assert net and net[0]["name"] == "Netrunner"
 
 
 def test_upsert_preserves_existing_fields_and_library_events_idempotency(tmp_path: Path):

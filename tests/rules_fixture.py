@@ -114,3 +114,56 @@ def add_role(path: Path, name: str, templates: list[list[int]], streetrat_skills
         conn.commit()
     finally:
         conn.close()
+
+
+def add_entry(path: Path, category: str, name: str, stats: dict[str, Any], tags: Iterable[str] = ()) -> None:
+    """Insert one materialized catalog entry (call after anything that re-materializes the library)."""
+    slug = "-".join(name.lower().split())
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO rule_entries(id,name,norm_name,category,summary,description,stats_json,tags_json,source_sha256)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (f"corebook:{category}:{slug}", name, name.lower(), category, name, name, json.dumps(stats), json.dumps(list(tags)), "test"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_table(path: Path, kind: str, title: str, columns: list[str], rows: list[list[str]], printed_page: int = 1) -> None:
+    """Insert one materialized rule table."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("INSERT INTO rule_tables VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (f"{kind}-{title}", kind, title, kind, printed_page, printed_page, None,
+                      json.dumps(columns), json.dumps(rows), json.dumps([""] * len(rows))))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_creation_catalog(path: Path) -> None:
+    """The priced items, armor and housing that character creation looks up (invented prices)."""
+    priced = [("weapon", "Very Heavy Pistol", 100), ("weapon", "Heavy Pistol", 100), ("gear", "Agent", 100),
+              ("fashion", "High Fashion Contact Lenses", 1000), ("fashion", "High Fashion Jacket", 1000)]
+    for category, name, cost in priced:
+        add_entry(path, category, name, {"cost_eb": cost})
+    for name, sp, cost in [("Light Armorjack", 11, 100), ("Medium Armorjack", 12, 100), ("Bodyweight Suit", 11, 1000)]:
+        add_entry(path, "armor", name, {"cost_eb": cost, "sp": sp})
+    for name, hl, cost in [("Neural Link", 7, 500), ("Linear Frame Sigma", 14, 1000), ("Skin Weave", 7, 500),
+                           ("Implanted Linear Frame Sigma", 14, 5000)]:
+        add_entry(path, "cyberware", name, {"cost_eb": cost, "hl": hl})
+    for name, kind, cost in [("Cargo Container", "housing", 1000), ("Cube Hotel", "housing", 500),
+                             ("Corporate Conapt", "housing", 0), ("Kibble", "lifestyle", 100),
+                             ("Generic Prepak", "lifestyle", 300)]:
+        add_entry(path, "housing", name, {"cost_eb": cost, "kind": kind})
+
+
+def add_campaign_presets(path: Path) -> None:
+    """One district, corporation, zone type, threat rating and headline row."""
+    add_entry(path, "location", "Test District", {"kind": "district"})
+    add_entry(path, "faction", "Test Corp", {"kind": "corporation"})
+    add_table(path, "zone_type", "Zones", ["Zone Type", "Description"], [["Test Zone", "A zone."]])
+    add_table(path, "threat_rating", "Threats", ["Threat Rating", "Description"], [["Test Threat", "A threat."]])
+    add_table(path, "screamsheet_headlines", "Headlines", ["1d10", "A", "B", "C"], [["1", "Mayor", "Opens", "Bridge"]])

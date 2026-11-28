@@ -1243,8 +1243,9 @@ def test_ownership_hardening_guests_characters_and_messages(tmp_path: Path, monk
     values = [(r, 6, 7, 7, 3, 8, 6, 5, 5, 6, 5) for r in range(1, 11)]
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     defs = "\n".join(f"{name}........INT" for name in basics + [f"Skill {i}" + (" (x2)" if i == 0 else "") for i in range(20)])
-    from tests.rules_fixture import add_role, add_skill_definitions
+    from tests.rules_fixture import add_creation_catalog, add_role, add_skill_definitions
     add_skill_definitions(rules_db, defs.splitlines())
+    add_creation_catalog(rules_db)
     add_role(rules_db, "Solo", [list(row[1:]) for row in values], {f"Skill {i}": 4 for i in range(20)})
 
     created_pc_res = client.post(
