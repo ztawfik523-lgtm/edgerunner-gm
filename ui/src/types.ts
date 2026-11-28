@@ -523,15 +523,8 @@ export interface TurnStreamCallbacks {
   onError?: (detail: string) => void;
 }
 
-export interface CreationStatInfo {
-  name: string;
-  short: string;
-  mechanics: string;
-  tip: string;
-}
-
 export interface CreationMethodInfo {
-  id: "streetrat" | "edgerunner" | "complete_package" | "freeform";
+  id: "streetrat" | "edgerunner" | "complete_package";
   name: string;
   badge: string;
   summary: string;
@@ -544,38 +537,33 @@ export interface CreationRoleLifepathField {
   options: string[];
 }
 
-export interface CreationRoleWeaponEntry {
-  type: "fixed" | "choice";
-  item?: string;
-  qty?: number;
-  label?: string;
-  options?: string[];
+export interface CreationKitItem {
+  item: string;
+  qty: number;
 }
 
-export interface CreationRoleCyberwareItem {
-  name: string;
+export interface CreationKitCyberware extends CreationKitItem {
   hl: number;
   install: string;
   notes: string;
 }
 
+export type CreationKitEntry<T extends CreationKitItem = CreationKitItem> =
+  | ({ type: "fixed" } & T)
+  | { type: "choice"; options: T[] };
+
 export interface CreationRoleInfo {
   name: string;
   ability: string;
-  ability_summary: string;
-  tagline: string;
-  best_for: string;
-  key_stats: StatName[];
-  page: number;
+  summary: string;
+  description: string;
+  printed_page?: number | null;
   templates: number[][];
   skills: Record<string, number>;
-  starting_weapons: CreationRoleWeaponEntry[];
+  starting_weapons: CreationKitEntry[];
   starting_armor: string[];
-  starting_outfit: string[];
-  outfit_choice?: { label: string; options: string[] };
-  starting_cyberware: CreationRoleCyberwareItem[];
-  cyberware_choice?: { label: string; options: CreationRoleCyberwareItem[] };
-  cyberware_choice_2?: { label: string; options: CreationRoleCyberwareItem[] };
+  starting_outfit: CreationKitEntry[];
+  starting_cyberware: CreationKitEntry<CreationKitCyberware>[];
   starting_hl: number;
   role_lifepath: CreationRoleLifepathField[];
 }
@@ -617,10 +605,11 @@ export interface CreationShopItem {
 }
 
 export interface CreationFashionItem {
+  id: string;
   name: string;
   cost_eb: number;
   style: string;
-  garment?: string;
+  garment: string;
   summary: string;
 }
 
@@ -639,69 +628,50 @@ export interface CreationLifestyleTier {
   summary: string;
 }
 
-export interface CampaignPresetCaperStyle {
-  id: string;
+export interface CampaignPresetEntry {
   name: string;
-  printed_page: number;
   summary: string;
-  default_beats: {
-    hook: string;
-    developments: string;
-    cliffhanger: string;
-    climax: string;
-    resolution: string;
-  };
+  printed_page: number;
 }
 
 export interface CampaignPresets {
-  districts: Array<{
-    name: string;
-    threat_rating: string;
-    summary: string;
-    printed_page: number;
-    zone_type?: string;
-  }>;
-  factions: Array<{
-    name: string;
-    type: string;
-    summary: string;
-    printed_page: number;
-  }>;
-  caper_styles: CampaignPresetCaperStyle[];
-  screamsheet_hooks: string[];
-  zone_types?: Array<Record<string, unknown>>;
-  threat_ratings?: Array<Record<string, unknown>>;
-  screamsheets?: Array<Record<string, unknown>>;
+  districts: CampaignPresetEntry[];
+  factions: Array<CampaignPresetEntry & { type: string }>;
+  zone_types: CampaignPresetEntry[];
+  threat_ratings: CampaignPresetEntry[];
+  screamsheet_headlines: string[][];
 }
 
 export interface CreationReference {
-  rules_indexed: boolean;
   stat_names: StatName[];
-  stats: Record<StatName, CreationStatInfo>;
   methods: CreationMethodInfo[];
   roles: CreationRoleInfo[];
   skills: CreationSkillInfo[];
   cultural_regions: Array<{ region: string; languages: string[] }>;
   lifepath_tables: Record<string, string[]>;
   shop: Record<
-    "weapon" | "armor" | "cyberware" | "gear" | "program" | "hardware" | "vehicle" | "drug",
+    | "weapon"
+    | "armor"
+    | "cyberware"
+    | "gear"
+    | "program"
+    | "hardware"
+    | "vehicle"
+    | "drug"
+    | "ammo"
+    | "attachment"
+    | "service"
+    | "housing",
     CreationShopItem[]
-  > & {
-    ammo?: CreationShopItem[];
-    attachment?: CreationShopItem[];
-    service?: CreationShopItem[];
-    housing?: CreationShopItem[];
-  };
+  >;
   fashion: CreationFashionItem[];
-  fashion_matrix?: CreationFashionItem[];
-  housing_tiers?: CreationHousingTier[];
-  lifestyles?: CreationLifestyleTier[];
+  housing_tiers: CreationHousingTier[];
+  lifestyles: CreationLifestyleTier[];
+  pharmaceuticals: string[];
+  martial_arts_forms: string[];
+  nomad_vehicles: string[];
+  nomad_upgrades: Array<{ name: string; rank: number }>;
   campaign_presets: CampaignPresets;
-  difficult_skills?: string[];
-  threat_ratings?: Array<Record<string, unknown>>;
-  zone_types?: Array<Record<string, unknown>>;
-  screamsheets?: Array<Record<string, unknown>>;
-  difficulty_values?: Record<string, number>;
 }
 
 export interface CreationFriendEntry {

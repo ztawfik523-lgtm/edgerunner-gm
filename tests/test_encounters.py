@@ -180,15 +180,16 @@ def test_ephemeral_npcs_solo_service_and_solo_summary(tmp_path):
         svc.solo._write_character(conn, pc_now)
 
     ctx0 = svc.solo.context(camp["id"])
-    # Start encounter with 1 PC + 2 ephemeral NPCs (tier preset + explicit)
+    # Start encounter with 1 PC + 2 ephemeral NPCs from supplied stat blocks
+    stat_block = {"REF": 5, "DEX": 5, "BODY": 5, "WILL": 4, "MOVE": 5}
     seq = iter([9, 1, 2, 5, 5, 5, 5, 5, 5, 5])
     start_res = svc.solo.execute(
         "start_encounter",
         {
             "character_ids": [pc["id"]],
             "npcs": [
-                {"name": "Maelstrom Punk", "tier": "mook"},
-                {"id": "lt-1", "name": "Chrome Lt", "tier": "lieutenant", "hp": 30, "sp_body": 11, "sp_head": 11, "weapons": ["Assault Rifle"]},
+                {"name": "Maelstrom Punk", "stats": stat_block, "hp": 25, "sp_body": 7, "sp_head": 7, "weapons": ["Medium Pistol"]},
+                {"id": "lt-1", "name": "Chrome Lt", "stats": stat_block, "hp": 30, "sp_body": 11, "sp_head": 11, "weapons": ["Assault Rifle"]},
             ],
             "expected_revision": ctx0["solo"]["revision"] if "solo" in ctx0 else ctx0["revision"],
             "reason": "Alley firefight",
@@ -223,7 +224,7 @@ def test_ephemeral_npcs_solo_service_and_solo_summary(tmp_path):
         "encounter_action",
         {
             "action": "add_npc",
-            "arguments": {"name": "Sniper", "tier": "boss", "weapons": ["Sniper Rifle"]},
+            "arguments": {"name": "Sniper", "stats": stat_block, "hp": 45, "weapons": ["Sniper Rifle"]},
             "expected_revision": start_res["revision"],
             "reason": "Reinforcements",
             "operation_id": "enc-add-npc",

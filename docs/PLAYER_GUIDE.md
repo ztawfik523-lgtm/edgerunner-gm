@@ -12,21 +12,20 @@ Welcome to **Edgerunner GM**. This guide covers everything you need to run solo 
 3. Enter your **Model ID** and **API Key** (local models like Ollama don't need an API key).
 4. Click **Test Connection** to confirm it works, then **Save Settings**.
 
-### Upload Your Corebook PDF (Optional)
-You can play immediately in **Freeform Mode** without a PDF, or upload your own legally owned Cyberpunk RED Corebook PDF:
-1. Open **Settings → Corebook PDF** (or click the **No Corebook PDF** badge in the top bar).
+### Upload Your Corebook PDF (Required)
+Edgerunner GM needs your own legally owned Cyberpunk RED Corebook PDF; it ships none of the book's content. Until a Corebook is indexed the app shows its setup screen:
+1. Upload the PDF there. To replace it later, open **Settings → Corebook PDF**.
 2. Drag and drop your PDF file or click **Upload Corebook PDF**.
-3. Watch the progress bar as the server reads the pages and builds your searchable rulebook library. When it reaches **100%**, official Roles, weapons, cyberware, skills, and page references unlock right away — no restart needed.
+3. Watch the progress bar as the server reads the pages and builds your searchable rulebook library. When it reaches **100%**, the app opens with the Roles, weapons, cyberware, skills, and page references read from your book — no restart needed.
 
 ---
 
 ## 2. Creating a Campaign & Characters
 
-- **Create a Campaign:** Click **New** in the top bar to open the Campaign Creator. You can type a quick name for a blank sandbox, or fill in your district, factions, and premise (and use **AI Generate** to flesh out an opening scene, NPCs, Beat Chart, and hidden GM hooks).
+- **Create a Campaign:** Click **New** in the top bar to open the Campaign Creator. You can type a quick name for a blank sandbox, or fill in your district, factions, and premise (and use **AI Generate** to flesh out an opening scene, NPCs, Beat Chart, and hidden GM hooks). Districts, corporations, zone types, threat ratings, and screamsheet headlines come from your Corebook; add gangs, caper style, and NPCs yourself or let the AI write them.
 - **Build a Character:** Open the **Character** tab on the right and click **Create Character**:
-  - **Freeform:** Available anytime — set any stats, skills, gear, and backstory freely.
-  - **Streetrat / Edgerunner / Complete Package:** Unlocked once your Corebook PDF is uploaded, using official Role templates, skill packages, and starting gear.
-  - Hover or click any STAT or skill for plain-English explanations, and use the **Lifepath** and **AI Co-Writer** helpers to build your backstory and contacts.
+  - **Streetrat / Edgerunner / Complete Package:** Each uses your Corebook's Role templates, skills, starting gear, and lifepath tables.
+  - Hover or click a Role, skill, or item to read your Corebook's description, and use the **Lifepath** and **AI Co-Writer** helpers to build your backstory and contacts.
 
 ---
 

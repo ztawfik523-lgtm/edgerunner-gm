@@ -1067,7 +1067,6 @@ export function App() {
         {rightTab === "character" && campaignContext && (
           <MemoCharacterPanel
             campaignId={campaignContext.campaign.id}
-            campaignRevision={campaignContext.campaign.revision}
             soloRevision={campaignContext.solo.revision}
             characters={campaignContext.characters}
             corebookSkills={corebookSkills}
@@ -1365,7 +1364,6 @@ export function App() {
           key={campaignContext.campaign.id}
           open={characterCreatorOpen}
           campaignId={campaignContext.campaign.id}
-          campaignRevision={campaignContext.campaign.revision}
           soloRevision={campaignContext.solo.revision}
           onClose={() => setCharacterCreatorOpen(false)}
           onCreated={async (id, charName) => {

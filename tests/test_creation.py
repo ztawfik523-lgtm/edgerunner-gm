@@ -26,7 +26,10 @@ def rules(tmp_path):
     rf.build(path, [
         rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(definitions.splitlines())]),
     ], digest="test-digest")
-    rf.add_role(path, "Solo", [list(row[1:]) for row in values], {f"Skill {i}": 4 for i in range(20)})
+    for role in ROLES:
+        rf.add_role(path, role, [list(row[1:]) for row in values], {f"Skill {i}": 4 for i in range(20)})
+    rf.add_creation_catalog(path)
+    rf.add_campaign_presets(path)
     return path
 
 
@@ -134,90 +137,7 @@ def test_starting_gear_cyberware_hl_backstory_and_template_rolls(rules):
     assert edgerunner["detail"]["creation"]["status"] == "validated"
 
 
-def test_exec_empty_separator_and_creation_reference(tmp_path):
-    from creation_reference import build_creation_reference
-
-    path = tmp_path / "exec_rules.sqlite"
-    values = [
-        (i + 1, 6, 7, 7, 3, 8, 6, 5, 5, 6, 5)
-        for i in range(10)
-    ]
-    exec_names = ["Accounting", "Bureaucracy", "Business"] + [f"Skill {i}" for i in range(3, 20)]
-    basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
-    defs = "\n".join(f"{name}........INT" for name in basics + exec_names)
-    from tests import rules_fixture as rf
-    rf.build(path, [
-        rf.page(83, 82, [rf.block(line, 60 + 20 * i) for i, line in enumerate(defs.splitlines())]),
-    ], digest="exec-digest")
-    rf.add_role(path, "Exec", [list(row[1:]) for row in values], dict.fromkeys(exec_names, 4))
-
-    ref = build_creation_reference(path)
-    assert ref["rules_indexed"] is True
-    assert len(ref["roles"]) == 10
-    exec_role = next(r for r in ref["roles"] if r["name"] == "Exec")
-    assert len(exec_role["templates"]) == 10
-    assert exec_role["skills"]["Accounting"] == 4
-    assert exec_role["skills"]["Bureaucracy"] == 4
-    assert exec_role["skills"]["Business"] == 4
-    assert len(exec_role["skills"]) == 20
-    assert len(ref["stats"]) == 10
-    assert len(ref["cultural_regions"]) >= 10
-    assert len(ref["lifepath_tables"]) >= 5
-
-    missing_ref = build_creation_reference(tmp_path / "does-not-exist.sqlite")
-    assert missing_ref["rules_indexed"] is False
-    assert len(missing_ref["roles"]) == 10
-    assert any(item["name"] == "Malorian Arms 3516" for item in missing_ref["shop"]["weapon"])
-    assert any(item["name"] == 'Militech "Ronin" (Assault Rifle)' for item in missing_ref["shop"]["weapon"])
-    assert any(item["stats"].get("sp") == 18 and item["stats"].get("location") == "Body" for item in missing_ref["shop"]["armor"])
-    assert any(item["name"] == "Heavy Armorjack Head Armor / Helmet (SP 13)" for item in missing_ref["shop"]["armor"])
-    assert any("Cyberdeck" in item["name"] or "KRASH" in item["name"] for item in missing_ref["shop"]["hardware"])
-
-
-def test_corebook_catalog_builders_and_parsers():
-    from creation_catalog import (
-        build_corebook_armor,
-        build_corebook_hardware,
-        build_corebook_weapons,
-        parse_hl_int,
-        parse_sp_int,
-    )
-
-    assert parse_hl_int("2 (1d6/2 Round up)") == 2
-    assert parse_hl_int("7 (2d6)") == 7
-    assert parse_hl_int(14) == 14
-    assert parse_hl_int("N/A") == 0
-    assert parse_sp_int("13") == 13
-    assert parse_sp_int("SP 18") == 18
-
-    weapons = build_corebook_weapons()
-    names = {w["name"] for w in weapons}
-    for exotic in (
-        "Malorian Arms 3516",
-        "Kendachi Mono-Three",
-        "Tsunami Arms Helix",
-        "Rhinemetall EMG-86 Railgun",
-        "Battleglove (Exotic Cyberarm Gauntlet)",
-        "Dartgun (Exotic)",
-    ):
-        assert exotic in names
-    assert any("Poor" in str(w["stats"].get("quality")) for w in weapons)
-    assert any("Standard" in str(w["stats"].get("quality")) for w in weapons)
-    assert any("Excellent" in str(w["stats"].get("quality")) for w in weapons)
-    assert any(w["stats"].get("subtype") == "Attachment" for w in weapons)
-    assert any(w["stats"].get("subtype") == "Ammo" for w in weapons)
-
-    armor = build_corebook_armor()
-    assert any(a["name"] == "Kevlar® Body Armor (SP 7)" and a["stats"]["sp"] == 7 for a in armor)
-    assert any(a["name"] == "Metalgear® Head Armor / Helmet (SP 18)" and a["stats"]["location"] == "Head" for a in armor)
-    assert any(a["name"] == "Bulletproof Shield (10 HP)" and a["stats"]["location"] == "Shield" for a in armor)
-
-    hardware = build_corebook_hardware()
-    assert any("Cyberdeck" in h["name"] for h in hardware)
-    assert any("KRASH" in h["name"] for h in hardware)
-
-
-def test_medtech_creation_applies_initial_benefits_and_reference_includes_vehicles_drugs_presets(rules):
+def test_medtech_creation_applies_initial_benefits(rules):
     basics = ["Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid", "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion", "Stealth"]
     skills = dict.fromkeys(basics, 2)
     skills.update({f"Skill {i}": 5 for i in range(1, 13)})
@@ -245,14 +165,6 @@ def test_medtech_creation_applies_initial_benefits_and_reference_includes_vehicl
     assert med["skills"]["Surgery"] == 4
     assert med["skills"]["Medical Tech"] == 2
 
-    from creation_reference import build_creation_reference
-
-    ref = build_creation_reference(rules)
-    assert len(ref["shop"]["vehicle"]) >= 8
-    assert len(ref["shop"]["drug"]) >= 10
-    assert "districts" in ref["campaign_presets"]
-    assert "caper_styles" in ref["campaign_presets"]
-
 
 def test_creation_ai_assist_imports_search_pages(tmp_path):
     import asyncio
@@ -278,7 +190,7 @@ def test_creation_ai_assist_imports_search_pages(tmp_path):
     assert res["concept"] == "Netrunner from Kabuki"
 
 
-def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
+def test_creation_ai_assist_per_field_and_creative_variety(rules):
     import asyncio
     import json
     from creation_catalog import generate_creation_ai_assist
@@ -300,7 +212,7 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     # Per-field bio expand returns only that field
     r_bio = asyncio.run(
         generate_creation_ai_assist(
-            None,
+            rules,
             _InspectLLM(),
             {
                 "target": "bio",
@@ -319,7 +231,7 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     # Per-field contacts expand returns only enemies
     r_contacts = asyncio.run(
         generate_creation_ai_assist(
-            None,
+            rules,
             _InspectLLM(),
             {
                 "target": "contacts",
@@ -337,7 +249,7 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     # Per-field campaign beat expand returns only that beat
     r_beat = asyncio.run(
         generate_creation_ai_assist(
-            None,
+            rules,
             _InspectLLM(),
             {
                 "target": "campaign",
@@ -353,7 +265,7 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     # Scratch includes creative_seed and avoid_repeating when prior draft exists
     asyncio.run(
         generate_creation_ai_assist(
-            None,
+            rules,
             _InspectLLM(),
             {
                 "target": "bio",
@@ -367,20 +279,9 @@ def test_creation_ai_assist_per_field_and_creative_variety(tmp_path):
     assert "Old repetitive Trauma Team story." in seen_prompts[-1]["avoid_repeating"]
 
 
-def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules):
+def test_expanded_character_creation_roles_housing_cyberware(rules):
     import economy
     import roles
-    from creation_reference import build_creation_reference
-
-    # 1. Creation Reference includes full ammo, attachments, services, housing, 90-item fashion_matrix, housing_tiers, lifestyles
-    ref = build_creation_reference(rules)
-    assert len(ref["shop"]["ammo"]) >= 3
-    assert len(ref["shop"]["attachment"]) >= 3
-    assert len(ref["shop"]["service"]) >= 5
-    assert len(ref["shop"]["housing"]) >= 4
-    assert len(ref["fashion_matrix"]) == 90
-    assert any(h["id"] == "corporate" and h.get("exec_only") for h in ref["housing_tiers"])
-    assert any(l["id"] == "Kibble" for l in ref["lifestyles"])
 
     basics = [
         "Athletics", "Brawling", "Concentration", "Conversation", "Education",
@@ -408,7 +309,7 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
                     "Field Expertise", "Upgrade Expertise",
                 ],
             },
-            "housing": "cube",
+            "housing": "Cube Hotel",
             "lifestyle": "Generic Prepak",
             "reputation": 3,
             "reputation_note": "Known in Kabuki salvage yards",
@@ -434,7 +335,7 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
     )
     assert tech["detail"]["roles"][0]["choices"]["maker_ranks"]["Upgrade Expertise"] == 3
     assert tech["detail"]["equipped_head_armor"] == {"name": "Light Armorjack Head Armor (SP 11)", "sp": 11, "penalty": 0}
-    assert tech["detail"]["housing"] == "cube"
+    assert tech["detail"]["housing"] == "Cube Hotel"
     assert tech["detail"]["lifestyle"] == "Generic Prepak"
     assert tech["detail"]["reputation"] == 3
     assert tech["detail"]["reputation_note"] == "Known in Kabuki salvage yards"
@@ -461,7 +362,7 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
     assert proj["result"]["project_id"] == "custom-optic"
 
     # Economy pay_month works immediately with persisted housing & lifestyle
-    paid = economy.apply_action(tech, "pay_month", {"month": 2}, lambda s: 0)
+    paid = economy.apply_action(tech, "pay_month", {"month": 2}, rules, lambda s: 0)
     assert paid["result"]["paid"] == 800
 
     # 3. Fashion budget > 800 eb rejected on complete_package
@@ -500,7 +401,7 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
         lambda s: 0,
     )
     assert exec_char["detail"]["creation"]["status"] == "validated"
-    assert exec_char["detail"]["housing"] == "corporate"
+    assert exec_char["detail"]["housing"] == "Corporate Conapt"
     assert exec_char["detail"]["trauma_team"] == "Silver"
     assert exec_char["detail"]["team"][0]["loyalty"] == 5
 
@@ -601,9 +502,9 @@ def test_expanded_character_creation_roles_housing_cyberware_and_reference(rules
                 "lifepath": {"cultural_origin": "North American"},
                 "starting_gear": {
                     "cyberware": [
-                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
-                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
-                        {"name": "Implanted Linear Frame ∑ (Sigma)"},
+                        {"name": "Implanted Linear Frame Sigma"},
+                        {"name": "Implanted Linear Frame Sigma"},
+                        {"name": "Implanted Linear Frame Sigma"},
                     ],
                 },
             },

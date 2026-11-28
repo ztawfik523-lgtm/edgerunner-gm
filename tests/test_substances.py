@@ -119,7 +119,12 @@ def test_wound_penalty_on_secondary_addiction_check_and_lifecycle_clock_hooks(tm
     assert "BlackLace" in out["characters"]["p"]["detail"]["addictions"]
 
     # SoloService advance_campaign_clock fires expirations across advance_time, health_action, economy_action, substance_action
-    svc = GameplayService(tmp_path / "camp.sqlite")
+    from tests import rules_fixture as rf
+
+    rules = rf.build(tmp_path / "rules.sqlite", [rf.page(1, 1, [])])
+    rf.add_table(rules, "hustle", "Solo Hustle", ["Roll", "What you did", "1-4", "5-7", "8-10"],
+                 [[str(i), "Muscle work.", "100eb", "200eb", "500eb"] for i in range(1, 7)])
+    svc = GameplayService(tmp_path / "camp.sqlite", rules)
     camp = svc.execute("create_campaign", {"name": "Drugs", "operation_id": "c1"})["result"]
     pc = svc.execute("create_character", {
         "name": "Runner",

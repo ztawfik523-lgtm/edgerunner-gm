@@ -10,6 +10,54 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
+/** A minimal `/v1/creation/reference` payload; tests override the parts they exercise. */
+function creationReference(overrides: Record<string, unknown> = {}) {
+  const lifepathKeys = [
+    "personality", "clothing_style", "hairstyle", "affectation", "value_most", "feelings_about_people",
+    "valued_person", "valued_possession", "family_background", "childhood_environment", "family_crisis",
+    "life_goal", "friend_relationship", "enemy_who", "enemy_cause", "enemy_backup", "sweet_revenge", "tragic_love",
+  ];
+  const shopCategories = [
+    "weapon", "armor", "cyberware", "gear", "program", "hardware", "vehicle", "drug", "ammo", "attachment",
+    "service", "housing",
+  ];
+  const place = (name: string) => ({ name, summary: `${name} summary.`, printed_page: 1 });
+  return {
+    stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
+    methods: [
+      { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
+      { id: "edgerunner", name: "Edgerunner (Fast & Dirty)", badge: "Flexible", summary: "Roll STATs", rules: "Tune 86." },
+      { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "Custom buy." },
+    ],
+    roles: [] as unknown[],
+    skills: [] as unknown[],
+    cultural_regions: [{ region: "North American", languages: ["English", "Spanish"] }],
+    lifepath_tables: Object.fromEntries(lifepathKeys.map((k) => [k, [`${k} one`, `${k} two`]])),
+    shop: Object.fromEntries(shopCategories.map((c) => [c, [] as unknown[]])),
+    fashion: [] as unknown[],
+    housing_tiers: [
+      { id: "Cargo Container", name: "Cargo Container", monthly_eb: 1000, summary: "Box." },
+      { id: "Cube Hotel", name: "Cube Hotel", monthly_eb: 500, summary: "Pod." },
+    ],
+    lifestyles: [
+      { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry." },
+      { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Packaged." },
+    ],
+    pharmaceuticals: ["Speedheal"],
+    martial_arts_forms: [] as string[],
+    nomad_vehicles: [] as string[],
+    nomad_upgrades: [] as unknown[],
+    campaign_presets: {
+      districts: [place("Watson Development"), place("Old Combat Zone")],
+      factions: [{ ...place("Arasaka"), type: "Corporation" }],
+      zone_types: [place("Moderate Zone")],
+      threat_ratings: [place("Moderate")],
+      screamsheet_headlines: [["Senator"], ["Threatens"], ["City"]],
+    },
+    ...overrides,
+  };
+}
+
 function sseResponse(events: Array<{ event: string; data: unknown }>): Response {
   const payload = events
     .map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`)
@@ -1150,36 +1198,14 @@ describe("Cyberpunk RED GM UI", () => {
     };
     let createdChar: Record<string, unknown> | null = null;
 
-    const refPayload = {
-      rules_indexed: true,
-      stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-      stats: {
-        INT: { name: "Intelligence", short: "Knowledge", mechanics: "Perception and deduction.", tip: "Great for Netrunners." },
-        REF: { name: "Reflexes", short: "Ranged aim", mechanics: "Initiative and ranged shots.", tip: "Critical for Solos." },
-        DEX: { name: "Dexterity", short: "Agility", mechanics: "Evasion and melee.", tip: "Helps you dodge bullets." },
-        TECH: { name: "Technique", short: "Tinkering", mechanics: "Hardware and cybertech.", tip: "Great for Techs and Medtechs." },
-        COOL: { name: "Cool", short: "Poise", mechanics: "Street presence and persuasion.", tip: "Helps in social encounters." },
-        WILL: { name: "Willpower", short: "Grit", mechanics: "Mental toughness and HP.", tip: "Boosts HP and Concentration." },
-        LUCK: { name: "Luck", short: "Fortune", mechanics: "Spend before rolling.", tip: "Saves clutch rolls." },
-        MOVE: { name: "Movement", short: "Speed", mechanics: "Combat movement.", tip: "MOVE × 2m per Move Action." },
-        BODY: { name: "Body", short: "Physique", mechanics: "Stamina, HP, and Death Saves.", tip: "Keeps you alive." },
-        EMP: { name: "Empathy", short: "Humanity", mechanics: "Reading people & Humanity = EMP × 10.", tip: "Limits how much chrome fits safely." },
-      },
-      methods: [
-        { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10 on your Role table." },
-        { id: "edgerunner", name: "Edgerunner (Fast & Dirty)", badge: "Flexible", summary: "Roll STATs & tune skills", rules: "Roll 10 STAT columns & tune 86 skill pts." },
-        { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "62 STAT pts, 86 skill pts, 2,550 eb." },
-        { id: "freeform", name: "Freeform / Custom Sheet", badge: "Custom", summary: "No budget locks", rules: "Unconstrained custom character." },
-      ],
+    const refPayload = creationReference({
       roles: [
         {
           name: "Solo",
           ability: "Combat Awareness",
-          ability_summary: "Allocate points each turn into threat detection, initiative, or precision.",
-          tagline: "Elite mercenary",
-          best_for: "Great first character for direct combat.",
-          key_stats: ["REF", "DEX", "BODY"],
-          page: 144,
+          summary: "Elite mercenary",
+          description: "Great first character for direct combat.",
+          printed_page: 1,
           templates: [[6, 8, 7, 4, 6, 7, 6, 6, 7, 5]],
           skills: {
             Athletics: 2,
@@ -1197,8 +1223,8 @@ describe("Cyberpunk RED GM UI", () => {
           },
           starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
           starting_armor: ["Light Armorjack Body (SP 11)", "Light Armorjack Head (SP 11)"],
-          starting_outfit: ["Agent"],
-          starting_cyberware: [{ name: "Neural Link", hl: 7, install: "Clinic", notes: "Socket" }],
+          starting_outfit: [{ type: "fixed", item: "Agent", qty: 1 }],
+          starting_cyberware: [{ type: "fixed", item: "Neural Link", qty: 1, hl: 7, install: "Clinic", notes: "Socket" }],
           starting_hl: 7,
           role_lifepath: [{ key: "Type", label: "Solo Type", options: ["Bodyguard", "Street Enforcer"] }],
         },
@@ -1206,28 +1232,10 @@ describe("Cyberpunk RED GM UI", () => {
       skills: [
         { name: "Handgun", stat: "REF", cost: 1, basic: false, basic_skill_name: "Handgun", specializable: false, group: "Ranged", summary: "Firing pistols.", description: "Aim and shoot pistols." },
         { name: "Athletics", stat: "DEX", cost: 1, basic: true, basic_skill_name: "Athletics", specializable: false, group: "Body", summary: "Running and climbing.", description: "Physical agility." },
+        { name: "Language", stat: "INT", cost: 1, basic: true, basic_skill_name: "Language (Streetslang)", specializable: true, group: "Education", summary: "Speech.", description: "Speech." },
       ],
-      cultural_regions: [{ region: "North American", languages: ["Streetslang", "English", "Spanish"], notes: "NUSA & Night City." }],
-      lifepath_tables: {
-        personalities: ["Shy and secretive", "Arrogant and proud"],
-        clothing_styles: ["Generic Chic", "Urban Flash"],
-        hairstyles: ["Mohawk", "Neat, short"],
-        affectations: ["Tattoos", "Mirrorshades"],
-        values: ["Honor", "Money"],
-        feelings_about_people: ["I stay neutral."],
-        valued_people: ["A friend"],
-        valued_possessions: ["A weapon"],
-        family_backgrounds: ["Edgerunners"],
-        childhood_environments: ["Ran on the Street"],
-        family_crises: ["Betrayed and lost everything."],
-        life_goals: ["Get off The Street."],
-        enemy_causes: ["Saved someone's life"],
-        enemy_backup: ["Just themselves"],
-        enemy_revenge: ["Avoid them"],
-        friend_relationships: ["Like an older sibling"],
-        love_tragedies: ["Lover vanished"],
-      },
       shop: {
+        ammo: [], attachment: [], service: [], housing: [],
         weapon: [
           {
             id: "w-malorian",
@@ -1237,7 +1245,7 @@ describe("Cyberpunk RED GM UI", () => {
             summary: "5d6 dmg · ROF 1 · 4 shots · Exotic VH Pistol.",
             description: "Custom Johnny Silverhand hand cannon.",
             printed_page: 348,
-            stats: { subtype: "exotic", quality: "Exotic", weapon_class: "Very Heavy Pistol", damage: "5d6" },
+            stats: { weapon_class: "exotic", skill: "Handgun", damage: "5d6" },
           },
           {
             id: "w-ronin",
@@ -1247,7 +1255,7 @@ describe("Cyberpunk RED GM UI", () => {
             summary: "5d6 dmg · Standard quality Assault Rifle.",
             description: "Reliable Night City street carbine.",
             printed_page: 342,
-            stats: { subtype: "ranged", quality: "Standard", weapon_class: "Assault Rifle", damage: "5d6" },
+            stats: { weapon_class: "ranged", quality: "standard", skill: "Shoulder Arms", damage: "5d6" },
           },
         ],
         armor: [
@@ -1259,7 +1267,7 @@ describe("Cyberpunk RED GM UI", () => {
             summary: "SP 13 · Body · -2 Armor Penalty.",
             description: "Reinforced Kevlar + laminated plates.",
             printed_page: 350,
-            stats: { sp: 13, location: "body" },
+            stats: { sp: 13, locations: ["body"] },
           },
         ],
         cyberware: [
@@ -1271,7 +1279,7 @@ describe("Cyberpunk RED GM UI", () => {
             summary: "Wired nervous system interface.",
             description: "Foundation Neuralware slot.",
             printed_page: 360,
-            stats: { humanity_loss: "7 (2d6)", hl: 7, install: "Clinic" },
+            stats: { hl: 7, install: "Clinic", group: "Neuralware", foundation: "Neural Link" },
           },
         ],
         gear: [],
@@ -1285,7 +1293,7 @@ describe("Cyberpunk RED GM UI", () => {
             summary: "Standard NET terminal with 7 hardware/program slots.",
             description: "Standard 7-slot Cyberdeck.",
             printed_page: 353,
-            stats: { subtype: "cyberdeck" },
+            stats: { kind: "cyberdeck", slots: 7 },
           },
         ],
         vehicle: [
@@ -1313,8 +1321,8 @@ describe("Cyberpunk RED GM UI", () => {
           },
         ],
       },
-      fashion: [{ name: "Urban Flash Jacket", style: "Urban Flash", slot: "Top", cost_eb: 100 }],
-    };
+      fashion: [{ id: "f-1", name: "Urban Flash Jacket", style: "Urban Flash", garment: "Jacket", cost_eb: 100, summary: "Jacket." }],
+    });
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -1478,11 +1486,11 @@ describe("Cyberpunk RED GM UI", () => {
       "Raised in Watson; knows every back-alley shortcut.",
     );
 
-    // Check Step 3 Specialization + Step 5 Exotic Weapons, Hardware, Armor SP=13 & Cyberware HL=7 in Freeform/Complete Package
+    // Check Step 3 Specialization + Step 5 Exotic Weapons, Hardware, Armor SP=13 & Cyberware HL=7 in Complete Package
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
     fireEvent.click(screen.getByRole("button", { name: /Complete Package \(Calculated\)/i }));
     fireEvent.click(screen.getByRole("button", { name: /3\. Skills/i }));
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. Japanese, Arabic, Cantonese/i), { target: { value: "Japanese" } });
+    fireEvent.change(screen.getByPlaceholderText("Specialization focus…"), { target: { value: "Japanese" } });
     fireEvent.click(screen.getByRole("button", { name: /\+ Add Specialization/i }));
     expect(screen.getByText("Language (Japanese)")).toBeInTheDocument();
 
@@ -1562,30 +1570,7 @@ describe("Cyberpunk RED GM UI", () => {
       }
       if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
-        return jsonResponse({
-          rules_indexed: true,
-          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-          stats: {},
-          methods: [],
-          roles: [],
-          skills: [],
-          cultural_regions: [],
-          lifepath_tables: {},
-          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
-          fashion: [],
-          campaign_presets: {
-            districts: [{ name: "Watson Development", threat_rating: "Moderate", summary: "Kabuki & Little China.", printed_page: 308 }],
-            factions: [{ name: "Tyger Claws", type: "Crime Syndicate", summary: "Japantown syndicate.", printed_page: 308 }],
-            caper_styles: [{
-              id: "heist",
-              name: "Corporate Data / Cargo Heist",
-              printed_page: 395,
-              summary: "Tight-window extraction.",
-              default_beats: { hook: "Fixer offer", developments: "Complication", cliffhanger: "Lockdown", climax: "Escape", resolution: "Payout" },
-            }],
-            screamsheet_hooks: ["RED SKY BLACKOUT: Rolling power outages hit Watson."],
-          },
-        });
+        return jsonResponse(creationReference());
       }
       if (url.startsWith("/v1/campaigns/") && url.endsWith("/bootstrap")) {
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -1648,6 +1633,7 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. Chrome over Kabuki/i), {
       target: { value: "Kabuki Neon" },
     });
+    await screen.findByRole("option", { name: "Watson Development" });
     fireEvent.click(screen.getByRole("button", { name: /Apply Preset Scaffold/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Create Campaign$/i }));
 
@@ -2071,46 +2057,7 @@ describe("Cyberpunk RED GM UI", () => {
       }
       if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
-        return jsonResponse({
-          rules_indexed: false,
-          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-          stats: {},
-          methods: [],
-          roles: [],
-          skills: [],
-          cultural_regions: [],
-          lifepath_tables: {},
-          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
-          fashion: [],
-          campaign_presets: {
-            districts: [
-              { name: "Watson Development", threat_rating: "Moderate", summary: "Kabuki.", printed_page: 298 },
-              { name: "Old Combat Zone", threat_rating: "Combat", summary: "Lawless warzone.", printed_page: 300 },
-            ],
-            factions: [
-              { name: "Arasaka", type: "Megacorp", summary: "Corp.", printed_page: 267 },
-              { name: "Maelstrom", type: "Combat Gang", summary: "Boosters.", printed_page: 308 },
-              { name: "Tyger Claws", type: "Combat Gang", summary: "Syndicate.", printed_page: 309 },
-            ],
-            caper_styles: [
-              {
-                id: "heist",
-                name: "Corporate Data / Cargo Heist",
-                printed_page: 395,
-                summary: "Infiltration.",
-                default_beats: { hook: "H", developments: "D", cliffhanger: "C", climax: "X", resolution: "R" },
-              },
-              {
-                id: "street-turf",
-                name: "Street Turf & Night Market Hustle",
-                printed_page: 398,
-                summary: "Turf.",
-                default_beats: { hook: "H2", developments: "D2", cliffhanger: "C2", climax: "X2", resolution: "R2" },
-              },
-            ],
-            screamsheet_hooks: ["HOOK ONE"],
-          },
-        });
+        return jsonResponse(creationReference());
       }
       if (url === "/v1/creation/ai-assist") {
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -2585,69 +2532,9 @@ describe("Cyberpunk RED GM UI", () => {
         });
       }
       if (url === "/v1/creation/reference") {
-        return jsonResponse({
-          rules_indexed: true,
-          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-          stats: {
-            INT: { name: "Intelligence", short: "Knowledge", mechanics: "Perception.", tip: "" },
-            REF: { name: "Reflexes", short: "Ranged aim", mechanics: "Initiative.", tip: "" },
-            DEX: { name: "Dexterity", short: "Agility", mechanics: "Evasion.", tip: "" },
-            TECH: { name: "Technique", short: "Tech", mechanics: "Repairs.", tip: "" },
-            COOL: { name: "Cool", short: "Poise", mechanics: "Persuasion.", tip: "" },
-            WILL: { name: "Willpower", short: "Grit", mechanics: "HP.", tip: "" },
-            LUCK: { name: "Luck", short: "Fortune", mechanics: "Clutch.", tip: "" },
-            MOVE: { name: "Movement", short: "Speed", mechanics: "Move.", tip: "" },
-            BODY: { name: "Body", short: "Physique", mechanics: "Death save.", tip: "" },
-            EMP: { name: "Empathy", short: "Humanity", mechanics: "Cyberware.", tip: "" },
-          },
-          methods: [
-            { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
-            { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "Custom buy." },
-          ],
-          roles: [
-            {
-              name: "Solo",
-              ability: "Combat Awareness",
-              ability_summary: "Tactical edge",
-              tagline: "Combat specialist",
-              best_for: "Combat",
-              key_stats: ["REF"],
-              page: 29,
-              templates: [[6, 8, 7, 5, 6, 6, 6, 6, 7, 5]],
-              skills: { Handgun: 6 },
-              starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
-              starting_armor: ["Light Armorjack Body (SP 11)"],
-              starting_outfit: ["Agent"],
-              starting_cyberware: [],
-              starting_hl: 0,
-              role_lifepath: [],
-            },
-          ],
-          skills: [
-            { name: "Handgun", stat: "REF", cost: 1, basic: false, basic_skill_name: "Handgun", specializable: false, group: "Ranged", summary: "Pistols & SMGs", description: "Handgun skill." },
-          ],
-          cultural_regions: [{ region: "North American", languages: ["Streetslang", "English", "Spanish"], notes: "NC" }],
-          lifepath_tables: {
-            personalities: ["Stable and serious"],
-            clothing_styles: ["Urban Flash"],
-            hairstyles: ["Short and spiked"],
-            affectations: ["Mirrorshades"],
-            values: ["Your word"],
-            feelings_about_people: ["Wary"],
-            valued_people: ["A friend"],
-            valued_possessions: ["A weapon"],
-            family_backgrounds: ["Edgerunners"],
-            childhood_environments: ["Streets"],
-            family_crises: ["Betrayal"],
-            life_goals: ["Survive"],
-            enemy_causes: ["Saved someone"],
-            enemy_backup: ["Just themselves"],
-            enemy_revenge: ["Avoid them"],
-            friend_relationships: ["Like a sibling"],
-            love_tragedies: ["Lover vanished"],
-          },
+        return jsonResponse(creationReference({
           shop: {
-            weapon: [
+        weapon: [
               {
                 id: "w-poor-pistol",
                 name: "Dai Lung Streetmaster (Poor Medium Pistol)",
@@ -2655,7 +2542,7 @@ describe("Cyberpunk RED GM UI", () => {
                 cost_eb: 20,
                 summary: "Budget Medium Pistol",
                 description: "Jams on 1",
-                stats: { subtype: "Poor / Budget", weapon_class: "pistol", quality: "Poor (Jams on 1)", skill: "Handgun", damage: "2d6" },
+                stats: { weapon_class: "ranged", quality: "poor", skill: "Handgun", damage: "2d6" },
               },
               {
                 id: "w-microwaver",
@@ -2664,7 +2551,7 @@ describe("Cyberpunk RED GM UI", () => {
                 cost_eb: 500,
                 summary: "Exotic · Disabled Cyberware · Handgun",
                 description: "Exotic Very Heavy Pistol",
-                stats: { subtype: "Exotic", weapon_class: "pistol", quality: "Exotic", skill: "Handgun", damage: "EMP Effect" },
+                stats: { weapon_class: "exotic", skill: "Handgun", damage: "EMP Effect" },
               },
               {
                 id: "w-shotgun",
@@ -2673,21 +2560,12 @@ describe("Cyberpunk RED GM UI", () => {
                 cost_eb: 1000,
                 summary: "+1 Attack Check",
                 description: "Excellent Shotgun",
-                stats: { subtype: "Excellent (+1 Hit)", weapon_class: "shotgun", quality: "Excellent (+1 Attack)", skill: "Shoulder Arms", damage: "5d6" },
+                stats: { weapon_class: "ranged", quality: "excellent", skill: "Shoulder Arms", damage: "5d6" },
               },
             ],
-            armor: [],
-            cyberware: [],
-            gear: [],
-            program: [],
-            hardware: [],
-            vehicle: [],
-            drug: [],
-            attachment: [],
-            ammo: [],
+            armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [], attachment: [], ammo: [], service: [], housing: [],
           },
-          fashion: [],
-        });
+        }));
       }
       if (url === "/v1/library") return jsonResponse({ items: [] });
       if (url === "/v1/game") {
@@ -3014,24 +2892,7 @@ describe("Cyberpunk RED GM UI", () => {
       }
       if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
-        return jsonResponse({
-          rules_indexed: true,
-          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-          stats: {},
-          methods: [],
-          roles: [],
-          skills: [],
-          cultural_regions: [],
-          lifepath_tables: {},
-          shop: { weapon: [], armor: [], cyberware: [], gear: [], program: [], hardware: [], vehicle: [], drug: [] },
-          fashion: [],
-          campaign_presets: {
-            districts: [{ name: "Watson Development", zone_type: "Combat Zone", threat_rating: "High", summary: "Kabuki & Little China.", printed_page: 308 }],
-            factions: [{ name: "Tyger Claws", type: "Booster Gang", summary: "Japantown syndicate.", printed_page: 308 }],
-            caper_styles: [],
-            screamsheet_hooks: ["RED SKY BLACKOUT: Rolling blackouts hit Kabuki."],
-          },
-        });
+        return jsonResponse(creationReference());
       }
       if (url.startsWith(`/v1/campaigns/${editCampaign.id}/bootstrap`)) {
         const body = JSON.parse(String(init?.body ?? "{}"));
@@ -3155,7 +3016,7 @@ describe("Cyberpunk RED GM UI", () => {
     expect(bootstrapped[1].attach_character_ids).toEqual(["pc-unattached"]);
   });
 
-  it("supports Character Creator dynamic (choose 1) skills, housing/lifestyle/Trauma Team, fashion matrix, hooks, and live Linear Frame Sigma / Skinweave vitals", async () => {
+  it("supports Character Creator dynamic (choose 1) skills, housing/lifestyle/Trauma Team, fashion, hooks, and live Linear Frame Sigma / Skinweave vitals", async () => {
     const campaign = {
       id: "camp-char-expanded",
       name: "Watson Origin",
@@ -3184,69 +3045,43 @@ describe("Cyberpunk RED GM UI", () => {
       }
       if (url === "/v1/skills") return jsonResponse({ skills: {}, rules_indexed: true });
       if (url === "/v1/creation/reference") {
-        return jsonResponse({
-          rules_indexed: true,
-          stat_names: ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"],
-          stats: {},
-          methods: [
-            { id: "streetrat", name: "Streetrat (Templates)", badge: "Beginner", summary: "Quick official build", rules: "Roll 1d10." },
-            { id: "freeform", name: "Freeform / Custom Sheet", badge: "Custom", summary: "No budget locks", rules: "Unconstrained." },
-          ],
+        return jsonResponse(creationReference({
           roles: [
             {
               name: "Rockerboy",
               ability: "Charismatic Impact",
-              ability_summary: "Sway crowds and fans.",
-              tagline: "Rebel artist",
-              best_for: "Social disruption.",
-              key_stats: ["COOL", "EMP"],
-              page: 142,
+              summary: "Rebel artist",
+              description: "Sway crowds and fans.",
               templates: [[6, 6, 7, 5, 8, 6, 7, 6, 7, 7]],
-              skills: { "Play Instrument (choose 1)": 6, Persuasion: 4 },
+              skills: { "Play Instrument (choose 1)": 6, Persuasion: 4, Accounting: 2, Acting: 2, Archery: 2 },
               starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
               starting_armor: ["Light Armorjack Body (SP 11)"],
-              starting_outfit: ["Agent"],
+              starting_outfit: [{ type: "fixed", item: "Agent", qty: 1 }],
               starting_cyberware: [],
               starting_hl: 0,
               role_lifepath: [{ key: "Type", label: "Rocker Type", options: ["Musician", "Slam Poet"] }],
             },
           ],
+          // 13 Basic Skills plus enough others to spend the 86-point budget.
           skills: [
-            { name: "Play Instrument", stat: "TECH", cost: 1, basic: false, specializable: true, group: "Performance", summary: "Perform music.", description: "Play Instrument." },
-            { name: "Persuasion", stat: "COOL", cost: 1, basic: true, specializable: false, group: "Social", summary: "Convince others.", description: "Persuasion." },
-          ],
-          cultural_regions: [{ region: "North American", languages: ["Streetslang", "English", "Spanish"], notes: "NUSA." }],
-          lifepath_tables: {},
-          housing_tiers: [
-            { id: "cargo_container", name: "Cargo Container", monthly_eb: 1000, summary: "Metal studio box." },
-            { id: "cube", name: "Cube Hotel", monthly_eb: 500, summary: "Sleeper pod." },
-            { id: "corporate", name: "Corporate Conapt (Exec Perk)", monthly_eb: 0, summary: "Exec only.", exec_only: true },
-          ],
-          lifestyles: [
-            { id: "Kibble", name: "Kibble", monthly_eb: 100, summary: "Dry kibble." },
-            { id: "Generic Prepak", name: "Generic Prepak", monthly_eb: 300, summary: "Pre-packaged." },
-          ],
-          fashion_matrix: [
-            { name: "Urban Flash Mirrored Jacket", style: "Urban Flash", slot: "Jacket", cost_eb: 100, summary: "LED-piped synthleather." },
-            { name: "Bag Lady Chic Trench", style: "Bag Lady Chic", slot: "Jacket", cost_eb: 20, summary: "Padded scavenger coat." },
-          ],
+            "Athletics", "Brawling", "Concentration", "Conversation", "Education", "Evasion", "First Aid",
+            "Human Perception", "Language (Streetslang)", "Local Expert (Your Home)", "Perception", "Persuasion",
+            "Stealth", "Accounting", "Acting", "Archery",
+          ].map((name, i) => ({ name, stat: "COOL", cost: 1, basic: i < 13, basic_skill_name: name, specializable: false, group: "Social", summary: name, description: name })),
           fashion: [
-            { name: "Urban Flash Mirrored Jacket", style: "Urban Flash", slot: "Jacket", cost_eb: 100, summary: "LED-piped synthleather." },
+            { id: "f-1", name: "Urban Flash Jacket", style: "Urban Flash", garment: "Jacket", cost_eb: 100, summary: "LED-piped synthleather." },
+            { id: "f-2", name: "Bag Lady Chic Jacket", style: "Bag Lady Chic", garment: "Jacket", cost_eb: 20, summary: "Padded scavenger coat." },
           ],
           shop: {
             weapon: [],
             armor: [],
             cyberware: [
-              { id: "c-sigma", name: "Linear Frame Sigma", category: "cyberware", cost_eb: 1000, summary: "Sets BODY to 12.", description: "Internal borg frame.", printed_page: 365, stats: { hl: 14, subtype: "borgware", install: "Hospital" } },
-              { id: "c-skinweave", name: "Skinweave", category: "cyberware", cost_eb: 500, summary: "Passive SP 7 armor.", description: "Subdermal weave.", printed_page: 364, stats: { hl: 7, sp: 7, subtype: "body", install: "Hospital" } },
+              { id: "c-sigma", name: "Linear Frame Sigma", category: "cyberware", cost_eb: 1000, summary: "Sets BODY to 12.", description: "Internal borg frame.", stats: { hl: 14, group: "Borgware", install: "Hospital" } },
+              { id: "c-skinweave", name: "Skinweave", category: "cyberware", cost_eb: 500, summary: "Passive SP 7 armor.", description: "Subdermal weave.", stats: { hl: 7, group: "External Body Cyberware", install: "Hospital" } },
             ],
-            gear: [],
-            program: [],
-            hardware: [],
-            vehicle: [],
-            drug: [],
+            gear: [], program: [], hardware: [], vehicle: [], drug: [], ammo: [], attachment: [], service: [], housing: [],
           },
-        });
+        }));
       }
       if (url.startsWith("/v1/chat/tree")) {
         return jsonResponse({ campaign_id: campaign.id, channel_id: "main", nodes: [], active_branch: [], active_leaf_id: null, current_revisions: { campaign_revision: 1, solo_revision: 0 }, revision_mismatch: false });
@@ -3262,28 +3097,12 @@ describe("Cyberpunk RED GM UI", () => {
             result: { campaign, characters: [], clocks: [], solo: { revision: 0, runtime: { clock_minutes: 0, runs: {} }, characters: {} } },
           });
         }
-        if (body.action === "create_character") {
+        if (body.action === "create_player_character") {
           createdPayloads.push(body.arguments);
           return jsonResponse({
-            action: "create_character",
-            result: {
-              id: "char-chrome-rocker",
-              name: body.arguments.name,
-              stats: body.arguments.stats,
-              skills: body.arguments.skills,
-              hp: 55,
-              max_hp: 55,
-              humanity: body.arguments.humanity ?? 49,
-              luck_remaining: 6,
-              money: body.arguments.money ?? 0,
-              inventory: body.arguments.inventory ?? {},
-              revision: 1,
-              detail: body.arguments.detail ?? {},
-            },
+            action: "create_player_character",
+            result: { committed: true, revision: 1, result: { character_id: "char-chrome-rocker" } },
           });
-        }
-        if (body.action === "attach_character") {
-          return jsonResponse({ action: "attach_character", result: campaign });
         }
       }
       return jsonResponse({});
@@ -3307,9 +3126,9 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
     expect(await screen.findByText("Street Origins & Background")).toBeInTheDocument();
     const specLabel = await screen.findByText("Play Instrument Specialization");
-    const specSelect = specLabel.parentElement?.querySelector("select") as HTMLSelectElement;
-    expect(specSelect).toBeTruthy();
-    fireEvent.change(specSelect, { target: { value: "Synthesizer" } });
+    const specInput = specLabel.parentElement?.querySelector("input") as HTMLInputElement;
+    expect(specInput).toBeTruthy();
+    fireEvent.change(specInput, { target: { value: "Synthesizer" } });
 
     // Single-input Lifepath fields: select dropdown by default, switches to custom input only when "Custom ✎" is clicked
     expect(screen.queryByPlaceholderText("Custom rocker type…")).not.toBeInTheDocument();
@@ -3318,25 +3137,25 @@ describe("Cyberpunk RED GM UI", () => {
     fireEvent.click(rockerTypeCustomBtn!);
     expect(screen.getByPlaceholderText("Custom rocker type…")).toBeInTheDocument();
 
-    // Switch to Freeform so custom cyberware, fashion, housing, and lifestyle submit cleanly
+    // Switch to Complete Package to shop for cyberware and fashion
     fireEvent.click(screen.getByRole("button", { name: /1\. Identity & Role/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Freeform \/ Custom Sheet/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Complete Package/i }));
 
     // Step 4: Street Reputation & Starting Hooks (expanded by default)
     fireEvent.click(screen.getByRole("button", { name: /4\. Backstory & Lifepath/i }));
     fireEvent.change(screen.getByLabelText("Starting Reputation"), { target: { value: "4" } });
     fireEvent.change(screen.getByPlaceholderText(/Owes 500 eb to a Kabuki ripperdoc/i), { target: { value: "Owes 500 eb to Chromanticore" } });
 
-    // Step 5: Housing, Lifestyle, Trauma Team, Fashion Matrix & Linear Frame Sigma / Skinweave
+    // Step 5: Housing, Lifestyle, Trauma Team, Fashion & Linear Frame Sigma / Skinweave
     fireEvent.click(screen.getByRole("button", { name: /5\. Gear & Cyberware/i }));
-    fireEvent.change(screen.getByLabelText("Character Housing"), { target: { value: "cube" } });
+    fireEvent.change(screen.getByLabelText("Character Housing"), { target: { value: "Cube Hotel" } });
     fireEvent.change(screen.getByLabelText("Character Lifestyle"), { target: { value: "Generic Prepak" } });
     fireEvent.change(screen.getByLabelText("Trauma Team Plan"), { target: { value: "Silver" } });
 
     fireEvent.click(screen.getByRole("button", { name: /^fashion$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Urban Flash$/i }));
-    expect(screen.getByText("Urban Flash Mirrored Jacket")).toBeInTheDocument();
-    expect(screen.queryByText("Bag Lady Chic Trench")).not.toBeInTheDocument();
+    expect(screen.getByText("Urban Flash Jacket")).toBeInTheDocument();
+    expect(screen.queryByText("Bag Lady Chic Jacket")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "+100eb" }));
 
     fireEvent.click(screen.getByRole("button", { name: /^cyberware$/i }));
@@ -3347,26 +3166,25 @@ describe("Cyberpunk RED GM UI", () => {
     expect(screen.getByText(/Passive Cyberware Armor: Skinweave \(SP 7\)/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /6\. Sheet Preview/i }));
-    expect(screen.getByText(/BODY 7 → 12/)).toBeInTheDocument();
+    expect(screen.getByText(/BODY 6 → 12/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Create & Attach to Campaign/i }));
 
     await waitFor(() => expect(createdPayloads.length).toBe(1));
-    const detail = createdPayloads[0]?.detail as {
+    const detail = createdPayloads[0] as {
       housing?: string;
       lifestyle?: string;
       trauma_team?: string;
       reputation?: number;
       backstory?: { starting_hooks?: { debt?: string } };
-      cyberware?: Array<{ name: string }>;
-      fashion?: Array<{ name: string }>;
+      starting_gear?: { cyberware?: Array<{ name: string }>; fashion?: Array<{ name: string }> };
     };
-    expect(detail?.housing).toBe("cube");
+    expect(detail?.housing).toBe("Cube Hotel");
     expect(detail?.lifestyle).toBe("Generic Prepak");
     expect(detail?.trauma_team).toBe("Silver");
     expect(detail?.reputation).toBe(4);
     expect(detail?.backstory?.starting_hooks?.debt).toContain("Chromanticore");
-    expect(detail?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
-    expect(detail?.fashion?.map((f) => f.name)).toContain("Urban Flash Mirrored Jacket");
+    expect(detail?.starting_gear?.cyberware?.map((c) => c.name)).toEqual(["Linear Frame Sigma", "Skinweave"]);
+    expect(detail?.starting_gear?.fashion?.map((f) => f.name)).toContain("Urban Flash Jacket");
   });
 
   it("supports /think toggle, slash command, validation, auto-reset, and THINK message badges", async () => {

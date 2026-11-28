@@ -94,25 +94,6 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 _summarize = sourcecatalog._summarize
 
 
-def _hardcoded_topup(entries: list[dict[str, Any]], digest: str) -> None:
-    """TEMPORARY: append hand-typed catalog rows the extraction does not yet cover.
-
-    Delete this function and its single call in build_library once consumers
-    read rule_entries only.
-    """
-    import creation_catalog
-
-    seen_pairs = {(e["category"], e["norm_name"]) for e in entries}
-    seen_ids = {e["id"] for e in entries}
-    for cur in creation_catalog.build_library_corebook_entries(digest):
-        pair = (cur["category"], cur["norm_name"])
-        if pair in seen_pairs or cur["id"] in seen_ids:
-            continue
-        seen_pairs.add(pair)
-        seen_ids.add(cur["id"])
-        entries.append(cur)
-
-
 def build_library(conn: sqlite3.Connection) -> int:
     """Materialize rule_tables, rule_entries and rule_entries_fts inside an open writable rules connection."""
     conn.executescript(
@@ -150,8 +131,6 @@ def build_library(conn: sqlite3.Connection) -> int:
     )
     tables, entries = sourcecatalog.extract(conn)
     sourcecatalog.write_rule_tables(conn, tables)
-    _hardcoded_topup(entries, entries[0]["source_sha256"] if entries else
-                     conn.execute("SELECT value FROM metadata WHERE key='source_sha256'").fetchone()[0])
     for entry in entries:
         conn.execute(
             """

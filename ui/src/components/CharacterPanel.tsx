@@ -48,7 +48,6 @@ import { CyberFrame, HudButton, RoleTag, SegmentedBar } from "./cyber";
 
 interface CharacterPanelProps {
   campaignId: string;
-  campaignRevision: number;
   soloRevision?: number;
   characters: CharacterRecord[];
   corebookSkills: Record<string, { stat: string; cost: number; specializable: boolean }>;
@@ -143,7 +142,6 @@ const STAT_QUICK_GUIDE: Record<StatName, { full: string; desc: string }> = {
 
 export function CharacterPanel({
   campaignId,
-  campaignRevision,
   soloRevision = 0,
   characters,
   corebookSkills,
@@ -713,7 +711,6 @@ export function CharacterPanel({
     <CharacterCreatorModal
       open={creating}
       campaignId={campaignId}
-      campaignRevision={campaignRevision}
       soloRevision={soloRevision}
       onClose={() => setCreating(false)}
       onCreated={async (id, charName) => {

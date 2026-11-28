@@ -42,150 +42,12 @@ interface CampaignCreatorModalProps {
   onNotify: (msg: string) => void;
 }
 
-const FALLBACK_PRESETS: CampaignPresets = {
-  districts: [
-    {
-      name: "The Hot Zone",
-      zone_type: "Hot Zone",
-      threat_rating: "Combat",
-      printed_page: 298,
-      summary: "Irradiated nuclear ground zero in central Night City, filled with twisted skyscrapers, radioactive ruins, and deadly scavvers.",
-    },
-    {
-      name: "Rebuilding Urban Center (Upper Marina & Little Europe)",
-      zone_type: "Rebuilding Urban Center",
-      threat_rating: "Corporate",
-      printed_page: 298,
-      summary: "Densely packed city sectors escaping the worst destruction where new Corporate towers, marinas, and megabuildings rise.",
-    },
-    {
-      name: "Watson Development",
-      zone_type: "Rebuilding Urban Center",
-      threat_rating: "Moderate",
-      printed_page: 298,
-      summary: "Sprawling high-density reconstruction sector housing thousands of war refugees in rising megabuildings and Kabuki.",
-    },
-    {
-      name: "Old Combat Zone",
-      zone_type: "Combat Zones",
-      threat_rating: "Combat",
-      printed_page: 300,
-      summary: "Lawless urban warzone south of the Hot Zone ruled by violent boostergangs where NCPD never patrols.",
-    },
-    {
-      name: "Heywood",
-      zone_type: "Moderate Zone",
-      threat_rating: "Moderate",
-      printed_page: 301,
-      summary: "Sprawling working-class residential sprawl south of Downtown, packed with cargo container blocks and street markets.",
-    },
-    {
-      name: "New Westbrook",
-      zone_type: "Moderate Zone",
-      threat_rating: "Moderate",
-      printed_page: 302,
-      summary: "Entertainment and residential sector encompassing Japantown nightlife, capsule hotels, and luxury executive hill estates.",
-    },
-    {
-      name: "Pacifica Playground",
-      zone_type: "Combat Zones",
-      threat_rating: "Combat",
-      printed_page: 299,
-      summary: "Bankrupt half-finished vacation paradise turned combat playground for combat gangers, private mercs, and scavvers.",
-    },
-    {
-      name: "Executive Zone (Beaverville)",
-      zone_type: "Executive Zone",
-      threat_rating: "Executive",
-      printed_page: 295,
-      summary: "Walled, gated suburban enclave reserved exclusively for corporate executives, guarded by private military forces.",
-    },
-    {
-      name: "The Open Road / Badlands",
-      zone_type: "The Open Road",
-      threat_rating: "Outskirts",
-      printed_page: 295,
-      summary: "Vast red-dust desert highways and ruins outside Night City traveled by Nomad convoys and hunted by gogangs.",
-    },
-  ],
-  factions: [
-    { name: "Arasaka", type: "Megacorporation", printed_page: 267, summary: "Weakened security & banking titan exiled from the US, operating covertly through cutouts." },
-    { name: "Militech", type: "Megacorporation", printed_page: 272, summary: "Colossal arms manufacturer and private military contractor commanding NorCal Military Base." },
-    { name: "Danger Gal", type: "Private Security", printed_page: 270, summary: "Elite private investigation & bodyguarding agency masking lethal ops under cute J-pop aesthetics." },
-    { name: "Trauma Team International", type: "Emergency Corp", printed_page: 279, summary: "Rapid-response armored AV-4 air ambulance squads extracting paid subscribers under live fire." },
-    { name: "Biotechnica", type: "Megacorporation", printed_page: 268, summary: "Biotechnology pioneer holding global patents on CHOOH2 fuel and cloned replacement species." },
-    { name: "Continental Brands", type: "Megacorporation", printed_page: 269, summary: "Food and drink giant manufacturing bulk Kibble and operating citywide Oasis Megamarts." },
-    { name: "NetWatch", type: "Cyberspace Police", printed_page: 301, summary: "Cyberspace law enforcement agency guarding local CitiNets and quarantining deadly Black ICE." },
-    { name: "Maelstrom", type: "Combat Gang", printed_page: 308, summary: "Extreme cyber-modified boostergang obsessed with eradicating human flesh and hunting Inquisitors." },
-    { name: "Tyger Claws", type: "Combat Gang", printed_page: 309, summary: "Deadly motorcycle combat gang protecting Asian communities with reflex chrome and katanas." },
-    { name: "6th Street", type: "Vigilante Gang", printed_page: 308, summary: "Patriotic 4th Corporate War veteran vigilantes turned neighborhood extortionists." },
-    { name: "Voodoo Boys", type: "Terrorist Gang", printed_page: 309, summary: "Occult-themed drug syndicate dealing non-synthetics along Pacifica and university fringes." },
-    { name: "Red Chrome Legion", type: "Hate Boostergang", printed_page: 309, summary: "Militaristic neo-fascist hate boostergang violently attacking outcasts, minorities, and Reclaimers." },
-    { name: "Inquisitors", type: "Cult Gang", printed_page: 308, summary: "Anti-cyberware religious zealots who ambush victims to tear out implants without anesthesia." },
-    { name: "Bozos", type: "Prankster Gang", printed_page: 308, summary: "Terrifying killer clown boostergang biosculpted with bulbous red noses and oversized flat feet." },
-    { name: "Aldecaldos", type: "Nomad Nation", printed_page: 68, summary: "Foundational Nomad Nation leading post-war city rebuilding, container housing, and road convoys." },
-  ],
-  caper_styles: [
-    {
-      id: "heist",
-      name: "Corporate Data / Cargo Heist",
-      printed_page: 395,
-      summary: "Tight-window infiltration, NET Extraction, and clean getaway against Corp security or rival syndicates.",
-      default_beats: {
-        hook: "A Fixer offers blueprints and half up-front for a tight 48-hour convoy or lab snatch.",
-        developments: "Security shifts rotate early; an inside contact demands double or tips off a rival crew.",
-        cliffhanger: "Lockdown traps the crew inside while Trauma Team or armored guards close in.",
-        climax: "Running firefight across loading docks or NET vault extraction under live fire.",
-        resolution: "Clean fence payout at a Night Market, Reputation gain, and lingering Corp heat.",
-      },
-    },
-    {
-      id: "street-turf",
-      name: "Street Turf & Night Market Hustle",
-      printed_page: 398,
-      summary: "Neighborhood survival, gang protection rackets, missing friends, and local Fixer politics.",
-      default_beats: {
-        hook: "A neighborhood ripperdoc or Fixer begs for help after boostergangers seize their block's node.",
-        developments: "Local Lawmen refuse to cross the line; a rival crew offers dirty hardware for a cut.",
-        cliffhanger: "Someone on the block sold out the stash house to a Scav crew.",
-        climax: "Showdown at an abandoned warehouse or rooftop club over the turf boss.",
-        resolution: "The block owes the crew favors and safer Night Market discounts.",
-      },
-    },
-    {
-      id: "nomad-road",
-      name: "Badlands Convoy & Smuggling Run",
-      printed_page: 316,
-      summary: "High-speed highway runs across the Red Badlands, border checkpoints, and Raffen Shiv ambushes.",
-      default_beats: {
-        hook: "Critical cargo must cross 80 miles of Red-dust highway before a Corp embargo locks the gates.",
-        developments: "Acid dust storm scrambles comms; Raffen Shiv technicals shadow the convoy.",
-        cliffhanger: "Bridge barricade holds an armored patrol demanding manifest inspection.",
-        climax: "Full vehicular pursuit and boarding fight along a broken overpass.",
-        resolution: "Delivery to Nomad Pack camp, vehicle repairs, and family Standing reward.",
-      },
-    },
-    {
-      id: "corp-intrigue",
-      name: "Megacorp Extraction & Black Ops",
-      printed_page: 402,
-      summary: "Espionage, defector extractions, dirty Media leaks, and double-crosses in Westbrook & Corporate Center.",
-      default_beats: {
-        hook: "A nervous junior Exec wants extraction plus wiping their lab's prototype backups before midnight.",
-        developments: "Extraction window shifts to a crowded Masquerade club; Black ICE guards the lab subnet.",
-        cliffhanger: "The defector isn't fleeing—they are bait for a Militech wetwork squad.",
-        climax: "Negotiate, betray, or fight through elite mercenaries to a waiting Gyrocopter.",
-        resolution: "Huge eddie payout or explosive Media Screamsheet fallout across Night City.",
-      },
-    },
-  ],
-  screamsheet_hooks: [
-    "BLACKOUT AT KABUKI PIER: A neighborhood clinic loses backup generator fuel during a rolling grid brownout and hires runners for 2,000 eb to recover a hijacked tanker.",
-    "DEAD DROP ON LINE 4: A nervous courier vanishes inside an abandoned maglev maintenance tunnel carrying an encrypted biometric case worth 3,000 eb.",
-    "WATER MAIN SQUEEZE: Rival street crews lock down a Rancho Coronado desalination valve; a local Night Market co-op pools 2,500 eb to break the blockade.",
-    "GHOST BROADCAST: An unlicensed rooftop transmitter hijacks district Data Pool feeds with corporate shipping manifests, drawing a rapid strike team response.",
-    "CHROME RECALL: A back-alley ripperdoc asks for discreet armed escort after discovering a batch of salvaged implants carries active tracking beacons.",
-  ],
+const NO_PRESETS: CampaignPresets = {
+  districts: [],
+  factions: [],
+  zone_types: [],
+  threat_ratings: [],
+  screamsheet_headlines: [],
 };
 
 function pickOne<T>(items: T[]): T {
@@ -230,6 +92,8 @@ interface GigDraft {
 interface CampaignDraftData {
   name: string;
   district: string;
+  zoneType?: string;
+  threatRating?: string;
   caperStyle: string;
   selectedFactions: string[];
   factionMeta?: Record<string, { disposition: string; turf: string }>;
@@ -283,11 +147,14 @@ export function CampaignCreatorModal({
   const draftKey = editCampaign ? `campaign:edit:${editCampaign.id}` : "campaign:new";
   const hydratedRef = useRef(false);
   const hadSavedDraftRef = useRef(false);
-  const [presets, setPresets] = useState<CampaignPresets>(FALLBACK_PRESETS);
+  const [presets, setPresets] = useState<CampaignPresets>(NO_PRESETS);
   const [name, setName] = useState("");
-  const [district, setDistrict] = useState("Watson Development");
-  const [caperStyle, setCaperStyle] = useState("Corporate Data / Cargo Heist");
-  const [selectedFactions, setSelectedFactions] = useState<string[]>(["Arasaka", "Tyger Claws"]);
+  const [district, setDistrict] = useState("");
+  const [zoneType, setZoneType] = useState("");
+  const [threatRating, setThreatRating] = useState("");
+  const [customFaction, setCustomFaction] = useState("");
+  const [caperStyle, setCaperStyle] = useState("");
+  const [selectedFactions, setSelectedFactions] = useState<string[]>([]);
   const [factionMeta, setFactionMeta] = useState<Record<string, { disposition: string; turf: string }>>({});
   const [screamsheetHook, setScreamsheetHook] = useState("");
   const [summary, setSummary] = useState("");
@@ -343,11 +210,12 @@ export function CampaignCreatorModal({
   const applyEditDefaults = (camp: CampaignRecord | null | undefined) => {
     if (camp) {
       setName(camp.name);
-      const distUnres = camp.state.unresolved?.["District & Threat"] || "";
-      const parsedDist = distUnres ? distUnres.split("[")[0].split("(")[0].trim() : "";
-      setDistrict(parsedDist || "Watson Development");
-      setCaperStyle("Corporate Data / Cargo Heist");
-      setSelectedFactions(["Arasaka", "Tyger Claws"]);
+      // The saved district, zone and threat arrive with the campaign context.
+      setDistrict("");
+      setZoneType("");
+      setThreatRating("");
+      setCaperStyle("");
+      setSelectedFactions([]);
       setScreamsheetHook("");
       setSummary(camp.state.summary || "");
       setOpeningScene(camp.state.scene || "");
@@ -398,9 +266,11 @@ export function CampaignCreatorModal({
       setTargetObjectiveCount(2);
     } else {
       setName("");
-      setDistrict("Watson Development");
-      setCaperStyle("Corporate Data / Cargo Heist");
-      setSelectedFactions(["Arasaka", "Tyger Claws"]);
+      setDistrict("");
+      setZoneType("");
+      setThreatRating("");
+      setCaperStyle("");
+      setSelectedFactions([]);
       setFactionMeta({});
       setScreamsheetHook("");
       setSummary("");
@@ -452,9 +322,11 @@ export function CampaignCreatorModal({
     hadSavedDraftRef.current = Boolean(existing);
     if (existing) {
       setName(existing.name ?? "");
-      setDistrict(existing.district ?? "Watson Development");
-      setCaperStyle(existing.caperStyle ?? "Corporate Data / Cargo Heist");
-      setSelectedFactions(Array.isArray(existing.selectedFactions) ? existing.selectedFactions : ["Arasaka", "Tyger Claws"]);
+      setDistrict(existing.district ?? "");
+      setZoneType(existing.zoneType ?? "");
+      setThreatRating(existing.threatRating ?? "");
+      setCaperStyle(existing.caperStyle ?? "");
+      setSelectedFactions(Array.isArray(existing.selectedFactions) ? existing.selectedFactions : []);
       setFactionMeta(existing.factionMeta && typeof existing.factionMeta === "object" ? existing.factionMeta : {});
       setScreamsheetHook(existing.screamsheetHook ?? "");
       setSummary(existing.summary ?? "");
@@ -549,6 +421,8 @@ export function CampaignCreatorModal({
     saveDraft<CampaignDraftData>(draftKey, {
       name,
       district,
+      zoneType,
+      threatRating,
       caperStyle,
       selectedFactions,
       factionMeta,
@@ -596,6 +470,8 @@ export function CampaignCreatorModal({
     editCampaign,
     name,
     district,
+    zoneType,
+    threatRating,
     caperStyle,
     selectedFactions,
     factionMeta,
@@ -641,12 +517,10 @@ export function CampaignCreatorModal({
     let cancelled = false;
     fetchCreationReference()
       .then((ref) => {
-        if (!cancelled && ref.campaign_presets) {
-          setPresets(ref.campaign_presets);
-        }
+        if (!cancelled) setPresets(ref.campaign_presets);
       })
-      .catch(() => {
-        // Keep current presets state if reference fetch fails
+      .catch((err) => {
+        if (!cancelled) onNotify(err instanceof Error ? err.message : "Failed to load Corebook campaign presets");
       });
     if (editCampaign && !hadSavedDraftRef.current) {
       fetchCampaignContext(editCampaign.id)
@@ -654,6 +528,8 @@ export function CampaignCreatorModal({
           if (cancelled || !ctx) return;
           const meta = ctx.campaign_meta;
           if (meta?.district) setDistrict(meta.district);
+          if (meta?.zone_type) setZoneType(meta.zone_type);
+          if (meta?.threat_rating) setThreatRating(meta.threat_rating);
           if (meta?.caper_style) setCaperStyle(meta.caper_style);
           if (Array.isArray(meta?.factions)) setSelectedFactions(meta.factions.slice(0, 4));
           if (Array.isArray(meta?.faction_details)) {
@@ -767,8 +643,21 @@ export function CampaignCreatorModal({
 
   if (!open) return null;
 
-  const activeDistrict = presets.districts.find((d) => d.name === district) ?? presets.districts[0];
-  const activeStyle = presets.caper_styles.find((s) => s.name === caperStyle) ?? presets.caper_styles[0];
+  const activeDistrict = presets.districts.find((d) => d.name === district);
+  const factionChoices = [
+    ...presets.factions,
+    ...selectedFactions
+      .filter((name) => !presets.factions.some((f) => f.name === name))
+      .map((name) => ({ name, type: "Custom", summary: "Your own faction" })),
+  ];
+
+  const rollScreamsheetHeadline = () => {
+    const corp = () => pickOne(presets.factions).name;
+    return presets.screamsheet_headlines
+      .map((column) => pickOne(column))
+      .map((word) => (/pick a corp/i.test(word) ? corp() : word))
+      .join(" ");
+  };
 
   const toggleFaction = (fname: string) => {
     setSelectedFactions((prev) =>
@@ -778,34 +667,19 @@ export function CampaignCreatorModal({
 
   const applyPresetScaffold = () => {
     const dist = activeDistrict ?? presets.districts[0];
-    const style = activeStyle ?? presets.caper_styles[0];
-    if (!dist || !style) return;
-    const hookLine = screamsheetHook || pickOne(presets.screamsheet_hooks) || "";
+    if (!dist) return;
+    const hookLine = screamsheetHook || rollScreamsheetHeadline();
+    if (!district) setDistrict(dist.name);
     if (!screamsheetHook) setScreamsheetHook(hookLine);
     if (!name.trim()) {
-      setName(`${dist.name.split(" ")[0]}: ${style.name.split(" ")[0]} Run`);
+      setName(`${dist.name} Run`);
     }
     setSummary(
-      `Set in ${dist.name}${dist.zone_type ? ` [${dist.zone_type}]` : ""} (Threat: ${dist.threat_rating}, p. ${dist.printed_page}). ${style.summary} Active powers: ${selectedFactions.length ? selectedFactions.join(", ") : "Night City fixers and boostergangs"}.`,
+      `Set in ${dist.name}${zoneType ? ` [${zoneType}]` : ""}${threatRating ? ` (Threat: ${threatRating})` : ""}. Active powers: ${selectedFactions.length ? selectedFactions.join(", ") : "Night City fixers and boostergangs"}.`,
     );
     setOpeningScene(
-      `Rain streaks neon crimson across ${dist.name}. Your crew huddles in a smoky booth as a Fixer slides an encrypted agent across the scarred table: "${hookLine}"`,
+      `Your crew meets in ${dist.name} as a Fixer slides an agent across the table. The screamsheet reads: "${hookLine}"`,
     );
-    setBeatHook(style.default_beats.hook);
-    setBeatDev(style.default_beats.developments);
-    setBeatCliff(style.default_beats.cliffhanger);
-    setBeatClimax(style.default_beats.climax);
-    setBeatRes(style.default_beats.resolution);
-    setNpcPairs([
-      {
-        key: "Fixer Mara Chen",
-        val: `Local ${dist.name.split(" ")[0]} Fixer brokering the contract (500 eb upfront promised).`,
-      },
-      {
-        key: `${selectedFactions[0] || "Corporate"} Enforcer`,
-        val: `Opposing point-person defending the target in ${dist.name}.`,
-      },
-    ]);
     setObjectivePairs([
       {
         key: "Meet & Recon",
@@ -848,7 +722,7 @@ export function CampaignCreatorModal({
         campaign: {
           name: name.trim() || undefined,
           district,
-          threat_rating: activeDistrict?.threat_rating,
+          threat_rating: threatRating || undefined,
           caper_style: caperStyle,
           factions: selectedFactions,
           screamsheet_hook: screamsheetHook || undefined,
@@ -912,12 +786,7 @@ export function CampaignCreatorModal({
           );
           if (matchedDist) setDistrict(matchedDist.name);
         }
-        if (res.caper_style) {
-          const matchedStyle = presets.caper_styles.find(
-            (s) => s.name.toLowerCase() === res.caper_style!.toLowerCase(),
-          );
-          if (matchedStyle) setCaperStyle(matchedStyle.name);
-        }
+        if (res.caper_style) setCaperStyle(res.caper_style);
         if (Array.isArray(res.factions) && res.factions.length > 0) {
           const nextFactions = res.factions.slice(0, 4).map((f) => {
             const matched = presets.factions.find((pf) => pf.name.toLowerCase() === f.toLowerCase());
@@ -1109,7 +978,7 @@ export function CampaignCreatorModal({
           delete unresolvedPayload["Beat Chart"];
         }
         if (district) {
-          unresolvedPayload["District & Threat"] = `${district}${activeDistrict?.zone_type ? ` [${activeDistrict.zone_type}]` : ""} (${activeDistrict?.threat_rating ?? "Moderate"})`;
+          unresolvedPayload["District & Threat"] = `${district}${zoneType ? ` [${zoneType}]` : ""}${threatRating ? ` (${threatRating})` : ""}`;
         } else if (editCampaign) {
           delete unresolvedPayload["District & Threat"];
         }
@@ -1142,8 +1011,8 @@ export function CampaignCreatorModal({
         const payload: CampaignBootstrapPayload = {
           ...(editCampaign ? { name: title, clear_missing: true } : {}),
           ...(district ? { district } : {}),
-          ...(activeDistrict?.zone_type ? { zone_type: activeDistrict.zone_type } : {}),
-          ...(activeDistrict?.threat_rating ? { threat_rating: activeDistrict.threat_rating } : {}),
+          ...(zoneType ? { zone_type: zoneType } : {}),
+          ...(threatRating ? { threat_rating: threatRating } : {}),
           ...(caperStyle ? { caper_style: caperStyle } : {}),
           factions: selectedFactions,
           screamsheet_hook: screamsheetHook.trim(),
@@ -1433,33 +1302,44 @@ export function CampaignCreatorModal({
                         <span className="inline-flex items-center gap-1.5">
                           <MapPin className="h-3.5 w-3.5 text-[var(--hud-primary-bright)]" /> Starting District
                         </span>
-                        {activeDistrict && (
-                          <div className="flex items-center gap-1.5">
-                            {activeDistrict.zone_type && (
-                              <span className="border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[10px] text-[var(--hud-accent)]">
-                                {activeDistrict.zone_type}
-                              </span>
-                            )}
-                            <span className="border border-[var(--hud-primary)]/60 bg-[#5a0b1c]/45 px-1.5 py-0.5 font-cyber-data text-[10px] text-rose-200">
-                              {activeDistrict.threat_rating}
-                            </span>
-                          </div>
-                        )}
                       </label>
                       <select
                         value={district}
                         onChange={(e) => setDistrict(e.target.value)}
                         className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
                       >
+                        <option value="">Choose a district…</option>
                         {presets.districts.map((d) => (
                           <option key={d.name} value={d.name}>
-                            {d.name} ({d.zone_type ? `${d.zone_type} · ` : ""}{d.threat_rating})
+                            {d.name}
                           </option>
                         ))}
                       </select>
                       {activeDistrict && (
                         <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">{activeDistrict.summary}</p>
                       )}
+                      <div className="grid grid-cols-2 gap-2">
+                        {(
+                          [
+                            ["Zone Type", zoneType, setZoneType, presets.zone_types],
+                            ["Threat Rating", threatRating, setThreatRating, presets.threat_ratings],
+                          ] as const
+                        ).map(([label, value, set, options]) => (
+                          <select
+                            key={label}
+                            aria-label={label}
+                            title={options.find((o) => o.name === value)?.summary}
+                            value={value}
+                            onChange={(e) => set(e.target.value)}
+                            className="w-full border border-[var(--hud-line)] bg-black/60 px-2 py-1 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
+                          >
+                            <option value="">{label}…</option>
+                            {options.map((o) => (
+                              <option key={o.name} value={o.name}>{o.name}</option>
+                            ))}
+                          </select>
+                        ))}
+                      </div>
                     </div>
 
                     <div
@@ -1475,20 +1355,14 @@ export function CampaignCreatorModal({
                           {lockChoices ? "Locked" : "Auto on Scratch"}
                         </span>
                       </label>
-                      <select
+                      <input
+                        type="text"
+                        aria-label="Campaign / Caper Style"
                         value={caperStyle}
                         onChange={(e) => setCaperStyle(e.target.value)}
-                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] focus:border-[var(--hud-accent)] focus:outline-none"
-                      >
-                        {presets.caper_styles.map((s) => (
-                          <option key={s.id} value={s.name}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                      {activeStyle && (
-                        <p className="font-cyber-ui text-[11px] text-[var(--hud-muted)]">{activeStyle.summary}</p>
-                      )}
+                        placeholder="e.g. Heist, turf war, convoy run…"
+                        className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                      />
                     </div>
                   </div>
 
@@ -1505,13 +1379,14 @@ export function CampaignCreatorModal({
                       <HudButton
                         variant="tactical"
                         size="xs"
-                        onClick={() => setScreamsheetHook(pickOne(presets.screamsheet_hooks))}
+                        disabled={!presets.screamsheet_headlines.length}
+                        onClick={() => setScreamsheetHook(rollScreamsheetHeadline())}
                       >
-                        <Dices className="h-3 w-3 text-[var(--hud-accent)]" /> Roll Screamsheet Hook
+                        <Dices className="h-3 w-3 text-[var(--hud-accent)]" /> Roll Screamsheet Headline
                       </HudButton>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {presets.factions.map((fac) => {
+                      {factionChoices.map((fac) => {
                         const picked = selectedFactions.includes(fac.name);
                         return (
                           <button
@@ -1530,6 +1405,21 @@ export function CampaignCreatorModal({
                         );
                       })}
                     </div>
+                    <input
+                      type="text"
+                      aria-label="Add a gang or faction"
+                      value={customFaction}
+                      onChange={(e) => setCustomFaction(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const added = customFaction.trim();
+                        if (added && !selectedFactions.includes(added)) toggleFaction(added);
+                        setCustomFaction("");
+                      }}
+                      placeholder="Add a gang or other faction and press Enter…"
+                      className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
+                    />
                     <input
                       type="text"
                       value={screamsheetHook}

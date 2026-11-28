@@ -8,10 +8,9 @@ Play solo or co-op **Cyberpunk RED (2045)** campaigns in your browser with an AI
 
 ## Bring Your Own Corebook
 
-This repository includes **no** copyrighted Corebook PDF, rulebook text, or private campaign data.
+**You need your own Cyberpunk RED Corebook PDF.** This repository includes **no** copyrighted Corebook PDF, rulebook text, or private campaign data, and the app has no built-in copy of the book's content.
 
-- **Works out of the box (Freeform Mode):** Start playing right away with Freeform characters, custom homebrew items/NPCs/rules, automatic `d10`/`d6` skill checks, LUCK & Overclock, world clocks, and branching story chat.
-- **Upload your Corebook PDF anytime in the app:** If you own the Cyberpunk RED Corebook PDF, open **Settings → Corebook PDF** in your browser and upload it with one click. A live progress bar builds your private rules database on your server and unlocks official Roles, `Streetrat` / `Edgerunner` / `Complete Package` character creation, gear catalogs, and exact page lookup.
+Upload the PDF on the setup screen the first time you open the app. A live progress bar builds a private rules database on your server, which supplies the Roles, `Streetrat` / `Edgerunner` / `Complete Package` character creation, gear catalogs, campaign presets, and exact page lookup. Play starts once indexing finishes.
 
 ---
 
@@ -32,7 +31,7 @@ docker compose up -d --build
 Then open **`http://YOUR-SERVER-IP:8765`** (or `http://127.0.0.1:8765` if local) in your browser:
 1. Create your **Admin** username and password on the welcome screen (if hosting publicly, this keeps your settings private).
 2. Click the model button in the top-right to open **Settings → Connection**, pick a preset (Ollama, OpenRouter, NVIDIA NIM, OpenAI, etc.), paste your API key if needed, and click **Test Connection** then **Save Settings**.
-3. *(Optional)* Open **Settings → Corebook PDF**, click **Upload Corebook PDF**, and wait for the progress bar to reach 100%.
+3. Upload your Corebook PDF on the setup screen (or later from **Settings → Corebook PDF**) and wait for the progress bar to reach 100%.
 
 *(Tip: To also enable optional local AI meaning search inside Docker, set `INSTALL_SEMANTIC=true` in `.env` before building.)*
 

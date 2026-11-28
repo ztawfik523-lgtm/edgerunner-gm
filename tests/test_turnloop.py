@@ -2477,7 +2477,7 @@ def test_resolve_character_strictness_and_npc_checks(tmp_path: Path):
         {
             "checks": [
                 {"actor": "Tomasz Nowak", "skill": "Perception", "dv": 13, "base": 14, "npc": True, "reason": "Spotting trespasser"},
-                {"actor": "Maelstrom Ganger", "skill": "Handgun", "dv": 13, "reason": "Return fire"},
+                {"actor": "Maelstrom Ganger", "skill": "Handgun", "dv": 13, "base": 10, "reason": "Return fire"},
             ]
         },
         {"turn_id": "npc-chk-1", "gm_secrets": {}, "clocks": []},
@@ -2491,7 +2491,7 @@ def test_resolve_character_strictness_and_npc_checks(tmp_path: Path):
     assert executed["rolls"][1]["base"] == 10
 
 
-def test_verify_skill_non_string_guard_and_static_fallback(tmp_path: Path):
+def test_verify_skill_non_string_guard_and_role_abilities(tmp_path: Path):
     camp_db = tmp_path / "camp_norules.sqlite"
     svc = GameplayService(camp_db, rules_path=None)
     camp = svc.execute("create_campaign", {"name": "No Rules DB", "operation_id": "nr-c1"})["result"]
@@ -2511,12 +2511,6 @@ def test_verify_skill_non_string_guard_and_static_fallback(tmp_path: Path):
     assert ok is True and cname == "Field Expertise" and cstat == "TECH"
     ok_p, pname, pstat, _ = engine.executor.verify_skill(camp["id"], "pharmaceuticals", None)
     assert ok_p is True and pname == "Pharmaceuticals" and pstat == "TECH"
-
-    # Static Cyberpunk RED skill->STAT fallback works when corebook_skills() is empty
-    ok_hp, hp_name, hp_stat, _ = engine.executor.verify_skill(camp["id"], "human perception", None, character=char)
-    assert ok_hp is True and hp_name == "Human Perception" and hp_stat == "EMP"
-    ok_lang, lang_name, lang_stat, _ = engine.executor.verify_skill(camp["id"], "language (japanese)", None, character=char)
-    assert ok_lang is True and lang_name == "Language (japanese)" and lang_stat == "INT"
 
     # Hallucinated skills still blocked
     ok_bad, _, _, _ = engine.executor.verify_skill(camp["id"], "Laser Magic", None, character=char)

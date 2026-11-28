@@ -40,7 +40,15 @@ def test_api_search_trace(tmp_path, monkeypatch, caplog):
     assert 'sensitive player question' not in caplog.text
 
 
-def test_creation_reference_endpoint(tmp_path):
+def _presets_index(tmp_path):
+    from tests import rules_fixture as rf
+
+    path = rf.build(tmp_path / 'presets_rules.sqlite', [rf.page(1, 1, [])])
+    rf.add_campaign_presets(path)
+    return path
+
+
+def test_creation_reference_requires_an_indexed_corebook(tmp_path):
     httpx = pytest.importorskip('httpx')
     import asyncio
 
@@ -49,15 +57,8 @@ def test_creation_reference_endpoint(tmp_path):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
             response = await client.get('/v1/creation/reference')
-            assert response.status_code == 200
-            data = response.json()
-            assert data['request_id']
-            assert len(data['roles']) == 10
-            assert len(data['stats']) == 10
-            assert len(data['methods']) == 4
-            assert len(data['shop']['weapon']) >= 50
-            assert len(data['shop']['armor']) >= 14
-            assert len(data['shop']['hardware']) >= 6
+            assert response.status_code == 409
+            assert 'Corebook' in response.json()['detail']
     asyncio.run(run())
 
 
@@ -94,7 +95,7 @@ def test_creation_ai_assist_endpoint_bio_and_contacts(tmp_path):
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / 'missing_rules.sqlite', llm=StubCreationLLM())
+        app = redkb.make_api(_presets_index(tmp_path), llm=StubCreationLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
             base_char = {
@@ -193,7 +194,7 @@ def test_campaign_ai_assist_and_bootstrap_endpoint(tmp_path: Path):
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite", llm=StubCampaignLLM())
+        app = redkb.make_api(_presets_index(tmp_path), campaign_path=tmp_path / "camp.sqlite", llm=StubCampaignLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             r_ai = await client.post("/v1/creation/ai-assist", json={
@@ -278,7 +279,7 @@ def test_campaign_ai_assist_auto_and_locked_plus_per_field_regen(tmp_path: Path)
             })
 
     async def run():
-        app = redkb.make_api(tmp_path / "missing.sqlite", campaign_path=tmp_path / "camp.sqlite", llm=InspectCampaignLLM())
+        app = redkb.make_api(_presets_index(tmp_path), campaign_path=tmp_path / "camp.sqlite", llm=InspectCampaignLLM())
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             # 1. Unlocked scratch: AI decides district, caper_style, factions
