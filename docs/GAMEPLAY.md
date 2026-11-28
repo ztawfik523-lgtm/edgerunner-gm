@@ -32,7 +32,9 @@ Stale revisions are rejected. Reusing an `operation_id` returns the saved result
 - **Starting HP & Humanity:** Starting HP is `10 + 5 * ceil((BODY + WILL) / 2)` (Corebook p. 79); starting Humanity is `EMP * 10` (p. 80).
 - **Exploding d10s:** Checks strictly exceed the DV. A natural `10` adds one `d10`; a natural `1` subtracts one `d10` without recursion or automatic success/failure (pp. 129–130).
 - **Wound Penalties & LUCK:** `skill_check` reads stored stats/skills, applies wound penalties automatically (p. 186), and deducts declared LUCK atomically.
-- **Creation & Domain Modules:** `creation.py` and `creation_reference.py` handle `streetrat`, `edgerunner`, `complete_package` (with indexed Corebook PDF), and `freeform` builds. Domain mechanics live in `combat.py`, `health.py`, `netrunning.py`, `neteffects.py`, `roles.py`, `substances.py`, `encounters.py`, `gear.py`, `economy.py`, and `lifecycle.py`.
+- **Corebook required:** Character creation, gear purchases, hustles, and monthly housing and lifestyle costs read the indexed Corebook and fail with an error without it. `housing` and `lifestyle` take the book's names (for example `Cargo Container` and `Kibble`).
+- **Encounter NPCs:** The GM or user supplies each NPC's stat block: `name`, `stats` (`REF`, `DEX`, `BODY`, `WILL`, `MOVE`), `hp`, `weapons`, and optionally `skills`, `sp_body`, `sp_head`.
+- **Creation & Domain Modules:** `creation.py` and `creation_reference.py` handle `streetrat`, `edgerunner`, and `complete_package` builds. Domain mechanics live in `combat.py`, `health.py`, `netrunning.py`, `neteffects.py`, `roles.py`, `substances.py`, `encounters.py`, `gear.py`, `economy.py`, and `lifecycle.py`.
 
 ## Storage & Access Control
 

@@ -3,7 +3,7 @@
 ## Authority and Scope
 
 - **Status:** Implemented backend runtime in [library.py](../library.py), [turn_engine/](../turn_engine/), and [redkb.py](../redkb.py), built specifically to power the custom React Web UI (`ui/`) without requiring SillyTavern or a specific LLM.
-- **Database boundary (BYOC):** Official indexed Corebook entries live read-only/derived inside `rules.sqlite` (optional under Bring-Your-Own-Corebook; when absent, `/health` reports `rules_indexed: false` and structured reference catalogs in `corebook_gm_data.py` / `creation_catalog.py` plus campaign homebrew remain active); all campaign-created homebrew entries, message trees, dice rolls, character sheets, and audit trails live in `campaign.sqlite`.
+- **Database boundary (BYOC):** Official indexed Corebook entries live read-only/derived inside `rules.sqlite` (required, built from the owner's own Corebook PDF; the repository holds no copy of its content, and `/health` reports `rules_indexed: false` until it exists); all campaign-created homebrew entries, message trees, dice rolls, character sheets, and audit trails live in `campaign.sqlite`.
 
 ---
 
@@ -16,7 +16,7 @@
 - **Tables:** `sourcecatalog.REGISTRY` classifies tables by column-header signature; `rule_tables` stores every normalized table (kind, caption title, section, columns, rows, continuation-row notes).
 - **Entries:** `library.build_library(conn)` materializes `rule_entries` (+ `rule_entries_fts`) from skills (dot-leader headers), catalog tables, outline sections, roles (description, ability, skills, Streetrat skill levels, STAT templates, starter kits) and mapped outline nodes (corporations, districts, martial arts forms). `rule_entries.source_json` keeps the source table id, columns and cells.
 - **No unmaterialized fallback:** request-time readers only read the materialized tables; an index without them must be rebuilt. Optional reranker activation survives a rebuild; stale `*.building-*` files from a killed build are removed at the start of the next build (under the index lock).
-- **Readers:** `sourcecatalog.entries(path, category)` / `library.list_category` (all rows, no cap), `sourcecatalog.items` (priced entries keyed by entry id), `sourcecatalog.skills`, `sourcecatalog.roles`, `sourcecatalog.rule_tables(path, kind)`.
+- **Readers:** `sourcecatalog.entries(path, category)` / `library.list_category` (all rows, no cap), `sourcecatalog.items` (priced entries keyed by entry id), `sourcecatalog.skills`, `sourcecatalog.roles`, `sourcecatalog.rule_tables(path, kind)`, `sourcecatalog.skill_groups` and `sourcecatalog.role_lifepaths`.
 
 ### Entry Schema & Categories
 Every entry returned by `search_library` / `get_library_entry` / `/v1/library` has a uniform JSON shape:

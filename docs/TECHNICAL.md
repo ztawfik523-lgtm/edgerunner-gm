@@ -14,8 +14,7 @@ For user-facing setup and gameplay instructions, see [README.md](../README.md) a
 | [turn_engine/](../turn_engine/) | OpenAI-compatible LLM adapter, settings/prompt persistence (`settings.json`), branching chat tree, and two-pass / single-pass turn loop |
 | [library.py](../library.py) | Corebook `rule_entries` materializer and campaign-scoped homebrew catalog |
 | [campaign.py](../campaign.py), [gameplay.py](../gameplay.py), [mechanics.py](../mechanics.py) | SQLite campaign store (`campaign.sqlite`), `d10`/`d6` rolls, skill checks, wound penalties, and undo history |
-| [creation.py](../creation.py), [creation_reference.py](../creation_reference.py), [creation_catalog.py](../creation_catalog.py) | Character creation validation, BYOC reference assembly, gear catalogs, and AI narrative co-writer |
-| [corebook_gm_data.py](../corebook_gm_data.py) | 2045 reference tables and item catalogs |
+| [creation.py](../creation.py), [creation_reference.py](../creation_reference.py), [creation_catalog.py](../creation_catalog.py) | Character creation validation, reference data and campaign presets read from the Corebook index, and the AI narrative co-writer |
 | [combat.py](../combat.py), [health.py](../health.py), [netrunning.py](../netrunning.py), [neteffects.py](../neteffects.py), [roles.py](../roles.py), [substances.py](../substances.py), [encounters.py](../encounters.py), [gear.py](../gear.py), [economy.py](../economy.py), [lifecycle.py](../lifecycle.py), [memory.py](../memory.py) | Domain mechanics, solo runtime, and campaign lifecycle modules |
 | [auth.py](../auth.py) | Admin/User scrypt password auth, HMAC session tokens/cookies, rate limiting, and access policies |
 | [semantic.py](../semantic.py), [reranker.py](../reranker.py), [index_lock.py](../index_lock.py), [layout.py](../layout.py), [sourcecatalog.py](../sourcecatalog.py), [knowledge.py](../knowledge.py), [benchmark.py](../benchmark.py) | Optional CPU ONNX embeddings (`BAAI/bge-small-en-v1.5`), cross-encoder reranking (`Xenova/ms-marco-MiniLM-L-6-v2`), indexing file locks, and retrieval benchmarks |
@@ -32,7 +31,7 @@ Edgerunner GM strictly separates derived Corebook data from mutable campaign dat
 - **`rules.sqlite`** (default `~/.local/share/cyberpunk-red-gm/rules.sqlite`, or `/data/rules.sqlite` in Docker; override with `REDKB_DB` or `--db PATH`):
   - Derived atomically from the owner's Corebook PDF via `redkb.py index` or `POST /v1/corebook/upload`.
   - Contains `pages`, `passages`, FTS5 virtual tables, `sections`, materialized `rule_entries`, and optional dense embeddings.
-  - When absent, `/health` returns `rules_indexed: false` and Freeform/Homebrew mode remains active.
+  - Required. The repository holds no copy of the book's content: when the index is absent, `/health` returns `rules_indexed: false`, the web UI stays on its setup screen, and creation endpoints return an error.
 - **`campaign.sqlite`** (default `~/.local/share/cyberpunk-red-gm/campaign.sqlite`, mode `0600`, or `/data/campaign.sqlite` in Docker; override with `REDGM_CAMPAIGN_DB` or `--campaign-db PATH`):
   - Stores campaigns, characters, audit trails, `chat_messages` branching trees, `turn_gm_snapshots` (branch-scoped `gm_secrets` and `clocks`), and `campaign_library` homebrew entries.
 - **`settings.json`** (default `~/.local/share/cyberpunk-red-gm/settings.json`, mode `0600`, or `/data/settings.json` in Docker; override with `REDGM_SETTINGS_FILE`):
@@ -129,7 +128,7 @@ cd ui && npm test -- --run && npm run build
 
 # Targeted Python API, auth/settings, creation, library, campaign, gameplay & turnloop tests
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest tests/test_creation.py tests/test_creation_catalog.py tests/test_library.py tests/test_campaign.py tests/test_api.py tests/test_gameplay.py tests/test_gameplay_api.py tests/test_auth_and_settings.py tests/test_turnloop.py tests/test_launcher.py -q
+.venv/bin/python -m pytest tests/test_creation.py tests/test_library.py tests/test_campaign.py tests/test_api.py tests/test_gameplay.py tests/test_gameplay_api.py tests/test_auth_and_settings.py tests/test_turnloop.py tests/test_launcher.py -q
 
 # SillyTavern extension contract tests
 node tests/test_extension.mjs
