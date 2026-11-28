@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 import uuid
 
 from gameplay import GameplayService
+from encounters import npc_stat_blocks
 from library import CampaignLibrary, normalize_category, search_library
 import sourcecatalog
 from turn_engine.chat_tree import BranchPrivateStateStore, ChatTreeStore
@@ -436,8 +437,15 @@ class TurnEngine:
             "party_grouping": party_grouping,
             "npc_profiles": npc_profiles,
             "citations": citations,
+            "npc_stat_blocks": self._npc_stat_block_names(),
             "compression_recommended": bool(self.turn_settings.get("auto_compress_prompt", True)) and turns_since_compress >= threshold,
         }
+
+    def _npc_stat_block_names(self) -> list[str]:
+        rules_path = self.gameplay.rules_path
+        if not rules_path or not Path(rules_path).is_file():
+            return []
+        return [f"{e['name']} ({e['stats'].get('tier', 'npc')})" for e in npc_stat_blocks(rules_path)]
 
     def _format_player_message(self, text: str, speaker_name: str | None = None) -> str:
         return format_player_message(text, speaker_name, prompt_settings=self.prompt_settings)

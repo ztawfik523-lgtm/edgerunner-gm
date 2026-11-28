@@ -279,6 +279,8 @@ def build_planner_messages(
     step_note = f"- Default fallback if time passed without another value: {default_step}m.\n" if default_step > 0 else ""
     homebrew_note = "" if allow_homebrew else "- Leave `new_homebrew` empty (`[]`); auto-saving AI homebrew is disabled.\n"
     core_block = f"Planning rules:\n{planner_core}\n" if planner_core else ""
+    blocks = prep.get("npc_stat_blocks")
+    stat_block_line = f"Corebook NPC stat blocks (use as `npcs[].entry`): {', '.join(blocks)}.\n" if blocks else ""
     system_prompt = (
         "You are the Cyberpunk RED Rules Planner. Return ONLY a single valid JSON object with no markdown or prose.\n"
         f"Campaign Style: {style_hint}\n"
@@ -296,6 +298,7 @@ def build_planner_messages(
         '  "gm_notes": "short resolution guidance"\n'
         "}\n"
         f"{core_block}"
+        f"{stat_block_line}"
         f"{step_note}"
         f"{homebrew_note}"
         f"{party_line}"

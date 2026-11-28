@@ -111,10 +111,12 @@ def campaign_presets(rules_path: str | Path) -> dict[str, Any]:
         return [{"name": e["name"], "summary": sourcecatalog._summarize(re.sub(r"^\d+\.\s*", "", e["description"])),
                  "printed_page": e["printed_page"]} for e in _entries(path, category)]
 
+    kinds = {e["name"]: e["stats"]["kind"] for e in _entries(path, "faction")}
     headlines = _tables(path, "screamsheet_headlines")[0]["rows"]
     return {
         "districts": places("location"),
-        "factions": [{**faction, "type": "Corporation"} for faction in places("faction")],
+        # Corporations and gangs, labelled by the book section they come from.
+        "factions": [{**faction, "type": kinds[faction["name"]].title()} for faction in places("faction")],
         "zone_types": named_rows("zone_type"),
         "threat_ratings": named_rows("threat_rating"),
         # One list per headline column; a headline takes one word from each.
@@ -137,6 +139,43 @@ def _kit(entries: list[dict[str, Any]], cyberware: dict[str, dict[str, Any]] | N
         else {"type": "fixed", **option(e)}
         for e in entries
     ]
+
+
+# The "What are Statistics?" rule defines each STAT as "Name (ABBR): description".
+_STAT_ENTRY = re.compile(rf"\b([A-Z][a-z]+) \(({'|'.join(STATS)})\):\s*")
+
+
+def stat_descriptions(path: Path) -> dict[str, dict[str, Any]]:
+    """STAT -> {name, description, printed_page}, split from the Corebook's one STAT overview entry."""
+    entry = next((e for e in _entries(path, "rule") if e["name"].casefold().startswith("what are statistics")), None)
+    if entry is None:
+        raise ValueError("The rules index has no STAT overview entry")
+    parts = _STAT_ENTRY.split(entry["description"])
+    names, keys, texts = parts[1::3], parts[2::3], [text.strip() for text in parts[3::3]]
+    if sorted(keys) != sorted(STATS) or not all(texts):
+        raise ValueError("The indexed STAT overview does not describe each STAT exactly once")
+    found = {key: {"name": name, "description": text, "printed_page": entry["printed_page"]}
+             for name, key, text in zip(names, keys, texts)}
+    return {stat: found[stat] for stat in STATS}
+
+
+def key_stats(templates: list[list[int]]) -> list[str]:
+    """The three STATs a role's templates rate highest on average (ties keep STAT order)."""
+    totals = [sum(column) for column in zip(*templates)]
+    return [STATS[i] for i in sorted(range(len(STATS)), key=lambda i: -totals[i])[:3]]
+
+
+def smart_fill(templates: list[list[int]], points: int = 62) -> dict[str, int]:
+    """Scale a role's average template row to exactly `points`, keeping every STAT within 2..8."""
+    averages = [sum(column) / len(templates) for column in zip(*templates)]
+    targets = [value * points / sum(averages) for value in averages]
+    values = [max(2, min(8, int(target))) for target in targets]
+    # Hand out (or take back) the rounding remainder, nearest-to-target first.
+    while (gap := points - sum(values)) != 0:
+        step = 1 if gap > 0 else -1
+        open_slots = [i for i, value in enumerate(values) if 2 <= value + step <= 8]
+        values[max(open_slots, key=lambda i: (targets[i] - values[i]) * step)] += step
+    return dict(zip(STATS, values))
 
 
 def _roles(path: Path) -> list[dict[str, Any]]:
@@ -162,6 +201,8 @@ def _roles(path: Path) -> list[dict[str, Any]]:
             "description": entry["description"],
             "printed_page": entry["printed_page"],
             "templates": templates,
+            "key_stats": key_stats(templates),
+            "smart_fill": smart_fill(templates),
             "skills": _role_skills(path, role, catalog),
             "starting_weapons": _kit([e for e, armor in zip(stats["starter_weapons_armor"], is_armor) if not armor]),
             "starting_armor": [e["item"] for e, armor in zip(stats["starter_weapons_armor"], is_armor) if armor],
@@ -175,6 +216,17 @@ def _roles(path: Path) -> list[dict[str, Any]]:
             ],
         })
     return result
+
+
+def outfit_bundles(fashion: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One bundle per fashion style: the cheapest item for each of its garment slots."""
+    slots: dict[str, dict[str, dict[str, Any]]] = {}
+    for item in sorted(fashion, key=lambda i: (i["cost_eb"], i["name"].casefold())):
+        slots.setdefault(item["style"], {}).setdefault(item["garment"], item)
+    bundles = [{"style": style, "cost_eb": sum(i["cost_eb"] for i in picks.values()),
+                "items": [{"name": i["name"], "cost_eb": i["cost_eb"], "style": style} for i in picks.values()]}
+               for style, picks in slots.items()]
+    return sorted(bundles, key=lambda b: (b["cost_eb"], b["style"].casefold()))
 
 
 def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
@@ -223,6 +275,7 @@ def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
     drugs = _entries(path, "drug")
     return {
         "stat_names": list(STATS),
+        "stats": stat_descriptions(path),
         "methods": CREATION_METHODS,
         "roles": _roles(path),
         "skills": skills,
@@ -230,6 +283,7 @@ def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
         "lifepath_tables": lifepath_tables,
         "shop": shop,
         "fashion": fashion,
+        "outfit_bundles": outfit_bundles(fashion),
         "housing_tiers": [
             {"id": name, "name": name, "monthly_eb": cost, "summary": housing_text[name],
              "exec_only": name.startswith("Corporate")}

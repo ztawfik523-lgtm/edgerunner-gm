@@ -201,7 +201,7 @@ class SoloService:
             chars[c["id"]] = c
             return {"character_id": c["id"], "creation": c["detail"]}
         if action == "start_encounter":
-            from encounters import build_npc_combatant, start_encounter
+            from encounters import build_npc_combatant, expand_npc_specs, start_encounter
             if runtime["encounter"] and runtime["encounter"].get("active"):
                 raise ValueError("An encounter is already active")
             ids = args.pop("character_ids", None)
@@ -214,7 +214,7 @@ class SoloService:
                 raise ValueError("character_ids must name distinct campaign members")
             if raw_npcs is not None and not isinstance(raw_npcs, list):
                 raise ValueError("npcs must be a list")
-            npc_specs = raw_npcs or []
+            npc_specs = expand_npc_specs(raw_npcs or [], self.gameplay.rules_path)
             if not ids and not npc_specs:
                 raise ValueError("character_ids must name distinct campaign members")
             existing_ids = set(str(i) for i in ids) | set(str(k) for k in chars)
@@ -251,7 +251,11 @@ class SoloService:
             if sub_action in {"add_npc", "remove_npc"} and actor_id is None:
                 actor_id = encounter["queue"][encounter["turn_index"]]
             prev_active = encounter["queue"][encounter["turn_index"]] if encounter.get("queue") else None
-            result = apply_action(encounter, combined, actor_id, sub_action, args.get("arguments", {}), randbelow)
+            arguments = args.get("arguments", {})
+            if sub_action == "add_npc":
+                from encounters import add_npc_specs, expand_npc_specs
+                arguments = {"npcs": expand_npc_specs(add_npc_specs(arguments), self.gameplay.rules_path)}
+            result = apply_action(encounter, combined, actor_id, sub_action, arguments, randbelow)
             updated_enc = result["encounter"]
             updated_all = result["characters"]
             for cid in pc_ids:

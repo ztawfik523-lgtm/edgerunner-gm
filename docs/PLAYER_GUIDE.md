@@ -18,14 +18,17 @@ Edgerunner GM needs your own legally owned Cyberpunk RED Corebook PDF; it ships 
 2. Drag and drop your PDF file or click **Upload Corebook PDF**.
 3. Watch the progress bar as the server reads the pages and builds your searchable rulebook library. When it reaches **100%**, the app opens with the Roles, weapons, cyberware, skills, and page references read from your book — no restart needed.
 
+If you indexed your book with an older version, upload the PDF again in **Settings** to add gangs and NPC stat blocks.
+
 ---
 
 ## 2. Creating a Campaign & Characters
 
-- **Create a Campaign:** Click **New** in the top bar to open the Campaign Creator. You can type a quick name for a blank sandbox, or fill in your district, factions, and premise (and use **AI Generate** to flesh out an opening scene, NPCs, Beat Chart, and hidden GM hooks). Districts, corporations, zone types, threat ratings, and screamsheet headlines come from your Corebook; add gangs, caper style, and NPCs yourself or let the AI write them.
+- **Create a Campaign:** Click **New** in the top bar to open the Campaign Creator. You can type a quick name for a blank sandbox, or fill in your district, factions, and premise (and use **AI Generate** to flesh out an opening scene, NPCs, Beat Chart, and hidden GM hooks). Districts, corporations, gangs, zone types, threat ratings, and screamsheet headlines come from your Corebook. Type your own caper style and NPCs, or let the AI write them: **Suggest Caper Outlines** and **Suggest Screamsheet Hooks** need a model configured in Settings. Fights can use the Corebook's mooks, lieutenants and bosses by name.
 - **Build a Character:** Open the **Character** tab on the right and click **Create Character**:
   - **Streetrat / Edgerunner / Complete Package:** Each uses your Corebook's Role templates, skills, starting gear, and lifepath tables.
-  - Hover or click a Role, skill, or item to read your Corebook's description, and use the **Lifepath** and **AI Co-Writer** helpers to build your backstory and contacts.
+  - Each Role shows the book's opening line, its key STATs are marked, and **Role Smart Fill** spreads the Complete Package's 62 STAT points the way that Role's templates do. In the fashion shop, an **outfit bundle** picks one item per clothing slot in a style.
+  - Hover or click a Role, STAT, skill, or item to read your Corebook's description, and use the **Lifepath** and **AI Co-Writer** helpers to build your backstory and contacts.
 
 ---
 

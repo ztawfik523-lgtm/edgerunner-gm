@@ -105,3 +105,24 @@ def test_creation_reference_reads_every_corebook_section():
     assert len(ref["cultural_regions"]) == 10 and len(ref["lifepath_tables"]) == 18
     assert len(ref["lifestyles"]) == 4 and ref["nomad_upgrades"] and ref["martial_arts_forms"]
     assert [len(column) for column in ref["campaign_presets"]["screamsheet_headlines"]] == [10, 10, 10]
+
+
+def test_gangs_are_extracted_from_run_in_headings(conn):
+    gangs = conn.execute("SELECT description FROM rule_entries WHERE category='faction' "
+                         "AND json_extract(stats_json, '$.kind')='gang'").fetchall()
+    assert len(gangs) >= 10 and all(len(d) > 100 for (d,) in gangs)
+
+
+def test_npc_stat_blocks_have_sane_values_and_build_combatants():
+    from encounters import build_npc_combatant, expand_npc_specs, npc_stat_blocks
+
+    blocks = npc_stat_blocks(DB)
+    assert len(blocks) >= 8
+    for entry in blocks:
+        stats = entry["stats"]
+        assert len(stats["npc_stats"]) == 10 and all(0 <= v <= 12 for v in stats["npc_stats"].values())
+        assert 10 <= stats["hit_points"] <= 80 and stats["weapons"] and len(stats["skills"]) >= 10
+        assert 0 < stats["sp_body"] <= 18
+        assert all(-2 <= level <= 14 for level in stats["skills"].values())
+        assert build_npc_combatant(expand_npc_specs([{"entry": entry["id"]}], DB)[0])["hp"] == stats["hit_points"]
+    assert {e["stats"].get("tier") for e in blocks} >= {"mook", "lieutenant", "boss"}

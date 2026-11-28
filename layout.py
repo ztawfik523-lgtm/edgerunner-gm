@@ -92,6 +92,24 @@ def cell_lines(cell: Any) -> list[str]:
     return [line.strip() for line in str(cell or "").split("\n") if line.strip()]
 
 
+def _is_bold(span: dict[str, Any]) -> bool:
+    font = str(span.get("font", "")).casefold()
+    return bool(int(span.get("flags", 0)) & 16) or "bold" in font or "black" in font
+
+
+def run_in_name(spans: list[dict[str, Any]]) -> str:
+    """The bold "Name:" that opens a run-in paragraph, read from the first line's spans."""
+    lead, i = "", 0
+    while i < len(spans) and ":" not in lead and (_is_bold(spans[i]) or not spans[i].get("text", "").strip()):
+        lead += spans[i].get("text", "")
+        i += 1
+    rest = "".join(span.get("text", "") for span in spans[i:])
+    if ":" not in lead and not rest.lstrip().startswith(":"):
+        return ""
+    name = flat(clean_text(lead.split(":", 1)[0]))
+    return name if 0 < len(name) <= 60 else ""
+
+
 def _block_from_dict(block: dict[str, Any]) -> dict[str, Any] | None:
     lines = []
     sizes: list[float] = []
@@ -109,16 +127,17 @@ def _block_from_dict(block: dict[str, Any]) -> dict[str, Any] | None:
                 continue
             sizes.append(float(span.get("size", 0.0)))
             chars += weight
-            font = str(span.get("font", ""))
-            if int(span.get("flags", 0)) & 16 or "bold" in font.casefold() or "black" in font.casefold():
+            if _is_bold(span):
                 bold_chars += weight
     text = _collapse_lines(clean_text("\n".join(lines)))
     if not text:
         return None
     x0, y0, x1, y1 = (float(v) for v in block["bbox"])
+    first = next((line.get("spans", []) for line in block.get("lines", [])
+                  if any(span.get("text", "").strip() for span in line.get("spans", []))), [])
     return {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "text": text,
             "size": round(max(sizes), 1) if sizes else 0.0,
-            "bold": bool(chars) and bold_chars * 2 > chars}
+            "bold": bool(chars) and bold_chars * 2 > chars, "runin": run_in_name(first)}
 
 
 def extract_tables(page: Any) -> list[dict[str, Any]]:
@@ -158,8 +177,11 @@ def read_page(page: Any, pdf_page: int) -> dict[str, Any]:
         tables = extract_tables(page)
     except (AttributeError, TypeError, ValueError):
         tables = []
-    return {"pdf_page": pdf_page, "width": float(page.rect.width), "height": float(page.rect.height),
-            "blocks": blocks, "tables": tables}
+    result = {"pdf_page": pdf_page, "width": float(page.rect.width), "height": float(page.rect.height),
+              "blocks": blocks, "tables": tables}
+    if all(any(label in block["text"] for block in blocks) for label in ("Hit Points", "Skill Bases")):
+        result["stat_blocks"], result["stat_notes"] = parse_stat_blocks(visible_lines(page))
+    return result
 
 
 def merge_drop_caps(pages: list[dict[str, Any]]) -> None:
@@ -292,3 +314,216 @@ def body_text(page: dict[str, Any]) -> str:
 def table_signature(header: list[str]) -> str:
     return "|".join(norm_key(cell) for cell in header if norm_key(cell))
 
+
+
+# --------------------------------------------------------------------------
+# NPC stat blocks: a fixed grid of labelled values beside a vertical name
+# --------------------------------------------------------------------------
+
+STAT_LABELS = ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP")
+_STAT_VALUE = re.compile(r"(\d{1,2})(?:\s*\((\d{1,2})\))?|—")
+_DAMAGE = re.compile(r"\d{1,2}d6")
+_SKILL_BASE = re.compile(r"(.*?[^\d\s(])\s*(\d{1,2})(?:\s*\(\d{1,2}\))?")
+_SECTION_LABELS = {"skills": "Skill Bases", "equipment": "Cyberware & Special Equipment", "programs": "Cyberdeck Programs"}
+_TIER_NOTES = (("mini boss", r"considered Mini Boss"), ("lieutenant", r"considered Lieutenant"),
+               ("mook", r"considered Mook"), ("boss", r"full on boss"))
+
+
+def visible_lines(page: Any) -> list[dict[str, Any]]:
+    """Text lines as drawn: characters later painted over by an opaque fill are dropped.
+
+    Stat-block art reuses a template and covers its leftover text with filled
+    shapes. Lines are also split where a wide gap separates two table cells.
+    """
+    fills = [(d["seqno"], d["rect"]) for d in page.get_drawings()
+             if d.get("fill") is not None and (d.get("fill_opacity") or 1) >= 0.99]
+    # (origin, font) -> drawn visibly; hidden and visible template text can share an origin.
+    drawn: dict[tuple[float, float, str], bool] = {}
+    for span in page.get_texttrace():
+        for _, _, origin, box in span["chars"]:
+            x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            shown = not any(seq > span["seqno"] and r.x0 <= x <= r.x1 and r.y0 <= y <= r.y1 for seq, r in fills)
+            key = (round(origin[0], 1), round(origin[1], 1), span["font"])
+            drawn[key] = shown or drawn.get(key, False)
+    lines = []
+    for block in page.get_text("rawdict", sort=False).get("blocks", []):
+        for line in block.get("lines", []):
+            rotated = abs(line["dir"][1]) > 0.5
+            runs: list[list[tuple[dict[str, Any], dict[str, Any]]]] = []
+            for span in line["spans"]:
+                shown = False
+                for char in span["chars"]:
+                    # The later letters of a ligature have no glyph of their own; they follow the first.
+                    shown = drawn.get((round(char["origin"][0], 1), round(char["origin"][1], 1), span["font"]), shown)
+                    if not shown:
+                        continue
+                    if not runs or not rotated and char["bbox"][0] - runs[-1][-1][0]["bbox"][2] > span["size"] * 1.2:
+                        runs.append([])
+                    runs[-1].append((char, span))
+            for run in runs:
+                text = flat(clean_text("".join(char["c"] for char, _ in run)))
+                if not text:
+                    continue
+                inked = [(char, span) for char, span in run if char["c"].strip()]
+                span = inked[0][1]
+                lines.append({
+                    "x0": min(c["bbox"][0] for c, _ in inked), "y0": min(c["bbox"][1] for c, _ in inked),
+                    "x1": max(c["bbox"][2] for c, _ in inked), "y1": max(c["bbox"][3] for c, _ in inked),
+                    "text": text, "rotated": rotated,
+                    "emphasis": _is_bold(span) and bool(int(span.get("flags", 0)) & 2),
+                })
+    return lines
+
+
+def _reading_order(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[list[dict[str, Any]]] = []
+    for line in sorted(lines, key=lambda ln: ln["y0"]):
+        if rows and line["y0"] - rows[-1][0]["y0"] <= 5:
+            rows[-1].append(line)
+        else:
+            rows.append([line])
+    return [line for row in rows for line in sorted(row, key=lambda ln: ln["x0"])]
+
+
+def _same_row(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return a["y0"] < b["y1"] - 2 and b["y0"] < a["y1"] - 2
+
+
+def _label(lines: list[dict[str, Any]], pattern: str) -> dict[str, Any] | None:
+    return next((ln for ln in lines if ln["text"].startswith("▶") and re.match(pattern, norm_key(ln["text"]))), None)
+
+
+def _value(lines: list[dict[str, Any]], label: dict[str, Any] | None, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """The matching value in a label's cell: same row, right of it, before the next label."""
+    if label is None:
+        return None
+    limit = min((ln["x0"] for ln in lines if ln["text"].startswith("▶") and _same_row(ln, label) and ln["x0"] > label["x0"]),
+                default=label["x0"] + 110)
+    for line in sorted(lines, key=lambda ln: ln["x0"]):
+        match = pattern.fullmatch(line["text"])
+        if match and label["x0"] < line["x0"] < limit and _same_row(line, label):
+            return match
+    return None
+
+
+def _section_texts(lines: list[dict[str, Any]]) -> dict[str, str]:
+    """The labelled free-text boxes (skill bases, equipment, programs), unwrapped."""
+    labels = {key: _label(lines, norm_key(title)) for key, title in _SECTION_LABELS.items()}
+    out = {}
+    for key, label in labels.items():
+        if label is None:
+            continue
+        stop = min((other["y0"] - 3 for other in labels.values() if other and other["y0"] > label["y0"] + 3),
+                   default=float("inf"))
+        parts, bottom = [], label["y0"]
+        for line in _reading_order([ln for ln in lines if ln["x0"] >= label["x0"] - 2 and label["y0"] - 4 <= ln["y0"] < stop]):
+            if line["y0"] - bottom > 18:
+                break
+            bottom = line["y0"]
+            parts.append(line["text"])
+        pattern = r"▶\s*" + r"\s*".join(map(re.escape, _SECTION_LABELS[key].split())) + r"\s*"
+        out[key] = flat(re.sub(pattern, "", cell_text("\n".join(parts)), flags=re.I))
+    return out
+
+
+def _split_list(text: str) -> list[str]:
+    """Split on commas that are not inside parentheses."""
+    return [part.strip() for part in re.split(r",(?![^()]*\))", text) if part.strip()]
+
+
+def _weapons(lines: list[dict[str, Any]], top: float, bottom: float, left_edge: float, right: float) -> list[dict[str, str]]:
+    area = [ln for ln in lines if top <= ln["y0"] < bottom - 4 and left_edge <= ln["x0"] < right and not ln["text"].startswith("▶")]
+    damages = [ln for ln in area if _DAMAGE.fullmatch(ln["text"])]
+    mid = lambda ln: (ln["y0"] + ln["y1"]) / 2  # noqa: E731
+    weapons = []
+    for damage in _reading_order(damages):
+        left = max((d["x1"] for d in damages if d["x1"] < damage["x0"] and abs(mid(d) - mid(damage)) < 20), default=0)
+        # A two-line name sits centred on its single damage cell.
+        name = [ln for ln in area if ln not in damages and left <= ln["x0"] and ln["x1"] <= damage["x0"] + 2
+                and abs(mid(ln) - mid(damage)) < 12]
+        if name:
+            weapons.append({"name": flat(" ".join(ln["text"] for ln in _reading_order(name))), "damage": damage["text"]})
+    return weapons
+
+
+def _stat_block(region: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    """One block's fields, or None when its STATs or Hit Points cannot all be read."""
+    stats: dict[str, int] = {}
+    effective: dict[str, int] = {}
+    for stat in STAT_LABELS:
+        match = _value(region, _label(region, stat.lower() + "$"), _STAT_VALUE)
+        if match is None:
+            return None
+        stats[stat] = int(match.group(1) or 0)
+        if match.group(2):
+            effective[stat] = int(match.group(2))
+    number = re.compile(r"(\d{1,3})")
+    derived = {key: _value(region, _label(region, pattern), number)
+               for key, pattern in (("hit_points", "hitpoints"), ("seriously_wounded", r"ser\w*wounded"),
+                                    ("death_save", "deathsave"))}
+    if not name or derived["hit_points"] is None:
+        return None
+    block: dict[str, Any] = {"name": name, "stats": stats, "effective_stats": effective,
+                             **{key: int(match.group(1)) for key, match in derived.items() if match}}
+    texts = _section_texts(region)
+    armor = next((ln for ln in region if re.match(r"Armor\s*:", ln["text"])), None)
+    if armor is not None:
+        block["armor"] = armor["text"].split(":", 1)[1].strip()
+        for location in ("Head", "Body"):
+            row = next((ln for ln in region if ln["text"].startswith(location) and ln["y0"] > armor["y0"]), None)
+            points = row and next((m for ln in [row, *region] if _same_row(ln, row) and ln["x0"] >= row["x0"]
+                                   for m in [re.search(r"(\d{1,2})\s*SP\b", ln["text"])] if m), None)
+            if points:
+                block[f"sp_{location.lower()}"] = int(points.group(1))
+    header = next((ln for ln in region if ln["text"] == "Weapons"), None)
+    skills = _label(region, "skillbases")
+    if header is not None and skills is not None:
+        block["weapons"] = _weapons(region, header["y1"] - 3, skills["y0"], skills["x0"] - 2,
+                                    armor["x0"] - 5 if armor else float("inf"))
+    block["skill_bases"], block["unparsed_skills"] = [], []
+    for part in _split_list(texts.get("skills", "")):
+        match = _SKILL_BASE.fullmatch(part)
+        if match:
+            block["skill_bases"].append({"name": match.group(1), "base": int(match.group(2))})
+        else:
+            block["unparsed_skills"].append(part)
+    block.update({key: texts[key] for key in ("equipment", "programs") if texts.get(key)})
+    return block
+
+
+def parse_stat_blocks(lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """(stat blocks, emphasised notes) from one page's visible lines.
+
+    Each block starts at its INT label and runs to the next one; the NPC's name
+    is the vertical text to the left.
+    """
+    upright = [ln for ln in lines if not ln["rotated"] and not ln.get("emphasis")]
+    anchors = sorted((ln for ln in upright if ln["text"].startswith("▶") and norm_key(ln["text"]) == "int"),
+                     key=lambda ln: ln["y0"])
+    blocks = []
+    for anchor, following in zip(anchors, [*anchors[1:], None]):
+        top, bottom = anchor["y0"] - 8, following["y0"] - 8 if following else float("inf")
+        names = [ln for ln in lines if ln["rotated"] and ln["x1"] <= anchor["x0"] and top <= (ln["y0"] + ln["y1"]) / 2 < bottom]
+        name = flat(" ".join(ln["text"] for ln in sorted(names, key=lambda ln: ln["x0"]))).title()
+        block = _stat_block([ln for ln in upright if top <= ln["y0"] < bottom], name)
+        if block:
+            blocks.append(block)
+    notes: list[str] = []
+    previous = None
+    for line in _reading_order([ln for ln in lines if ln.get("emphasis") and not ln["rotated"]]):
+        if previous is not None and line["y0"] - previous <= 18:
+            notes[-1] = f"{notes[-1]} {line['text']}"
+        else:
+            notes.append(line["text"])
+        previous = line["y0"]
+    return blocks, notes
+
+
+def assign_tiers(pages: list[dict[str, Any]]) -> None:
+    """Tag stat blocks with the threat tier the book's footnotes give them, in place."""
+    notes = [note for page in pages for note in page.get("stat_notes", [])]
+    for block in (block for page in pages for block in page.get("stat_blocks", [])):
+        for tier, pattern in _TIER_NOTES:
+            if any(re.search(pattern, note, re.I) and norm_key(block["name"]) in norm_key(note) for note in notes):
+                block["tier"] = tier
+                break

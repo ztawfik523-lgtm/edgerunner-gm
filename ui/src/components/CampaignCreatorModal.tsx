@@ -29,7 +29,7 @@ import {
   type CampaignBootstrapPayload,
 } from "../api";
 import { clearDraft, loadDraft, saveDraft } from "../draftStorage";
-import type { CampaignPresets, CampaignRecord, CharacterRecord } from "../types";
+import type { CampaignPresets, CampaignRecord, CaperOutline, CharacterRecord } from "../types";
 import { CyberFrame, HazardBadge, HudButton, HudToggle, SegmentedBar } from "./cyber";
 import { FieldAiActions } from "./FieldAiActions";
 
@@ -204,6 +204,8 @@ export function CampaignCreatorModal({
   const [targetObjectiveCount, setTargetObjectiveCount] = useState(2);
   const [draftRestored, setDraftRestored] = useState(false);
   const [aiBusyField, setAiBusyField] = useState<string | null>(null);
+  const [caperIdeas, setCaperIdeas] = useState<CaperOutline[]>([]);
+  const [hookIdeas, setHookIdeas] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -384,6 +386,8 @@ export function CampaignCreatorModal({
     setAttachCharIds([]);
     setLaunchIntroOnCreate(false);
     setRevealGmSecrets(false);
+    setCaperIdeas([]);
+    setHookIdeas([]);
     setError("");
     hydratedRef.current = true;
   }, [open, editCampaign?.id, draftKey]);
@@ -652,7 +656,7 @@ export function CampaignCreatorModal({
   ];
 
   const rollScreamsheetHeadline = () => {
-    const corp = () => pickOne(presets.factions).name;
+    const corp = () => pickOne(presets.factions.filter((f) => f.type === "Corporation")).name;
     return presets.screamsheet_headlines
       .map((column) => pickOne(column))
       .map((word) => (/pick a corp/i.test(word) ? corp() : word))
@@ -761,6 +765,11 @@ export function CampaignCreatorModal({
             : undefined,
         },
       });
+      if (field === "caper_outlines" || field === "screamsheet_hooks") {
+        if (field === "caper_outlines") setCaperIdeas(res.caper_outlines ?? []);
+        else setHookIdeas(res.screamsheet_hooks ?? []);
+        return;
+      }
       if (entryIndex !== undefined && subField && res.value !== undefined) {
         const val = res.value;
         if (val) {
@@ -1363,6 +1372,33 @@ export function CampaignCreatorModal({
                         placeholder="e.g. Heist, turf war, convoy run…"
                         className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                       />
+                      <HudButton
+                        variant="tactical"
+                        size="xs"
+                        disabled={aiBusy}
+                        onClick={() => void handleAiCampaign("scratch", "caper_outlines")}
+                      >
+                        <Sparkles className="h-3 w-3 text-[var(--hud-accent)]" />{" "}
+                        {busyFor("caper_outlines") ? "Writing capers…" : "Suggest Caper Outlines"}
+                      </HudButton>
+                      {caperIdeas.map((idea) => (
+                        <button
+                          key={idea.title}
+                          type="button"
+                          title="Use this caper's style and Beat Chart"
+                          onClick={() => {
+                            setCaperStyle(idea.style || idea.title);
+                            setBeatHook(idea.hook);
+                            setBeatDev(idea.developments);
+                            setBeatCliff(idea.cliffhanger);
+                            setBeatClimax(idea.climax);
+                            setBeatRes(idea.resolution);
+                          }}
+                          className="block w-full border border-[var(--hud-line-soft)] bg-black/50 px-2 py-1 text-left font-cyber-ui text-[11px] text-[var(--hud-muted)] hover:border-[var(--hud-accent-line)] hover:text-[var(--hud-text)]"
+                        >
+                          <span className="font-semibold text-[var(--hud-accent)]">{idea.title}</span> — {idea.hook}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -1427,6 +1463,25 @@ export function CampaignCreatorModal({
                       placeholder="Screamsheet broadcast headline or rumor hitting Night City Nets today…"
                       className="w-full border border-[var(--hud-line)] bg-black/60 px-2.5 py-1.5 font-cyber-ui text-xs text-[var(--hud-text)] placeholder:text-[var(--hud-muted)]/70 focus:border-[var(--hud-accent)] focus:outline-none"
                     />
+                    <HudButton
+                      variant="tactical"
+                      size="xs"
+                      disabled={aiBusy}
+                      onClick={() => void handleAiCampaign("scratch", "screamsheet_hooks")}
+                    >
+                      <Sparkles className="h-3 w-3 text-[var(--hud-accent)]" />{" "}
+                      {busyFor("screamsheet_hooks") ? "Writing hooks…" : "Suggest Screamsheet Hooks"}
+                    </HudButton>
+                    {hookIdeas.map((idea) => (
+                      <button
+                        key={idea}
+                        type="button"
+                        onClick={() => setScreamsheetHook(idea)}
+                        className="block w-full border border-[var(--hud-line-soft)] bg-black/50 px-2 py-1 text-left font-cyber-ui text-[11px] text-[var(--hud-muted)] hover:border-[var(--hud-accent-line)] hover:text-[var(--hud-text)]"
+                      >
+                        {idea}
+                      </button>
+                    ))}
                     {selectedFactions.length > 0 && (
                       <div className="space-y-1.5 border-t border-[var(--hud-line-soft)] pt-2">
                         <div className="font-cyber-ui text-[10px] font-semibold uppercase tracking-wider text-[var(--hud-label)]">
