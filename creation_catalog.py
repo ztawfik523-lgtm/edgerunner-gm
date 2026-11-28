@@ -253,12 +253,12 @@ _CAMPAIGN_IDEA_FIELDS = {
     "caper_outlines": (
         [_CAPER_SCHEMA],
         "Invent 3 clearly different caper outlines for this campaign, each following the Beat Chart. "
-        "Ground every outline in the districts, corporations and gangs in indexed_lore, favouring the campaign_seed choices.",
+        "Ground every outline in the districts, corporations, gangs and law enforcement in indexed_lore, favouring the campaign_seed choices.",
     ),
     "screamsheet_hooks": (
         ["HEADLINE: one or two sentences giving the crew a lead"],
-        "Write 5 clearly different screamsheet hooks for this campaign. Ground each in the districts, corporations and "
-        "gangs in indexed_lore, favouring the campaign_seed choices; headline_words shows the headline register.",
+        "Write 5 clearly different screamsheet hooks for this campaign. Ground each in the districts, corporations, "
+        "gangs and law enforcement in indexed_lore, favouring the campaign_seed choices; headline_words shows the headline register.",
     ),
 }
 
@@ -599,7 +599,8 @@ async def generate_creation_ai_assist(
                 "headline_words": presets["screamsheet_headlines"],
                 **{
                     key: [{"name": f["name"], "summary": f["summary"]} for f in presets["factions"] if f["type"] == kind]
-                    for key, kind in (("corporations", "Corporation"), ("gangs", "Gang"))
+                    for key, kind in (("corporations", "Corporation"), ("gangs", "Gang"),
+                                      ("law_enforcement", "Law Enforcement"))
                 },
             }
 

@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 from contextlib import closing
+from itertools import takewhile
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -980,11 +981,15 @@ def _build_sections(conn: sqlite3.Connection, roles: dict[str, dict[str, Any]], 
 #   decorated  -> each "▶ Name ◀" sub-heading inside the subtree becomes one entry
 #   forms      -> "▶ Form ◀" sub-headings with their "▶Move" headings as structured moves
 #   run_ins    -> each bold "Name:" paragraph (with its hanging-indented continuation) becomes one entry
+#   section    -> the section's own opening text becomes one entry
+#   listed     -> the "▶ Name ◀" sub-headings listed after a paragraph ending in ":", up to the next "Topic: Name" series
 _SECTION_MAPS: list[tuple[re.Pattern[str], str, str, str]] = [
     (re.compile(r"^the neocorps$", re.I), "children", "faction", "corporation"),
     (re.compile(r"^key places in and around night city$", re.I), "decorated", "location", "district"),
     (re.compile(r"^martial arts$", re.I), "forms", "rule", "martial art"),
     (re.compile(r"^gangs of night city$", re.I), "run_ins", "faction", "gang"),
+    (re.compile(r"^netwatch$", re.I), "section", "faction", "law enforcement"),
+    (re.compile(r"^law and order$", re.I), "listed", "faction", "law enforcement"),
     (re.compile(r"^(?:power players|badasses) of night city$", re.I), "run_ins", "npc", "person"),
 ]
 
@@ -1039,6 +1044,23 @@ def _run_ins(blocks: list[tuple]) -> list[dict[str, Any]]:
     return items
 
 
+def _opening_text(blocks: list[tuple]) -> str:
+    """Body text up to the next heading or untagged display title (a larger single line)."""
+    parts: list[str] = []
+    body_size = None
+    for _, _, text, role, _, size, *_ in blocks:
+        if role == "heading":
+            break
+        if role != "body":
+            continue
+        body_size = body_size or size
+        if "\n" not in text and size > body_size + 1:
+            break
+        # A following title's drop cap can trail the last paragraph.
+        parts.append(re.sub(r"\n[A-Z]$", "", text))
+    return flat(" ".join(parts))
+
+
 def _decorated(text: str) -> str | None:
     match = re.fullmatch(r"▶\s*(.+?)\s*◀", flat(text))
     return match.group(1) if match else None
@@ -1051,7 +1073,7 @@ def _build_mapped_sections(conn: sqlite3.Connection, digest: str) -> list[dict[s
     sections = conn.execute("SELECT id, title, parent_id, start_pdf FROM source_sections").fetchall()
     entries = []
     for pattern, how, category, kind in _SECTION_MAPS:
-        for sid, title, _, _ in sections:
+        for sid, title, _, start in sections:
             if not pattern.match(title):
                 continue
             if how == "children":
@@ -1061,6 +1083,11 @@ def _build_mapped_sections(conn: sqlite3.Connection, digest: str) -> list[dict[s
                         if text:
                             entries.append(_entry(category, ctitle, text, {"kind": kind}, None, digest, pdf_page=start,
                                                   printed_page=printed.get(start), section_id=cid, tags=[kind]))
+                continue
+            if how == "section":
+                text = _opening_text(_subtree_blocks(conn, sid))
+                entries.append(_entry(category, title, text, {"kind": kind}, None, digest, pdf_page=start,
+                                      printed_page=printed.get(start), section_id=sid, tags=[kind]))
                 continue
             if how == "run_ins":
                 for item in _run_ins(_subtree_blocks(conn, sid)):
@@ -1088,6 +1115,9 @@ def _build_mapped_sections(conn: sqlite3.Connection, digest: str) -> list[dict[s
                     current = None
                 elif role == "body":
                     (current["moves"][-1]["parts"] if current["moves"] else current["parts"]).append(text)
+            if how == "listed":
+                lead = next((i for i, item in enumerate(items) if flat(" ".join(item["parts"])).endswith(":")), len(items))
+                items = list(takewhile(lambda item: ":" not in item["name"], items[lead + 1:]))
             for item in items:
                 stats: dict[str, Any] = {"kind": kind}
                 if how == "forms" and not item["moves"]:

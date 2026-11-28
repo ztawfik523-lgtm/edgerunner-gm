@@ -115,7 +115,7 @@ def campaign_presets(rules_path: str | Path) -> dict[str, Any]:
     headlines = _tables(path, "screamsheet_headlines")[0]["rows"]
     return {
         "districts": places("location"),
-        # Corporations and gangs, labelled by the book section they come from.
+        # Corporations, gangs and law enforcement, labelled by the book section they come from.
         "factions": [{**faction, "type": kinds[faction["name"]].title()} for faction in places("faction")],
         "zone_types": named_rows("zone_type"),
         "threat_ratings": named_rows("threat_rating"),
