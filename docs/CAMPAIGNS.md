@@ -4,7 +4,7 @@ Edgerunner GM stores campaigns, characters, branching chat trees, world clocks, 
 
 ## Web UI Workflow
 
-1. **Create or select a campaign:** Open the **Campaign Architect** (`New` in the top bar) or pick an existing campaign from the top-bar selector. The Campaign Architect can bootstrap starter world data, Beat Chart hooks, and notes using your configured LLM.
+1. **Create or select a campaign:** Open the **Campaign Architect** (`New` in the top bar) or pick an existing campaign from the top-bar selector. The Campaign Architect can bootstrap starter world data, Beat Chart hooks, and notes using your configured LLM. Districts, corporations, gangs, zone types, threat ratings and screamsheet headline words come from your Corebook. **Suggest Caper Outlines** and **Suggest Screamsheet Hooks** ask your model for new ideas grounded in that lore; pick one to fill the caper style and Beat Chart, or the hook field. Without a reachable model they show an error instead of stock text.
 2. **Attach characters:** Build characters in the **Character Creator** (`Streetrat`, `Edgerunner`, or `Complete Package`, all read from your indexed Corebook) and attach them to the campaign. Each character belongs to one campaign.
 3. **Start a session:** Use the session-start control in the top bar to refill all attached characters' LUCK in one transaction. Reopening the browser or restarting the server resumes saved state without refilling LUCK.
 4. **Branching & Timeline Controls:**
@@ -12,6 +12,10 @@ Edgerunner GM stores campaigns, characters, branching chat trees, world clocks, 
    - Edit messages in-place, swipe or regenerate GM replies (with optional Director Notes), or switch branches. `revision_mismatch` warns when the active leaf's saved `(campaign_revision, solo_revision)` lags behind the live database.
    - **Compress to Library** (`POST /v1/chat/compress`) distills a branch into `npc`, `faction`, `location`, item, or rule dossiers in the campaign's Homebrew Library.
    - Public and branch-scoped secret **World Clocks** track timers per timeline leaf.
+
+## Encounters
+
+The GM can build combatants from the Corebook's NPC stat blocks by name (mooks, lieutenants, mini bosses and the boss), overriding any value, or supply a complete stat block for other NPCs. Gang and Night City people write-ups appear in the Library as `faction` and `npc` entries.
 
 ## Memory & State Boundaries
 
