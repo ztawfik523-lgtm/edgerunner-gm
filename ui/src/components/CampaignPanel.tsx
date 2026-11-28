@@ -23,6 +23,7 @@ import {
 import {
   assistCharacterCreation,
   fetchCampaignClocks,
+  fetchCreationReference,
   mutateCampaignClock,
   saveCampaignBanner,
   undoCampaignChange,
@@ -30,7 +31,13 @@ import {
   updateNpcIdentity,
   updatePartyLocation,
 } from "../api";
-import type { CampaignContext, CampaignNarrativeState, CampaignRecord, WorldClock } from "../types";
+import type {
+  CampaignContext,
+  CampaignNarrativeState,
+  CampaignRecord,
+  CreationRoleInfo,
+  WorldClock,
+} from "../types";
 import { CyberFrame, HazardBadge, HudButton, RoleTag, SegmentedBar } from "./cyber";
 import { FieldAiActions } from "./FieldAiActions";
 
@@ -64,19 +71,6 @@ const SECTION_LABELS: Array<{ key: SectionKey; title: string; placeholderKey: st
   { key: "unresolved", title: "Unresolved Threads", placeholderKey: "Thread", adminOnly: true },
 ];
 
-const ROLES_OVERVIEW = [
-  { name: "Solo", ability: "Combat Awareness", desc: "Tactical threat detection, precision damage, and initiative control." },
-  { name: "Netrunner", ability: "Interface", desc: "Breach local NET architectures, crack Black ICE, and hijack control nodes." },
-  { name: "Tech", ability: "Maker", desc: "Field-rig, upgrade, fabricate, and invent custom hardware & weapons." },
-  { name: "Medtech", ability: "Medicine", desc: "Trauma surgery, combat pharmaceuticals (Speedheal/Stim), and cryotanks." },
-  { name: "Rockerboy", ability: "Charismatic Impact", desc: "Sway crowds, fans, and street venues through raw rebel presence." },
-  { name: "Media", ability: "Credibility", desc: "Uncover street rumors, break corporate coverups, and broadcast truth." },
-  { name: "Exec", ability: "Teamwork", desc: "Corporate housing, business suit, and a loyal specialist team member." },
-  { name: "Lawman", ability: "Backup", desc: "Call armed patrol or tactical response squads when under fire." },
-  { name: "Fixer", ability: "Operator", desc: "Source scarce Night Market gear, haggle 10% margins, and work street contacts." },
-  { name: "Nomad", ability: "Moto", desc: "Access the clan motorpool for armored groundcars, bikes, and combat upgrades." },
-];
-
 export function CampaignPanel({
   context,
   campaigns = [],
@@ -100,6 +94,8 @@ export function CampaignPanel({
   const solo = context?.solo ?? null;
 
   const [subTab, setSubTab] = useState<CampaignSubTab>("briefing");
+  const [roles, setRoles] = useState<CreationRoleInfo[]>([]);
+  const [rolesError, setRolesError] = useState("");
   const [scene, setScene] = useState(campaign?.state.scene ?? "");
   const [summary, setSummary] = useState(campaign?.state.summary ?? "");
   const contextBannerUrl = context?.banner_url ?? "";
@@ -361,6 +357,22 @@ export function CampaignPanel({
     }
   };
 
+  useEffect(() => {
+    if (subTab !== "rules" || roles.length) return;
+    let cancelled = false;
+    setRolesError("");
+    fetchCreationReference()
+      .then((ref) => {
+        if (!cancelled) setRoles(ref.roles);
+      })
+      .catch((err) => {
+        if (!cancelled) setRolesError(err instanceof Error ? err.message : "Failed to load Corebook roles");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [subTab, roles.length]);
+
   const handleAiNotes = async (assistMode: "expand" | "scratch") => {
     if (!campaign || !isAdmin || aiBusy || busy) return;
     setAiBusyMode(assistMode === "scratch" ? "regen" : "improve");
@@ -474,7 +486,8 @@ export function CampaignPanel({
           The 10 Iconic Roles (Start at Rank 4)
         </div>
         <div className="grid grid-cols-1 gap-1.5">
-          {ROLES_OVERVIEW.map((r) => (
+          {rolesError && <p className="text-[11px] text-[var(--hud-warn)]">{rolesError}</p>}
+          {roles.map((r) => (
             <div
               key={r.name}
               className="border border-[var(--hud-line-soft)] bg-[var(--hud-row)] px-2.5 py-2 text-[11px]"
@@ -483,7 +496,7 @@ export function CampaignPanel({
                 <span className="font-cyber-ui font-semibold text-[var(--hud-text)]">{r.name}</span>
                 <RoleTag role={r.ability} />
               </div>
-              <div className="mt-0.5 text-[var(--hud-muted)]">{r.desc}</div>
+              <div className="mt-0.5 italic text-[var(--hud-muted)]">{r.summary}</div>
             </div>
           ))}
         </div>

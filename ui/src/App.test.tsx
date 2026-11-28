@@ -29,6 +29,12 @@ function creationReference(overrides: Record<string, unknown> = {}) {
       { id: "edgerunner", name: "Edgerunner (Fast & Dirty)", badge: "Flexible", summary: "Roll STATs", rules: "Tune 86." },
       { id: "complete_package", name: "Complete Package (Calculated)", badge: "Pro", summary: "Full 62/86/2550", rules: "Custom buy." },
     ],
+    stats: Object.fromEntries(
+      ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"].map((s) => [
+        s,
+        { name: `${s} name`, description: `${s} explained.` },
+      ]),
+    ),
     roles: [] as unknown[],
     skills: [] as unknown[],
     cultural_regions: [{ region: "North American", languages: ["English", "Spanish"] }],
@@ -1207,6 +1213,8 @@ describe("Cyberpunk RED GM UI", () => {
           description: "Great first character for direct combat.",
           printed_page: 1,
           templates: [[6, 8, 7, 4, 6, 7, 6, 6, 7, 5]],
+          key_stats: ["REF", "DEX", "BODY"],
+          smart_fill: { INT: 6, REF: 7, DEX: 7, TECH: 6, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
           skills: {
             Athletics: 2,
             Brawling: 2,
@@ -3053,6 +3061,8 @@ describe("Cyberpunk RED GM UI", () => {
               summary: "Rebel artist",
               description: "Sway crowds and fans.",
               templates: [[6, 6, 7, 5, 8, 6, 7, 6, 7, 7]],
+              key_stats: ["REF", "DEX", "BODY"],
+              smart_fill: { INT: 6, REF: 7, DEX: 7, TECH: 6, COOL: 6, WILL: 6, LUCK: 6, MOVE: 6, BODY: 6, EMP: 6 },
               skills: { "Play Instrument (choose 1)": 6, Persuasion: 4, Accounting: 2, Acting: 2, Archery: 2 },
               starting_weapons: [{ type: "fixed", item: "Heavy Pistol", qty: 1 }],
               starting_armor: ["Light Armorjack Body (SP 11)"],

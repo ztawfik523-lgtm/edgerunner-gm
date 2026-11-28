@@ -139,6 +139,43 @@ def _kit(entries: list[dict[str, Any]], cyberware: dict[str, dict[str, Any]] | N
     ]
 
 
+# The "What are Statistics?" rule defines each STAT as "Name (ABBR): description".
+_STAT_ENTRY = re.compile(rf"\b([A-Z][a-z]+) \(({'|'.join(STATS)})\):\s*")
+
+
+def stat_descriptions(path: Path) -> dict[str, dict[str, Any]]:
+    """STAT -> {name, description, printed_page}, split from the Corebook's one STAT overview entry."""
+    entry = next((e for e in _entries(path, "rule") if e["name"].casefold().startswith("what are statistics")), None)
+    if entry is None:
+        raise ValueError("The rules index has no STAT overview entry")
+    parts = _STAT_ENTRY.split(entry["description"])
+    names, keys, texts = parts[1::3], parts[2::3], [text.strip() for text in parts[3::3]]
+    if sorted(keys) != sorted(STATS) or not all(texts):
+        raise ValueError("The indexed STAT overview does not describe each STAT exactly once")
+    found = {key: {"name": name, "description": text, "printed_page": entry["printed_page"]}
+             for name, key, text in zip(names, keys, texts)}
+    return {stat: found[stat] for stat in STATS}
+
+
+def key_stats(templates: list[list[int]]) -> list[str]:
+    """The three STATs a role's templates rate highest on average (ties keep STAT order)."""
+    totals = [sum(column) for column in zip(*templates)]
+    return [STATS[i] for i in sorted(range(len(STATS)), key=lambda i: -totals[i])[:3]]
+
+
+def smart_fill(templates: list[list[int]], points: int = 62) -> dict[str, int]:
+    """Scale a role's average template row to exactly `points`, keeping every STAT within 2..8."""
+    averages = [sum(column) / len(templates) for column in zip(*templates)]
+    targets = [value * points / sum(averages) for value in averages]
+    values = [max(2, min(8, int(target))) for target in targets]
+    # Hand out (or take back) the rounding remainder, nearest-to-target first.
+    while (gap := points - sum(values)) != 0:
+        step = 1 if gap > 0 else -1
+        open_slots = [i for i, value in enumerate(values) if 2 <= value + step <= 8]
+        values[max(open_slots, key=lambda i: (targets[i] - values[i]) * step)] += step
+    return dict(zip(STATS, values))
+
+
 def _roles(path: Path) -> list[dict[str, Any]]:
     indexed = sourcecatalog.roles(path)
     catalog = sourcecatalog.skills(path)
@@ -162,6 +199,8 @@ def _roles(path: Path) -> list[dict[str, Any]]:
             "description": entry["description"],
             "printed_page": entry["printed_page"],
             "templates": templates,
+            "key_stats": key_stats(templates),
+            "smart_fill": smart_fill(templates),
             "skills": _role_skills(path, role, catalog),
             "starting_weapons": _kit([e for e, armor in zip(stats["starter_weapons_armor"], is_armor) if not armor]),
             "starting_armor": [e["item"] for e, armor in zip(stats["starter_weapons_armor"], is_armor) if armor],
@@ -223,6 +262,7 @@ def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
     drugs = _entries(path, "drug")
     return {
         "stat_names": list(STATS),
+        "stats": stat_descriptions(path),
         "methods": CREATION_METHODS,
         "roles": _roles(path),
         "skills": skills,

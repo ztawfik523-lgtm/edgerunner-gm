@@ -143,6 +143,20 @@ def add_table(path: Path, kind: str, title: str, columns: list[str], rows: list[
         conn.close()
 
 
+def add_stat_overview(path: Path) -> None:
+    """The one rule entry that describes all ten STATs, in "Name (ABBR): text" form (invented prose)."""
+    names = {"INT": "Alpha", "WILL": "Bravo", "COOL": "Charlie", "EMP": "Delta", "TECH": "Echo", "REF": "Foxtrot",
+             "LUCK": "Golf", "BODY": "Hotel", "DEX": "India", "MOVE": "Juliett"}
+    body = "Intro sentence. " + " ".join(f"{name} ({key}): About {key}." for key, name in names.items())
+    add_entry(path, "rule", "What are Statistics?", {})
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("UPDATE rule_entries SET description=? WHERE name='What are Statistics?'", (body,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def add_creation_catalog(path: Path) -> None:
     """The priced items, armor and housing that character creation looks up (invented prices)."""
     priced = [("weapon", "Very Heavy Pistol", 100), ("weapon", "Heavy Pistol", 100), ("gear", "Agent", 100),
@@ -158,6 +172,7 @@ def add_creation_catalog(path: Path) -> None:
                              ("Corporate Conapt", "housing", 0), ("Kibble", "lifestyle", 100),
                              ("Generic Prepak", "lifestyle", 300)]:
         add_entry(path, "housing", name, {"cost_eb": cost, "kind": kind})
+    add_stat_overview(path)
 
 
 def add_campaign_presets(path: Path) -> None:

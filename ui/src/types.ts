@@ -559,6 +559,8 @@ export interface CreationRoleInfo {
   description: string;
   printed_page?: number | null;
   templates: number[][];
+  key_stats: StatName[];
+  smart_fill: Record<StatName, number>;
   skills: Record<string, number>;
   starting_weapons: CreationKitEntry[];
   starting_armor: string[];
@@ -566,6 +568,12 @@ export interface CreationRoleInfo {
   starting_cyberware: CreationKitEntry<CreationKitCyberware>[];
   starting_hl: number;
   role_lifepath: CreationRoleLifepathField[];
+}
+
+export interface CreationStatInfo {
+  name: string;
+  description: string;
+  printed_page?: number | null;
 }
 
 export interface CreationSkillInfo {
@@ -644,6 +652,7 @@ export interface CampaignPresets {
 
 export interface CreationReference {
   stat_names: StatName[];
+  stats: Record<StatName, CreationStatInfo>;
   methods: CreationMethodInfo[];
   roles: CreationRoleInfo[];
   skills: CreationSkillInfo[];

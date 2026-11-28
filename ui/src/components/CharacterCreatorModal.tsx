@@ -221,11 +221,6 @@ function skillStat(skillName: string, skillIndex: Map<string, CreationSkillInfo>
   return skillIndex.get(base)?.stat ?? "INT";
 }
 
-function balanced62Stats(): Record<StatName, number> {
-  // Six in every STAT is 60 points; the last two go to REF and DEX.
-  return { ...Object.fromEntries(STAT_NAMES.map((s) => [s, 6])), REF: 7, DEX: 7 } as Record<StatName, number>;
-}
-
 function defaultCompleteSkills(
   roleInfo: CreationRoleInfo | undefined,
   skills: CreationSkillInfo[],
@@ -800,7 +795,7 @@ export function CharacterCreatorModal({
         setEdgerunnerSkills({ ...roleInfo.skills });
       }
       if (method === "complete_package") {
-        setCustomStats(balanced62Stats());
+        setCustomStats({ ...roleInfo.smart_fill });
         setCustomSkills(defaultCompleteSkills(roleInfo, refData.skills));
       }
     }
@@ -2152,7 +2147,7 @@ export function CharacterCreatorModal({
                           onClick={() => {
                             setMethod(m.id);
                             if (m.id === "complete_package" && roleInfo) {
-                              setCustomStats(balanced62Stats());
+                              setCustomStats({ ...roleInfo.smart_fill });
                               setCustomSkills(defaultCompleteSkills(roleInfo, refData?.skills ?? []));
                             }
                           }}
@@ -2266,7 +2261,7 @@ export function CharacterCreatorModal({
                               <RoleTag role={role.ability} tone={active ? "accent" : "muted"} />
                             </div>
                           </div>
-                          <p className="mt-0.5 font-cyber-ui text-[11px] text-[var(--hud-muted)]">{role.summary}</p>
+                          <p className="mt-0.5 font-cyber-ui text-[11px] italic text-[var(--hud-muted)]">{role.summary}</p>
                         </button>
                       );
                     })}
@@ -2534,13 +2529,13 @@ export function CharacterCreatorModal({
                         <Dices className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Roll 1d10 × 10 STATs
                       </HudButton>
                     )}
-                    {method === "complete_package" && (
+                    {method === "complete_package" && roleInfo && (
                       <HudButton
                         variant="tactical"
                         size="sm"
-                        onClick={() => setCustomStats(balanced62Stats())}
+                        onClick={() => setCustomStats({ ...roleInfo.smart_fill })}
                       >
-                        <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Balanced Fill (62 pts)
+                        <Wand2 className="h-3.5 w-3.5 text-[var(--hud-accent)]" /> Role Smart Fill (62 pts)
                       </HudButton>
                     )}
                   </div>
@@ -2550,11 +2545,35 @@ export function CharacterCreatorModal({
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {STAT_NAMES.map((stat, idx) => {
                     const val = activeStats[stat];
+                    const info = refData?.stats[stat];
+                    const isKey = roleInfo?.key_stats.includes(stat);
+                    const showInfo = () => {
+                      if (!info) return;
+                      setInspector({
+                        title: `${stat} · ${info.name}`,
+                        subtitle: [isKey ? `Key STAT for ${selectedRole}` : "", info.printed_page ? `Corebook p.${info.printed_page}` : ""]
+                          .filter(Boolean)
+                          .join(" · "),
+                        body: info.description,
+                      });
+                    };
                     return (
-                      <div key={stat} className="cyber-card p-3 text-[var(--hud-text)]">
+                      <div
+                        key={stat}
+                        onMouseEnter={showInfo}
+                        onClick={showInfo}
+                        title={info?.description}
+                        className="cyber-card p-3 text-[var(--hud-text)]"
+                      >
                         <span className="font-cyber-display text-xs font-bold uppercase tracking-wider text-white">
                           {stat}
                         </span>
+                        {isKey && (
+                          <span className="ml-1.5 border border-[var(--hud-accent-line)] bg-[var(--hud-accent-navy)] px-1.5 py-0.5 font-cyber-data text-[9px] font-bold uppercase text-[var(--hud-accent)]">
+                            Key
+                          </span>
+                        )}
+                        <div className="truncate font-cyber-ui text-[10px] text-[var(--hud-muted)]">{info?.name}</div>
 
                         {method === "streetrat" ? (
                           <div className="mt-2 text-center font-cyber-data text-xl font-bold text-[var(--hud-accent)]">{val}</div>

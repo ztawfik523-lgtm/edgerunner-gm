@@ -577,3 +577,24 @@ def test_build_character_synchronizes_equipment_views(rules):
 
 
 
+
+
+def test_smart_fill_scales_template_averages_to_the_stat_budget():
+    from creation_reference import key_stats, smart_fill
+
+    templates = [[8, 8, 8, 6, 2, 2, 2, 2, 2, 2], [8, 6, 8, 6, 2, 2, 2, 2, 2, 2]]
+    filled = smart_fill(templates)
+    assert sum(filled.values()) == 62 and all(2 <= value <= 8 for value in filled.values())
+    assert filled["INT"] == filled["DEX"] == 8
+    assert key_stats(templates) == ["INT", "DEX", "REF"]
+    # A flat template spreads the budget evenly; the extremes stay clamped.
+    assert sorted(smart_fill([[2] * 10]).values()) == [6] * 8 + [7] * 2
+
+
+def test_stat_overview_is_split_per_stat(rules):
+    from creation_reference import stat_descriptions
+
+    stats = stat_descriptions(rules)
+    assert list(stats) == list(STATS)
+    assert stats["REF"] == {"name": "Foxtrot", "description": "About REF.", "printed_page": None}
+    assert stats["MOVE"]["description"] == "About MOVE."
