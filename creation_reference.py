@@ -218,6 +218,17 @@ def _roles(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+def outfit_bundles(fashion: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One bundle per fashion style: the cheapest item for each of its garment slots."""
+    slots: dict[str, dict[str, dict[str, Any]]] = {}
+    for item in sorted(fashion, key=lambda i: (i["cost_eb"], i["name"].casefold())):
+        slots.setdefault(item["style"], {}).setdefault(item["garment"], item)
+    bundles = [{"style": style, "cost_eb": sum(i["cost_eb"] for i in picks.values()),
+                "items": [{"name": i["name"], "cost_eb": i["cost_eb"], "style": style} for i in picks.values()]}
+               for style, picks in slots.items()]
+    return sorted(bundles, key=lambda b: (b["cost_eb"], b["style"].casefold()))
+
+
 def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
     """Assemble Corebook creation data, templates, lifepath, and shop items; the index is required."""
     path = Path(rules_path).expanduser()
@@ -272,6 +283,7 @@ def build_creation_reference(rules_path: str | Path) -> dict[str, Any]:
         "lifepath_tables": lifepath_tables,
         "shop": shop,
         "fashion": fashion,
+        "outfit_bundles": outfit_bundles(fashion),
         "housing_tiers": [
             {"id": name, "name": name, "monthly_eb": cost, "summary": housing_text[name],
              "exec_only": name.startswith("Corporate")}

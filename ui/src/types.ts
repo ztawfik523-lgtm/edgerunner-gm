@@ -621,6 +621,12 @@ export interface CreationFashionItem {
   summary: string;
 }
 
+export interface CreationOutfitBundle {
+  style: string;
+  cost_eb: number;
+  items: Array<{ name: string; cost_eb: number; style: string }>;
+}
+
 export interface CreationHousingTier {
   id: string;
   name: string;
@@ -674,6 +680,7 @@ export interface CreationReference {
     CreationShopItem[]
   >;
   fashion: CreationFashionItem[];
+  outfit_bundles: CreationOutfitBundle[];
   housing_tiers: CreationHousingTier[];
   lifestyles: CreationLifestyleTier[];
   pharmaceuticals: string[];
@@ -701,6 +708,16 @@ export interface CreationEnemyEntry {
 export interface CreationLoveAffairEntry {
   name: string;
   outcome: string;
+}
+
+export interface CaperOutline {
+  title: string;
+  style: string;
+  hook: string;
+  developments: string;
+  cliffhanger: string;
+  climax: string;
+  resolution: string;
 }
 
 export interface CreationAiAssistRequest {
@@ -804,6 +821,8 @@ export interface CreationAiAssistResponse {
   gig_notes?: string;
   clock_name?: string;
   clock_note?: string;
+  caper_outlines?: CaperOutline[];
+  screamsheet_hooks?: string[];
   beat_chart?: {
     hook?: string;
     developments?: string;

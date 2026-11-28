@@ -221,6 +221,8 @@ _CAMPAIGN_FIELDS = {
     "opening_clock",
     "clock_name",
     "clock_note",
+    "caper_outlines",
+    "screamsheet_hooks",
 }
 
 _BEAT_KEY_TO_FIELD = {
@@ -242,6 +244,22 @@ _CAMPAIGN_GIG_FIELDS = {
 _CAMPAIGN_CLOCK_FIELDS = {
     "clock_name": ("name", "Countdown name (e.g. Corp Response / Gang Heat)"),
     "clock_note": ("note", "What happens when the clock fills"),
+}
+
+# Idea lists the GM picks from: field -> (response schema, instruction).
+_CAPER_SCHEMA = {"title": "Caper title", "style": "Short label for the kind of caper",
+                 **{key: text for key, text in _BEAT_KEY_TO_FIELD.values()}}
+_CAMPAIGN_IDEA_FIELDS = {
+    "caper_outlines": (
+        [_CAPER_SCHEMA],
+        "Invent 3 clearly different caper outlines for this campaign, each following the Beat Chart. "
+        "Ground every outline in the districts, corporations and gangs in indexed_lore, favouring the campaign_seed choices.",
+    ),
+    "screamsheet_hooks": (
+        ["HEADLINE: one or two sentences giving the crew a lead"],
+        "Write 5 clearly different screamsheet hooks for this campaign. Ground each in the districts, corporations and "
+        "gangs in indexed_lore, favouring the campaign_seed choices; headline_words shows the headline register.",
+    ),
 }
 
 
@@ -574,6 +592,16 @@ async def generate_creation_ai_assist(
         presets = await asyncio.to_thread(campaign_presets, p)
         available_districts = [d["name"] for d in presets["districts"]]
         available_factions = [f["name"] for f in presets["factions"]]
+        indexed_lore = None
+        if field in _CAMPAIGN_IDEA_FIELDS:
+            indexed_lore = {
+                "districts": [{"name": d["name"], "summary": d["summary"]} for d in presets["districts"]],
+                "headline_words": presets["screamsheet_headlines"],
+                **{
+                    key: [{"name": f["name"], "summary": f["summary"]} for f in presets["factions"] if f["type"] == kind]
+                    for key, kind in (("corporations", "Corporation"), ("gangs", "Gang"))
+                },
+            }
 
         raw_npc_count = camp_brief.get("npc_count")
         raw_obj_count = camp_brief.get("objective_count")
@@ -615,7 +643,11 @@ async def generate_creation_ai_assist(
             "opening_clock": current.get("opening_clock") or {},
         }
         targeted_camp_entry: Any = None
-        if field is not None:
+        if field in _CAMPAIGN_IDEA_FIELDS:
+            schema, mode_rule = _CAMPAIGN_IDEA_FIELDS[field]
+            requested_schema = {field: schema}
+            prev_field_val = None
+        elif field is not None:
             if field in _BEAT_KEY_TO_FIELD:
                 beat_key, beat_desc = _BEAT_KEY_TO_FIELD[field]
                 requested_schema = {"beat_chart": {beat_key: beat_desc}}
@@ -667,13 +699,13 @@ async def generate_creation_ai_assist(
                 requested_schema = {
                     "district": "Pick 1 district name from available_options.districts",
                     "caper_style": "Short label for the kind of caper this campaign runs",
-                    "factions": ["1 to 4 active factions: corporations from available_options.factions or fitting Night City 2045 gangs"],
+                    "factions": ["1 to 4 active corporations or gangs from available_options.factions"],
                     **full_schema,
                 }
                 mode_rule = (
                     "Design a fresh, ready-to-play Cyberpunk RED Night City 2045 campaign starter from scratch. "
                     "YOU decide the best Starting District (pick from available_options.districts), Campaign/Caper Style (a short label you write), "
-                    "1-4 active Gangs/Factions (pick from available_options.factions or fitting Night City gangs), and choose an organic number of starting NPCs (2-5) "
+                    "1-4 active Gangs/Factions (pick from available_options.factions), and choose an organic number of starting NPCs (2-5) "
                     "and starting Objectives (2-4) tailored to the premise. Follow the Corebook Beat Chart structure (Hook -> Developments -> Cliffhangers -> Climax -> Resolution) "
                     "and draw on creative_seed unless user_guidance overrides it."
                 )
@@ -733,6 +765,7 @@ async def generate_creation_ai_assist(
                 else {}
             ),
             "current_draft": current_draft,
+            **({"indexed_lore": indexed_lore} if indexed_lore else {}),
             "corebook_context": lore_block,
             "required_json_schema": requested_schema,
         }
@@ -805,6 +838,20 @@ async def generate_creation_ai_assist(
             out["established_history"] = str(parsed.get("established_history") or "").strip()
             out["appearance"] = str(parsed.get("appearance") or "").strip()
         return out
+
+    if target == "campaign" and field in _CAMPAIGN_IDEA_FIELDS:
+        raw_ideas = parsed.get(field) if isinstance(parsed.get(field), list) else []
+        if field == "caper_outlines":
+            ideas: list[Any] = [
+                {key: str(idea.get(key) or "").strip() for key in _CAPER_SCHEMA}
+                for idea in raw_ideas
+                if isinstance(idea, dict) and str(idea.get("title") or "").strip() and str(idea.get("hook") or "").strip()
+            ]
+        else:
+            ideas = [idea.strip() for idea in raw_ideas if isinstance(idea, str) and idea.strip()]
+        if not ideas:
+            raise ValueError(f"The model returned no usable {field.replace('_', ' ')}; try again")
+        return {"target": "campaign", "mode": mode, "field": field, field: ideas, "citations": citations}
 
     if target == "campaign":
         raw_npcs = parsed.get("npcs") if isinstance(parsed.get("npcs"), dict) else {}

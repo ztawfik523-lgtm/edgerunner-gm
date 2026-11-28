@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -377,6 +378,9 @@ def register_game_routes(app: FastAPI, ctx: ServerContext) -> None:
             )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc), "request_id": request_id})
+        except httpx.HTTPError as exc:
+            detail = f"No language model answered. Configure one in Settings, then try again. ({exc})"
+            return JSONResponse(status_code=503, content={"detail": detail, "request_id": request_id})
         except Exception as exc:
             return JSONResponse(status_code=502, content={"detail": f"AI narrative assist failed: {exc}", "request_id": request_id})
         return {**result, "request_id": request_id}

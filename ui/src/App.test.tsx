@@ -41,6 +41,7 @@ function creationReference(overrides: Record<string, unknown> = {}) {
     lifepath_tables: Object.fromEntries(lifepathKeys.map((k) => [k, [`${k} one`, `${k} two`]])),
     shop: Object.fromEntries(shopCategories.map((c) => [c, [] as unknown[]])),
     fashion: [] as unknown[],
+    outfit_bundles: [] as unknown[],
     housing_tiers: [
       { id: "Cargo Container", name: "Cargo Container", monthly_eb: 1000, summary: "Box." },
       { id: "Cube Hotel", name: "Cube Hotel", monthly_eb: 500, summary: "Pod." },

@@ -4448,6 +4448,26 @@ export function CharacterCreatorModal({
                           ))}
                         </div>
                       )}
+
+                      {shopCategory === "fashion" && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="font-cyber-ui text-[11px] text-[var(--hud-label)]">Outfit bundles:</span>
+                          {(refData?.outfit_bundles ?? [])
+                            .filter((b) => fashionStyleFilter === "All" || b.style === fashionStyleFilter)
+                            .map((b) => (
+                              <HudButton
+                                key={b.style}
+                                variant="tactical"
+                                size="xs"
+                                disabled={method === "complete_package" && b.cost_eb > 800}
+                                title={`Replace your fashion picks with: ${b.items.map((i) => i.name).join(", ")}`}
+                                onClick={() => setSelectedFashion([...b.items])}
+                              >
+                                {b.style} outfit · {b.cost_eb} eb
+                              </HudButton>
+                            ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Catalog Items (single smooth scroll flow, no nested scrollboxes or hover-thrash) */}
