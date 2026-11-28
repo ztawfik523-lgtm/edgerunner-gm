@@ -255,7 +255,8 @@ class SoloService:
             if sub_action == "add_npc":
                 from encounters import add_npc_specs, expand_npc_specs
                 arguments = {"npcs": expand_npc_specs(add_npc_specs(arguments), self.gameplay.rules_path)}
-            result = apply_action(encounter, combined, actor_id, sub_action, arguments, randbelow)
+            result = apply_action(encounter, combined, actor_id, sub_action, arguments, randbelow,
+                                  rules_path=self.gameplay.rules_path)
             updated_enc = result["encounter"]
             updated_all = result["characters"]
             for cid in pc_ids:
@@ -296,7 +297,8 @@ class SoloService:
         if action == "health_action":
             from health import apply_action
             _sync_chars_to_runtime_clock(chars, runtime)
-            result = apply_action(chars, args["actor_id"], args["action"], args.get("arguments", {}), randbelow)
+            result = apply_action(chars, args["actor_id"], args["action"], args.get("arguments", {}), randbelow,
+                                  rules_path=self.gameplay.rules_path)
             state["characters"] = result["characters"]
             expired = advance_campaign_clock(state, randbelow=randbelow)
             res = result["result"]

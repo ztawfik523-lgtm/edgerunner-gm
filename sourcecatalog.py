@@ -1265,6 +1265,28 @@ def rule_tables(rules_path: str | Path, kind: str | None = None) -> list[dict[st
     return out
 
 
+def critical_injuries(rules_path: str | Path | None) -> dict[str, dict[int, dict[str, str]]]:
+    """Location -> 2d6 roll -> injury, from the first "Critical Injuries to the Body/Head" tables."""
+    if not rules_path:
+        raise ValueError("Critical Injuries need your indexed Corebook")
+    found: dict[str, dict[int, dict[str, str]]] = {}
+    for table in rule_tables(rules_path, "critical_injury"):
+        location = "head" if "head" in table["title"].casefold() else "body"
+        if location in found:
+            continue  # later pages repeat the tables
+        rows = {}
+        for row in table["rows"]:
+            cells = {norm_key(column): flat(cell) for column, cell in zip(table["columns"], row)}
+            roll = _int(cells.get("roll2d6", ""))
+            if roll is not None:
+                rows[roll] = {"id": f"{location}:{roll}", "name": cells["injury"], "effects": cells["injuryeffect"],
+                              "quick_fix": cells["quickfix"], "treatment": cells["treatment"]}
+        found[location] = rows
+    if any(set(found.get(location, ())) != set(range(2, 13)) for location in ("body", "head")):
+        raise ValueError("The rules index lacks the Critical Injury tables; rebuild it from your Corebook PDF")
+    return found
+
+
 def roles(rules_path: str | Path) -> dict[str, dict[str, Any]]:
     """Role name -> role entry (description, ability, skills, starter kits, STAT templates)."""
     return {e["name"]: e for e in entries(rules_path, "role")}

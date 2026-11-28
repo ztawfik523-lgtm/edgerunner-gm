@@ -7,7 +7,7 @@ import re
 import secrets
 from typing import Any, Callable
 
-from combat import initiative, wound_state, attack_check, damage_and_armor, critical_injury, brawling_dice, _CRITICALS
+from combat import initiative, wound_state, attack_check, damage_and_armor, critical_injury, brawling_dice
 from mechanics import roll_dice
 import rules_eval
 import sourcecatalog
@@ -256,8 +256,27 @@ def _listed_ammo(equipment: str, weapons: list[str]) -> dict[str, int]:
     return found
 
 
+def _book_injuries(spec: Any, rules_path: Any) -> Any:
+    """A spec's injuries, named or identified, completed with their Critical Injury table rows."""
+    if not (isinstance(spec, dict) and isinstance(spec.get("injuries"), list) and spec["injuries"]):
+        return spec
+    rows = [row for table in sourcecatalog.critical_injuries(rules_path).values() for row in table.values()]
+    injuries = []
+    for item in spec["injuries"]:
+        given = {"name": item} if isinstance(item, str) else item
+        if isinstance(given, dict):
+            key, value = ("id", given["id"]) if given.get("id") else ("name", given.get("name"))
+            row = next((r for r in rows if r[key].casefold() == str(value).strip().casefold()), None)
+            if row:
+                given = {**row, **given, "name": row["name"]}
+        injuries.append(given)
+    return {**spec, "injuries": injuries}
+
+
 def expand_npc_specs(specs: list[Any], rules_path: Any) -> list[Any]:
-    """Fill specs naming a Corebook stat block ({"entry": name or id}) from the index; explicit fields win."""
+    """Fill NPC specs from the index: stat blocks named by {"entry": name or id} (explicit fields win)
+    and the book's rows for the Critical Injuries a spec lists."""
+    specs = [_book_injuries(spec, rules_path) for spec in specs]
     if not any(isinstance(spec, dict) and spec.get("entry") for spec in specs):
         return specs
     if not rules_path:
@@ -710,6 +729,7 @@ def apply_action(
     action: str,
     args: dict | None = None,
     randbelow: Callable[[int], int] = secrets.randbelow,
+    rules_path: Any = None,
 ) -> dict:
     if not isinstance(encounter, dict) or not isinstance(characters, dict):
         raise TypeError("encounter and characters must be objects")
@@ -846,7 +866,7 @@ def apply_action(
         return _release_hold(e, cs, actor_id, args)
     if action != "attack":
         raise ValueError(f"unsupported encounter action: {action}")
-    return _attack(e, cs, actor_id, args, randbelow)
+    return _attack(e, cs, actor_id, args, randbelow, rules_path)
 
 
 def _find_ammo_inventory_key(inventory: dict[str, Any], kind: str, ammo_type: str) -> str | None:
@@ -1021,6 +1041,7 @@ def _resolve_non_damage_exotic_hit(
     args: dict,
     raw_ammo_type: str,
     randbelow: Callable[[int], int],
+    rules_path: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Handle dice_count == 0 exotic weapons (Microwaver, Shrieker, Dartgun, Air Pistol/Acid)."""
     acid_ablation = args.get("acid_ablation") is True or raw_ammo_type == "acid"
@@ -1064,16 +1085,7 @@ def _resolve_non_damage_exotic_hit(
             )
             extra["shrieker_check"] = sh_check
             if not sh_check["success"] and not any(n in _active_injuries(target) for n in ("Damaged Ear", "Lost Ear")):
-                name, effects, quick_fix, treatment = _CRITICALS["head"][10]
-                crit = {
-                    "id": "head:10",
-                    "name": name,
-                    "effects": effects,
-                    "quick_fix": quick_fix,
-                    "treatment": treatment,
-                    "bonus_damage": 0,
-                    "source": SOURCE,
-                }
+                crit = {**sourcecatalog.critical_injuries(rules_path)["head"][10], "bonus_damage": 0, "source": SOURCE}
                 td["injuries"].append(crit)
                 extra["critical_injury"] = crit
                 extra["critical_injuries"] = [crit]
@@ -1125,7 +1137,7 @@ def _resolve_non_damage_exotic_hit(
     return damage, extra
 
 
-def _attack(e, cs, actor_id, args, randbelow):
+def _attack(e, cs, actor_id, args, randbelow, rules_path):
     attacker = cs[actor_id]
     ad = _detail(attacker)
     turn = _turn(attacker)
@@ -1322,7 +1334,7 @@ def _attack(e, cs, actor_id, args, randbelow):
             armor = [a for a in td["equipment"]["armor"] if a.get("location") == loc]
 
             if dice_count == 0:
-                damage, extra = _resolve_non_damage_exotic_hit(weapon, target, td, armor, args, raw_ammo_type, randbelow)
+                damage, extra = _resolve_non_damage_exotic_hit(weapon, target, td, armor, args, raw_ammo_type, randbelow, rules_path)
                 item["damage"] = damage
                 item.setdefault("critical_injury", None)
                 item.setdefault("critical_injuries", [])
@@ -1397,7 +1409,7 @@ def _attack(e, cs, actor_id, args, randbelow):
                 criticals = []
                 if not no_critical:
                     for is_mortal_trigger in ([False] if damage["critical_trigger"] else []) + ([True] if mortal_hit else []):
-                        critical = critical_injury(loc, [x.get("name", "") for x in td["injuries"]], randbelow)
+                        critical = critical_injury(loc, [x.get("name", "") for x in td["injuries"]], rules_path, randbelow)
                         criticals.append(critical)
                         if not critical.get("requires_human_ruling"):
                             td["injuries"].append(critical)
@@ -1414,7 +1426,8 @@ def _attack(e, cs, actor_id, args, randbelow):
                     and damage["penetration"] > 0
                     and not any(n in _active_injuries(target) for n in ("Broken Leg", "Dismembered Leg"))
                 ):
-                    td["injuries"].append({"id": "body:8", "name": "Broken Leg", "effects": "MOVE -4 (minimum 1)", "bonus_damage": 5, "source": SOURCE})
+                    broken_leg = sourcecatalog.critical_injuries(rules_path)["body"][8]
+                    td["injuries"].append({**broken_leg, "bonus_damage": 5, "source": SOURCE})
                     target["hp"] -= 5
                     td["stabilized"] = False
 

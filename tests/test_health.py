@@ -130,10 +130,14 @@ def test_stabilize_rejects_full_hp_and_sets_mortal_unconscious_and_resets_penalt
     assert dying_after["detail"]["death_save_penalty"] == 0
 
 
-def test_injury_care_removes_quick_fix_permanent_and_scopes_cybertech():
+def test_injury_care_removes_quick_fix_permanent_and_scopes_cybertech(tmp_path):
     import pytest
     import rules_eval
+    import sourcecatalog
+    from tests.rules_fixture import critical_index
 
+    rules = critical_index(tmp_path / "rules.sqlite")
+    table = sourcecatalog.critical_injuries(rules)
     chars = {
         "med": {"stats": {"TECH": 8}, "skills": {"Paramedic": 6, "First Aid": 6, "Cybertech": 6}},
         "pc": {
@@ -144,11 +148,11 @@ def test_injury_care_removes_quick_fix_permanent_and_scopes_cybertech():
                 "clock_minutes": 100,
                 "cyberware": [{"name": "Standard Cyberarm", "hl": 7}],
                 "injuries": [
-                    {"id": "body:7", "name": "Foreign Object"},  # Quick Fix permanently removes
-                    {"id": "body:6", "name": "Broken Arm"},
-                    {"id": "body:8", "name": "Broken Leg"},
-                    {"id": "head:3", "name": "Brain Injury"},  # base death-save penalty +1
-                    {"id": "body:4", "name": "Collapsed Lung"},  # base death-save penalty +1
+                    table["body"][7],  # Quick Fix permanently removes
+                    table["body"][6],
+                    table["body"][8],
+                    table["head"][3],  # base death-save penalty +1
+                    table["body"][4],  # base death-save penalty +1
                 ],
             },
         },
@@ -156,23 +160,23 @@ def test_injury_care_removes_quick_fix_permanent_and_scopes_cybertech():
     # Cyberarm does NOT permit Cybertech on Broken Leg, Collapsed Lung, or Brain Injury
     for bad_id in ("body:8", "body:4"):
         with pytest.raises(ValueError, match="not permitted"):
-            apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": bad_id, "skill": "Cybertech"}, lambda n: 7)
+            apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": bad_id, "skill": "Cybertech"}, lambda n: 7, rules_path=rules)
     for bad_id in ("body:8", "head:3", "body:4"):
         with pytest.raises(ValueError, match="not permitted"):
-            apply_action(chars, "med", "treat_injury", {"target_id": "pc", "injury_id": bad_id, "skill": "Cybertech"}, lambda n: 7)
+            apply_action(chars, "med", "treat_injury", {"target_id": "pc", "injury_id": bad_id, "skill": "Cybertech"}, lambda n: 7, rules_path=rules)
 
     # Cyberarm DOES permit Cybertech on Broken Arm
-    arm_fix = apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": "body:6", "skill": "Cybertech"}, lambda n: 7)
+    arm_fix = apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": "body:6", "skill": "Cybertech"}, lambda n: 7, rules_path=rules)
     assert arm_fix["result"]["success"] is True
 
     # Quick Fix on Foreign Object permanently removes it from injuries list
-    fo_fix = apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": "body:7", "skill": "First Aid"}, lambda n: 7)
+    fo_fix = apply_action(chars, "med", "quick_fix", {"target_id": "pc", "injury_id": "body:7", "skill": "First Aid"}, lambda n: 7, rules_path=rules)
     assert fo_fix["result"]["success"] is True
     remaining_ids = [i["id"] for i in fo_fix["characters"]["pc"]["detail"]["injuries"]]
     assert "body:7" not in remaining_ids
 
     # Quick Fix on Collapsed Lung suppresses it for 1440m and updates death_save_base_penalty (from 2 to 1)
-    lung_fix = apply_action(fo_fix["characters"], "med", "quick_fix", {"target_id": "pc", "injury_id": "body:4", "skill": "Paramedic"}, lambda n: 7)
+    lung_fix = apply_action(fo_fix["characters"], "med", "quick_fix", {"target_id": "pc", "injury_id": "body:4", "skill": "Paramedic"}, lambda n: 7, rules_path=rules)
     assert lung_fix["result"]["success"] is True
     assert lung_fix["characters"]["pc"]["detail"]["death_save_base_penalty"] == 1
 

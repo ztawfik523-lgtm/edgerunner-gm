@@ -1,9 +1,11 @@
 import pytest
 
+import sourcecatalog
 from combat import (
     attack_check, brawling_dice, critical_injury, daily_heal, damage_and_armor,
     death_save, initiative, stabilize_check, wound_state,
 )
+from tests.rules_fixture import CRITICAL_HEADER, add_table, build, critical_index, page
 
 
 def fixed(*values):
@@ -85,22 +87,24 @@ def test_stabilization_dv_and_rest_healing():
     assert daily_heal(5, 20, 4, False, True)["new_hp"] == 5
 
 
-def test_body_critical_table_outcome_and_existing_injury_reroll():
-    result = critical_injury("body", [], randbelow=fixed(0))
+def test_body_critical_table_outcome_and_existing_injury_reroll(tmp_path):
+    rules = critical_index(tmp_path / "rules.sqlite")
+    result = critical_injury("body", [], rules, randbelow=fixed(0))
     assert result["name"] == "Dismembered Arm"
     assert result["dice"] == [1, 1] and result["bonus_damage"] == 5
-    rerolled = critical_injury("body", ["Dismembered Arm"], randbelow=fixed(0))
+    rerolled = critical_injury("body", ["Dismembered Arm"], rules, randbelow=fixed(0))
     assert rerolled["name"] == "Dismembered Hand"
     assert rerolled["dice"] == [1, 2]
 
 
-def test_head_critical_table_metadata_and_exhaustion():
-    result = critical_injury("head", [], randbelow=fixed(0))
-    assert result["name"] == "Lost Eye"
+def test_critical_injuries_come_from_the_first_indexed_table(tmp_path):
+    rules = critical_index(tmp_path / "rules.sqlite")
+    add_table(rules, "critical_injury", "Critical Injuries to the Head repeat", CRITICAL_HEADER,
+              [["2", "Repeat", "x", "x", "x"]], 9)
+    result = critical_injury("head", [], rules, randbelow=fixed(0))
+    assert (result["id"], result["name"]) == ("head:2", "Lost Eye")
     assert result["quick_fix"] == "N/A" and result["treatment"] == "Surgery DV17"
-    all_head = [
-        "Lost Eye", "Brain Injury", "Damaged Eye", "Concussion", "Broken Jaw",
-        "Foreign Object", "Whiplash", "Cracked Skull", "Damaged Ear",
-        "Crushed Windpipe", "Lost Ear",
-    ]
-    assert critical_injury("head", all_head)["requires_human_ruling"]
+    all_head = [row["name"] for row in sourcecatalog.critical_injuries(rules)["head"].values()]
+    assert critical_injury("head", all_head, rules)["requires_human_ruling"]
+    with pytest.raises(ValueError, match="rebuild"):
+        sourcecatalog.critical_injuries(build(tmp_path / "empty.sqlite", [page(1, 1, [])]))

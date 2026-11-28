@@ -8,8 +8,8 @@ from typing import Any, Callable
 
 from combat import daily_heal, death_save, stabilize_check
 from mechanics import roll_dice, skill_check
-from combat import _CRITICALS
 import rules_eval
+import sourcecatalog
 
 SOURCE = "Cyberpunk RED Core Rulebook, pp. 186–188, 221–223, 230"
 
@@ -195,23 +195,24 @@ def _extract_dv_for_skill(source: str, skill: str) -> int:
     raise ValueError("canonical treatment does not specify a DV")
 
 
-def _injury_care(actor, actor_id, target, target_id, action, args, randbelow):
+def _injury_care(actor, actor_id, target, target_id, action, args, randbelow, rules_path):
     injury_id = args.get("injury_id")
     injuries = _d(target).get("injuries", [])
     injury = next((x for x in injuries if isinstance(x, dict) and x.get("id") == injury_id), None)
     if injury is None: raise ValueError("canonical injury_id not present on target")
+    table = sourcecatalog.critical_injuries(rules_path)
     try:
-        location, roll = injury_id.split(":", 1); roll = int(roll)
-        metadata = _CRITICALS[location][roll]
+        location, roll = injury_id.split(":", 1)
+        row = table[location][int(roll)]
     except (ValueError, KeyError, AttributeError): raise ValueError("invalid canonical injury id") from None
-    name, effects, quick, treatment = metadata
+    name, quick, treatment = row["name"], row["quick_fix"], row["treatment"]
     if action == "quick_fix":
         if quick == "N/A": raise ValueError("this injury has no Quick Fix")
         source = quick
     else:
         if actor_id == target_id: raise ValueError("cannot treat yourself")
         source = treatment
-        if source == "Quick Fix permanently removes effect":
+        if treatment.startswith("Quick Fix"):
             source = quick
     skills = _skills(actor); choices = []
     for skill_name in ("First Aid", "Paramedic", "Surgery"):
@@ -246,7 +247,7 @@ def _injury_care(actor, actor_id, target, target_id, action, args, randbelow):
 
 
 def apply_action(characters: dict, actor_id: str, action: str, args: dict,
-                 randbelow: Callable[[int], int] = secrets.randbelow) -> dict:
+                 randbelow: Callable[[int], int] = secrets.randbelow, rules_path=None) -> dict:
     """Resolve one action without mutating input. GM time advancement is explicit via elapsed_minutes."""
     if not isinstance(characters, dict) or actor_id not in characters or not isinstance(args, dict):
         raise ValueError("characters, valid actor_id and args are required")
@@ -291,7 +292,7 @@ def apply_action(characters: dict, actor_id: str, action: str, args: dict,
             result = {"requires_human_ruling": True, "action": action,
                       "reason": "Actor cannot self-treat critical injury or missing canonical injury_id requires human ruling.", "source": SOURCE}
         else:
-            result = _injury_care(actor, actor_id, target, target_id, action, args, randbelow)
+            result = _injury_care(actor, actor_id, target, target_id, action, args, randbelow, rules_path)
     elif action in ("install_cyberware", "remove_cyberware", "street_drug"):
         result = {"requires_human_ruling": True, "action": action,
                   "reason": "Canonical cyberware/drug catalog is not supplied to this action.", "source": SOURCE}

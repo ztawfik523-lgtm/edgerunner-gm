@@ -3,6 +3,12 @@ import copy
 import pytest
 
 from encounters import WEAPONS, RANGE_DVS, apply_action, start_encounter
+from tests.rules_fixture import DEATH_SAVE_TEXT, critical_index
+
+
+@pytest.fixture
+def rules(tmp_path):
+    return critical_index(tmp_path / "rules.sqlite")
 
 
 def character(cid, ref=6, dex=6, move=5, body=5, hp=25, weapon=None, armor=None):
@@ -43,13 +49,13 @@ def test_turn_owner_split_movement_run_costs_action_and_detail_persists():
     with pytest.raises(ValueError): apply_action(c["encounter"], c["characters"], actor, "run", {"meters": 1})
 
 
-def test_ranged_attack_spends_ammo_uses_canonical_damage_and_armor_head_multiplier():
+def test_ranged_attack_spends_ammo_uses_canonical_damage_and_armor_head_multiplier(rules):
     gun = {"id": "gun", "type": "Heavy Pistol", "loaded": 8, "ammo_kind": "H Pistol"}
     chars = [character("a", weapon=gun), character("b", ref=3, armor=[{"id": "vest", "sp": 4, "location": "head"}])]
     e, cs = begun(chars); attacker = e["queue"][0]; defender = "b" if attacker == "a" else "a"
     # Sequence: attack d10=10 (exploding d10=1), three weapon damage dice=6,6,1; critical table draw.
     rolls = iter([9, 0, 5, 5, 0, 0])
-    out = apply_action(e, cs, attacker, "attack", {"target_id": defender, "weapon_id": "gun", "range_m": 4, "location": "head"}, lambda _: next(rolls))
+    out = apply_action(e, cs, attacker, "attack", {"target_id": defender, "weapon_id": "gun", "range_m": 4, "location": "head"}, lambda _: next(rolls), rules_path=rules)
     weapon = out["characters"][attacker]["detail"]["equipment"]["weapons"][0]
     assert weapon["loaded"] == 7
     result = out["result"]["attacks"][0]
@@ -58,13 +64,13 @@ def test_ranged_attack_spends_ammo_uses_canonical_damage_and_armor_head_multipli
     assert out["characters"][defender]["hp"] <= cs[defender]["hp"]
 
 
-def test_attack_ablation_comes_from_weapon_and_ammo_not_arguments():
+def test_attack_ablation_comes_from_weapon_and_ammo_not_arguments(rules):
     gun = {"id": "gun", "type": "Heavy Pistol", "loaded": 8, "ammo_kind": "H Pistol"}
     chars = [character("a", ref=8, weapon=gun), character("b", ref=2, armor=[{"id": "vest", "sp": 4, "location": "body"}])]
     e, cs = begun(chars, init_sequence=[9, 0])
     # Attack d10=8 (no explosion) vs pistol DV; damage 6,6,1 = 13 penetrates SP 4 without a critical.
     rolls = iter([7, 5, 5, 0])
-    out = apply_action(e, cs, "a", "attack", {"target_id": "b", "weapon_id": "gun", "range_m": 4, "ablation": 4}, lambda _: next(rolls, 0))
+    out = apply_action(e, cs, "a", "attack", {"target_id": "b", "weapon_id": "gun", "range_m": 4, "ablation": 4}, lambda _: next(rolls, 0), rules_path=rules)
     assert out["result"]["attacks"][0]["hit"]
     assert out["characters"]["b"]["detail"]["equipment"]["armor"][0]["sp"] == 3
 
@@ -278,7 +284,7 @@ def test_solo_next_turn_unifies_death_save_invariant_end_effects_and_extinguish(
 
     c2 = svc.store.get_character(pc2["id"])
     c2["hp"] = 0
-    c2["detail"]["injuries"] = [{"id": "body:2", "name": "Dismembered Arm", "effects": "Arm lost; drop held item; base death-save penalty +1"}]
+    c2["detail"]["injuries"] = [{"id": "body:2", "name": "Dismembered Arm", "effects": DEATH_SAVE_TEXT}]
     c2["detail"]["death_save_penalty"] = 0
     with closing(svc.store._connect()) as conn, conn:
         svc.solo._write_character(conn, c2)
@@ -388,7 +394,7 @@ def test_initiative_tie_recursive_non_mutating_and_speedware_solo_bonuses():
     assert enc["queue"] == ["b", "a", "c"]
 
 
-def test_mortal_wound_zero_damage_no_crit_aimed_leg_id_and_stabilized_cleared():
+def test_mortal_wound_zero_damage_no_crit_aimed_leg_id_and_stabilized_cleared(rules):
     gun = {"id": "p", "type": "Medium Pistol", "loaded": 12, "ammo_kind": "M Pistol"}
     a = character("a", ref=8, weapon=gun)
     b = character("b", ref=2, hp=0, armor=[{"id": "arm", "sp": 15, "location": "body"}])
@@ -409,7 +415,7 @@ def test_mortal_wound_zero_damage_no_crit_aimed_leg_id_and_stabilized_cleared():
     b2["detail"]["stabilized"] = True
     e2, cs2 = begun([a, b2], init_sequence=[9, 0])
     seq2 = iter([9, 5, 3, 4])  # atk 10+6-8 + 6+6 = 20 vs DV13; dmg 4+5=9
-    leg = apply_action(e2, cs2, "a", "attack", {"target_id": "b2", "weapon_id": "p", "range_m": 4, "location": "leg"}, lambda _: next(seq2))
+    leg = apply_action(e2, cs2, "a", "attack", {"target_id": "b2", "weapon_id": "p", "range_m": 4, "location": "leg"}, lambda _: next(seq2), rules_path=rules)
     injs = leg["characters"]["b2"]["detail"]["injuries"]
     assert any(i["id"] == "body:8" and i["name"] == "Broken Leg" for i in injs)
     assert leg["characters"]["b2"]["detail"]["stabilized"] is False
@@ -448,7 +454,7 @@ def test_grapple_escape_no_double_penalty_and_choke_tracker_resets():
     assert "choke_tracker" not in rel["characters"]["b"]["detail"]["conditions"]
 
 
-def test_non_lethal_and_exotic_weapons_rules():
+def test_non_lethal_and_exotic_weapons_rules(rules):
     # 1. Stun Gun & Stun Baton: non_lethal, no_critical, clamp hp >= 1 + unconscious=True
     stun_gun = {"id": "sg", "type": "Stun Gun", "loaded": 8, "ammo_kind": "Battery"}
     a = character("a", ref=8, weapon=stun_gun)
@@ -493,7 +499,7 @@ def test_non_lethal_and_exotic_weapons_rules():
     nt = apply_action(mw_out["encounter"], mw_out["characters"], "a3", "next_turn", {}, lambda _: 0)
     nt2 = apply_action(nt["encounter"], nt["characters"], "b3", "next_turn", {}, lambda _: 0)
     seq4 = iter([9, 5, 0, 0])
-    sh_out = apply_action(nt2["encounter"], nt2["characters"], "a3", "attack", {"target_id": "b3", "weapon_id": "sh", "range_m": 4}, lambda _: next(seq4))
+    sh_out = apply_action(nt2["encounter"], nt2["characters"], "a3", "attack", {"target_id": "b3", "weapon_id": "sh", "range_m": 4}, lambda _: next(seq4), rules_path=rules)
     assert sh_out["characters"]["b3"]["detail"]["equipment"]["armor"][0]["sp"] == 7
     assert any(i["id"] == "head:10" and i["name"] == "Damaged Ear" for i in sh_out["characters"]["b3"]["detail"]["injuries"])
 
@@ -541,7 +547,7 @@ def test_non_lethal_and_exotic_weapons_rules():
         apply_action(nt_h4["encounter"], nt_h4["characters"], "a5", "attack", {"target_id": "b5", "weapon_id": "hx", "range_m": 10, "mode": "autofire"}, lambda _: 0)
     # With Linear Frame Sigma (effective_body 12), Helix fires!
     nt_h4["characters"]["a5"]["detail"]["cyberware"] = [{"name": "Implanted Linear Frame Sigma", "installed": True}]
-    hx_atk = apply_action(nt_h4["encounter"], nt_h4["characters"], "a5", "attack", {"target_id": "b5", "weapon_id": "hx", "range_m": 10, "mode": "autofire"}, lambda _: 5)
+    hx_atk = apply_action(nt_h4["encounter"], nt_h4["characters"], "a5", "attack", {"target_id": "b5", "weapon_id": "hx", "range_m": 10, "mode": "autofire"}, lambda _: 5, rules_path=rules)
     assert hx_atk["characters"]["a5"]["detail"]["equipment"]["weapons"][0]["loaded"] == 20
 
     # 6. Dartgun payload (biotoxin)

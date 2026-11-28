@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from mechanics import skill_check
+import sourcecatalog
 
 SOURCE = "Cyberpunk RED Core Rulebook, pp. 168, 176–177, 186–188, 221–223"
 
@@ -93,42 +94,11 @@ def damage_and_armor(dice: list, armor: list, location="body", melee=False, mart
             "critical_trigger": sum(d == 6 for d in dice) >= 2, "armor_after": armor_after, "source": "Cyberpunk RED Core Rulebook, pp. 174, 176–177, 186–188"}
 
 
-# Critical injury entries are concise paraphrases of the printed tables (pp. 187–188).
-_CRITICALS = {
-    "body": {
-        2: ("Dismembered Arm", "Arm lost; drop held item; base death-save penalty +1", "N/A", "Surgery DV17"),
-        3: ("Dismembered Hand", "Hand lost; drop held item; base death-save penalty +1", "N/A", "Surgery DV17"),
-        4: ("Collapsed Lung", "MOVE -2 (minimum 1); base death-save penalty +1", "Paramedic DV15", "Surgery DV15"),
-        5: ("Broken Ribs", "Moving over 4m/yds on foot in a Turn deals 5 bonus damage directly to HP", "Paramedic DV13", "Paramedic DV15 or Surgery DV13"),
-        6: ("Broken Arm", "Arm unusable; drop held item", "Paramedic DV13", "Paramedic DV15 or Surgery DV13"),
-        7: ("Foreign Object", "Moving over 4m/yds on foot in a Turn deals 5 bonus damage directly to HP", "First Aid or Paramedic DV13", "Quick Fix permanently removes effect"),
-        8: ("Broken Leg", "MOVE -4 (minimum 1)", "Paramedic DV13", "Paramedic DV15 or Surgery DV13"),
-        9: ("Torn Muscle", "Melee Attacks -2", "First Aid or Paramedic DV13", "Quick Fix permanently removes effect"),
-        10: ("Spinal Injury", "Next Turn: no Action, but Move Action allowed; base death-save penalty +1", "Paramedic DV15", "Surgery DV15"),
-        11: ("Crushed Fingers", "-4 to Actions involving that hand", "Paramedic DV13", "Surgery DV15"),
-        12: ("Dismembered Leg", "Leg lost; MOVE -6 (minimum 1); cannot dodge; base death-save penalty +1", "N/A", "Surgery DV17"),
-    },
-    "head": {
-        2: ("Lost Eye", "Eye lost; -4 ranged attacks and vision Perception; base death-save penalty +1", "N/A", "Surgery DV17"),
-        3: ("Brain Injury", "All Actions -2; base death-save penalty +1", "N/A", "Surgery DV17"),
-        4: ("Damaged Eye", "-2 ranged attacks and vision Perception", "Paramedic DV15", "Surgery DV13"),
-        5: ("Concussion", "All Actions -2", "First Aid or Paramedic DV13", "Quick Fix permanently removes effect"),
-        6: ("Broken Jaw", "-4 to Actions involving speech", "Paramedic DV13", "Paramedic or Surgery DV13"),
-        7: ("Foreign Object", "Moving over 4m/yds on foot in a Turn deals 5 bonus damage directly to HP", "First Aid or Paramedic DV13", "Quick Fix permanently removes effect"),
-        8: ("Whiplash", "Base death-save penalty +1", "Paramedic DV13", "Paramedic or Surgery DV13"),
-        9: ("Cracked Skull", "Aimed headshots multiply post-SP damage by 3 instead of 2; base death-save penalty +1", "Paramedic DV15", "Paramedic or Surgery DV15"),
-        10: ("Damaged Ear", "Moving over 4m/yds on foot removes next Turn's Move Action; hearing Perception -2", "Paramedic DV13", "Surgery DV13"),
-        11: ("Crushed Windpipe", "Cannot speak; base death-save penalty +1", "N/A", "Surgery DV15"),
-        12: ("Lost Ear", "Ear lost; moving over 4m/yds on foot removes next Turn's Move Action; hearing Perception -4; base death-save penalty +1", "N/A", "Surgery DV17"),
-    },
-}
-
-
-def critical_injury(location, existing, randbelow=secrets.randbelow):
+def critical_injury(location, existing, rules_path, randbelow=secrets.randbelow):
     if location not in ("body", "head"): raise ValueError("location must be body or head")
     if not isinstance(existing, list) or any(not isinstance(x, str) for x in existing): raise TypeError("existing must be a list of names")
-    table = _CRITICALS[location]
-    available = [roll for roll, injury in table.items() if injury[0] not in existing]
+    table = sourcecatalog.critical_injuries(rules_path)[location]
+    available = [roll for roll, injury in table.items() if injury["name"] not in existing]
     if not available:
         return {"requires_human_ruling": True, "location": location, "reason": "Every injury on this location's table is already present; the rules say to reroll until a new injury, so no eligible outcome remains.", "source": "Cyberpunk RED Core Rulebook, pp. 187–188"}
     if not callable(randbelow): raise TypeError("randbelow must be callable")
@@ -140,9 +110,7 @@ def critical_injury(location, existing, randbelow=secrets.randbelow):
     _int("randbelow result", n, 0, len(allowed) - 1)
     dice = list(allowed[n])
     roll = sum(dice)
-    name, effects, quick_fix, treatment = table[roll]
-    return {"id": f"{location}:{roll}", "name": name, "dice": dice, "bonus_damage": 5,
-            "effects": effects, "quick_fix": quick_fix, "treatment": treatment,
+    return {**table[roll], "dice": dice, "bonus_damage": 5,
             "source": "Cyberpunk RED Core Rulebook, pp. 187–188, 223"}
 
 
