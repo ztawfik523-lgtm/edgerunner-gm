@@ -52,7 +52,6 @@ Keep PDFs, `rules.sqlite`, `campaign.sqlite`, `settings.json`, `.env`, and play 
 # Index Corebook PDF from CLI (alternative to Settings -> Corebook PDF upload)
 .venv/bin/python redkb.py index /absolute/path/to/CPR-Corebook.pdf
 .venv/bin/python redkb.py status
-.venv/bin/python redkb.py build-library
 
 # Optional local CPU semantic search & cross-encoder reranking
 .venv/bin/python -m pip install -r requirements-semantic.txt
