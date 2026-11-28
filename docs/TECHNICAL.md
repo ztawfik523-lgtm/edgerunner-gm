@@ -117,7 +117,7 @@ See [.env.example](../.env.example) for all Docker/server variables:
 - `REDGM_LLM_URL`, `REDGM_LLM_MODEL`, `REDGM_LLM_API_KEY`
 - `REDGM_ADMIN_USER`, `REDGM_ADMIN_PASS`, `REDGM_USER_USER`, `REDGM_USER_PASS`, `REDGM_ROOM_PIN`
 - `REDGM_BOOTSTRAP_TOKEN` — required for initial browser Admin setup; generate a random secret of at least 32 characters
-- `INSTALL_SEMANTIC=true` (Docker build arg to include `requirements-semantic.txt`)
+- `INSTALL_SEMANTIC` (Docker build arg, default `true`; set `false` to leave out `requirements-semantic.txt` and use keyword-only search)
 
 ---
 
